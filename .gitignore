@@ -1,0 +1,58 @@
+# macOS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+
+# Local databases and runtime data
+*.db
+*.sqlite
+*.sqlite3
+server/data/
+data/
+tmp/
+
+# Go
+bin/
+dist/
+coverage.out
+*.test
+
+# Dart / Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub/
+build/
+
+# Flutter platform build outputs
+android/.gradle/
+android/app/debug/
+android/app/profile/
+android/app/release/
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/ephemeral/
+macos/Flutter/ephemeral/
+linux/flutter/ephemeral/
+windows/flutter/ephemeral/
+
+# Generated package files
+pubspec_overrides.yaml
