@@ -1,0 +1,27 @@
+package repository
+
+import (
+	"os"
+	"path/filepath"
+
+	"github.com/glebarez/sqlite"
+	"github.com/ligson/secure-x/securex-be/internal/model"
+	"gorm.io/gorm"
+)
+
+func Open(databaseDSN string) (*gorm.DB, error) {
+	if err := os.MkdirAll(filepath.Dir(databaseDSN), 0o755); err != nil {
+		return nil, err
+	}
+
+	db, err := gorm.Open(sqlite.Open(databaseDSN), &gorm.Config{})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := db.AutoMigrate(&model.User{}, &model.Folder{}, &model.VaultItem{}, &model.StoredFile{}); err != nil {
+		return nil, err
+	}
+
+	return db, nil
+}

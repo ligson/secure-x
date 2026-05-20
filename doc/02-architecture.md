@@ -91,6 +91,27 @@
 3. 客户端上传密文文件和密文元数据
 4. 服务端保存对象并记录索引
 
+## 3.5 统一接口响应
+
+后端 JSON 接口统一采用以下响应包裹结构：
+
+```json
+{
+  "success": true,
+  "message": "",
+  "httpCode": 200,
+  "data": {}
+}
+```
+
+设计要求：
+
+- `success` 反映业务处理是否成功
+- `message` 为前端可直接消费的显示信息
+- `httpCode` 必须与真实 HTTP 状态码一致
+- `data` 承载具体业务数据，没有数据时返回空对象
+- 不再混用裸对象、空响应体、字符串错误等多种返回风格
+
 ## 4. 建议目录结构
 
 后续实现时建议采用如下仓库布局：
@@ -101,9 +122,8 @@ secure-x/
   AGENTS.md
   CHANGELOG.md
   doc/
-  client/
-    flutter_app/
-  server/
+  securex-app/
+  securex-be/
     cmd/
     internal/
     pkg/
@@ -111,6 +131,11 @@ secure-x/
   scripts/
   deploy/
 ```
+
+其中：
+
+- `securex-app/` 用于放置 Flutter 跨平台客户端工程
+- `securex-be/` 用于放置 Go 后端工程
 
 ## 5. 技术选型建议
 

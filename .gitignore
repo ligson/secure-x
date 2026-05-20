@@ -9,6 +9,7 @@
 *.log
 *.tmp
 *.temp
+.dev/
 
 # Environment and secrets
 .env
@@ -24,6 +25,7 @@ secrets/
 *.db
 *.sqlite
 *.sqlite3
+securex-be/data/
 server/data/
 data/
 tmp/

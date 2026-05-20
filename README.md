@@ -2,7 +2,7 @@
 
 Secure X 是一个面向个人与小团队的安全敏感信息存储维护系统，目标是提供类似 Bitwarden 的账户与密钥管理体验，同时补充“加密文件存储”能力。
 
-当前仓库阶段为 `设计方案阶段`，本仓库优先沉淀产品边界、架构设计、加密模型、交付规划与协作约束，暂未进入业务代码实现。
+当前仓库阶段为 `第一版代码实现阶段`，仓库内已包含可运行的后端基线与 Flutter 客户端基线。
 
 ## 项目目标
 
@@ -18,6 +18,15 @@ Secure X 是一个面向个人与小团队的安全敏感信息存储维护系�
 - 服务端：`Golang`
 - 元数据数据库：`SQLite`
 - 文件对象存储：本地文件系统或后续兼容 S3 风格存储
+
+## 当前实现
+
+- `securex-be/`
+  - Go 后端服务
+  - 已实现健康检查、注册、登录、用户信息、文件夹、登录项、密文文件上传下载、同步导出
+- `securex-app/`
+  - Flutter 多端客户端
+  - 已实现后端地址配置、注册、登录、主密码解锁、文件夹管理、登录项管理、随机密码生成、加密文件上传、重命名、删除与解密下载
 
 ## 核心原则
 
@@ -48,6 +57,26 @@ Secure X 是一个面向个人与小团队的安全敏感信息存储维护系�
 
 建议采用“账号主密钥 + 数据项密钥 + 文件密钥”的分层加密结构，避免单一密钥承担全部数据范围，并为后续分享、密钥轮换与文件大对象处理预留空间。
 
+## 接口约定
+
+后端 JSON 接口统一返回以下结构：
+
+```json
+{
+  "success": true,
+  "message": "",
+  "httpCode": 200,
+  "data": {}
+}
+```
+
+字段说明：
+
+- `success`：接口处理是否成功
+- `message`：给前端显示的说明信息
+- `httpCode`：与 HTTP 状态码保持一致
+- `data`：业务数据主体，没有数据时返回空对象
+
 ## 文档导航
 
 - 方案总览：[doc/README.md](/Users/ligson/workspace/work-org/github/secure-x/doc/README.md)
@@ -67,13 +96,56 @@ Secure X 是一个面向个人与小团队的安全敏感信息存储维护系�
 - 文档结构初始化
 - 首版设计方案沉淀
 - 协作与变更记录规范建立
+- `securex-be` 后端工程初始化与基础 API 实现
+- `securex-app` Flutter 工程初始化与基础界面实现
 
 当前未开始：
 
-- 服务端代码脚手架
-- Flutter 客户端脚手架
-- 数据模型与接口实现
-- 加密库选型落地
+- 更完整的文件夹层级可视化与拖拽整理
+- 文件预览与更完整下载体验
+- 更强的同步冲突处理
+- 更强的 KDF 升级能力
+
+## 快速启动
+
+### 使用脚本联调
+
+```bash
+./scripts/start-dev.sh
+./scripts/stop-dev.sh
+```
+
+说明：
+
+- 日常联调统一使用这两个脚本，避免和手工执行 `flutter run`、`go run` 混用
+- `start-dev.sh` 会尽量复用已记录实例，并清理本项目残留的旧进程，保证单实例启动
+- 切换设备、端口或需要重启时，优先先执行一次 `./scripts/stop-dev.sh`
+- `FLUTTER_DEVICE=macos` 时，脚本会先构建 `Debug` 桌面包，再启动单实例应用进程，优先保证脚本可控和停止一致性
+
+常用可选变量：
+
+- `FLUTTER_DEVICE=macos ./scripts/start-dev.sh`
+- `FLUTTER_DEVICE=ios ./scripts/start-dev.sh`
+- `START_APP=0 ./scripts/start-dev.sh`
+- `START_BACKEND=0 ./scripts/start-dev.sh`
+
+### 单独启动后端
+
+```bash
+cd securex-be
+go run ./cmd/server
+```
+
+默认监听 `http://127.0.0.1:8080`。
+
+### 启动客户端
+
+```bash
+cd securex-app
+flutter run -d macos
+```
+
+首次进入后，可在登录页填写后端地址，例如 `http://127.0.0.1:8080`。
 
 ## 协作约束
 
