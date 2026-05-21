@@ -53,6 +53,29 @@ class FolderRecord {
   }
 }
 
+class FileFolderRecord {
+  FileFolderRecord({
+    required this.id,
+    required this.payload,
+    required this.version,
+    this.parentFolderId,
+  });
+
+  final String id;
+  final String payload;
+  final int version;
+  final String? parentFolderId;
+
+  factory FileFolderRecord.fromJson(Map<String, dynamic> json) {
+    return FileFolderRecord(
+      id: json['id'] as String,
+      payload: json['payload'] as String,
+      version: (json['version'] as num).toInt(),
+      parentFolderId: json['parentFolderId'] as String?,
+    );
+  }
+}
+
 class VaultItemRecord {
   VaultItemRecord({
     required this.id,
@@ -119,6 +142,20 @@ class DecryptedFolder {
   final String? parentFolderId;
 }
 
+class DecryptedFileFolder {
+  DecryptedFileFolder({
+    required this.id,
+    required this.name,
+    required this.version,
+    this.parentFolderId,
+  });
+
+  final String id;
+  final String name;
+  final int version;
+  final String? parentFolderId;
+}
+
 class DecryptedLoginItem {
   DecryptedLoginItem({
     required this.id,
@@ -150,6 +187,7 @@ class DecryptedFileRecord {
     required this.fileKey,
     required this.cipherSize,
     required this.version,
+    this.chunkCipherSizes = const [],
     this.folderId,
   });
 
@@ -160,5 +198,8 @@ class DecryptedFileRecord {
   final String fileKey;
   final int cipherSize;
   final int version;
+  final List<int> chunkCipherSizes;
   final String? folderId;
+
+  bool get chunked => chunkCipherSizes.isNotEmpty;
 }

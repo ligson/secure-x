@@ -4,6 +4,25 @@ import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 
+Future<Uint8List> encryptBinaryChunkForUpload(
+  Map<String, Uint8List> input,
+) async {
+  final aesGcm = AesGcm.with256bits();
+  final random = Random.secure();
+  final nonce = List<int>.generate(12, (_) => random.nextInt(256));
+  final secretBox = await aesGcm.encrypt(
+    input['bytes']!,
+    secretKey: SecretKey(input['keyBytes']!),
+    nonce: nonce,
+  );
+
+  return Uint8List.fromList([
+    ...secretBox.nonce,
+    ...secretBox.mac.bytes,
+    ...secretBox.cipherText,
+  ]);
+}
+
 class RegisterBundle {
   RegisterBundle({
     required this.kdfAlgorithm,
@@ -27,10 +46,10 @@ class CryptoService {
   final AesGcm _aesGcm = AesGcm.with256bits();
   final Random _random = Random.secure();
 
-  Future<RegisterBundle> createRegisterBundle(String masterPassword) async {
+  Future<RegisterBundle> createRegisterBundle(String unlockPassword) async {
     final salt = _randomBytes(16);
     final masterKey = await deriveMasterKey(
-      password: masterPassword,
+      password: unlockPassword,
       salt: salt,
       iterations: masterKeyIterations,
     );
@@ -46,6 +65,30 @@ class CryptoService {
       masterKeyIterations: masterKeyIterations,
       wrappedVaultKey: wrappedVaultKey,
       vaultKeyBytes: vaultKey,
+    );
+  }
+
+  Future<RegisterBundle> rewrapVaultKey({
+    required Uint8List vaultKeyBytes,
+    required String unlockPassword,
+  }) async {
+    final salt = _randomBytes(16);
+    final masterKey = await deriveMasterKey(
+      password: unlockPassword,
+      salt: salt,
+      iterations: masterKeyIterations,
+    );
+
+    final wrappedVaultKey = await encryptJson({
+      'vaultKey': base64Encode(vaultKeyBytes),
+    }, masterKey);
+
+    return RegisterBundle(
+      kdfAlgorithm: kdfAlgorithm,
+      masterKeySalt: base64Encode(salt),
+      masterKeyIterations: masterKeyIterations,
+      wrappedVaultKey: wrappedVaultKey,
+      vaultKeyBytes: vaultKeyBytes,
     );
   }
 
@@ -70,12 +113,12 @@ class CryptoService {
 
   Future<Uint8List> unwrapVaultKey({
     required String wrappedVaultKey,
-    required String masterPassword,
+    required String unlockPassword,
     required String saltBase64,
     required int iterations,
   }) async {
     final masterKey = await deriveMasterKey(
-      password: masterPassword,
+      password: unlockPassword,
       salt: Uint8List.fromList(base64Decode(saltBase64)),
       iterations: iterations,
     );

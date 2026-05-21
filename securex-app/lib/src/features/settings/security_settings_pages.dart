@@ -1,0 +1,484 @@
+part of '../../../main.dart';
+
+class _SecuritySettingsPage extends StatelessWidget {
+  const _SecuritySettingsPage({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('安全设置')),
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                const _SettingsDetailHeader(
+                  icon: Icons.security_outlined,
+                  title: '安全设置',
+                ),
+                const SizedBox(height: 12),
+                Card(
+                  child: Column(
+                    children: [
+                      _SettingsMenuTile(
+                        icon: Icons.password_outlined,
+                        title: '登录密码',
+                        subtitle: '用于登录服务端账号',
+                        onTap: () {
+                          Navigator.of(context).push<void>(
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  _ChangePasswordPage(controller: controller),
+                            ),
+                          );
+                        },
+                      ),
+                      Divider(height: 1, color: context.sx.border),
+                      _SettingsMenuTile(
+                        icon: Icons.lock_open_outlined,
+                        title: '解锁密码',
+                        subtitle: '用于本机解锁和解密保险库',
+                        onTap: () {
+                          Navigator.of(context).push<void>(
+                            MaterialPageRoute(
+                              builder: (context) => _ChangeUnlockPasswordPage(
+                                controller: controller,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ChangePasswordPage extends StatefulWidget {
+  const _ChangePasswordPage({required this.controller});
+
+  final AppController controller;
+
+  @override
+  State<_ChangePasswordPage> createState() => _ChangePasswordPageState();
+}
+
+class _ChangePasswordPageState extends State<_ChangePasswordPage> {
+  final _currentPasswordController = TextEditingController();
+  final _newPasswordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
+  bool _showCurrentPassword = false;
+  bool _showNewPassword = false;
+  bool _showConfirmPassword = false;
+  String? _localMessage;
+
+  @override
+  void dispose() {
+    _currentPasswordController.dispose();
+    _newPasswordController.dispose();
+    _confirmPasswordController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: widget.controller,
+      builder: (context, _) {
+        return Scaffold(
+          appBar: AppBar(title: const Text('登录密码')),
+          body: SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 760),
+                child: ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    const _SettingsDetailHeader(
+                      icon: Icons.password_outlined,
+                      title: '登录密码',
+                    ),
+                    const SizedBox(height: 12),
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '这里只修改服务端登录密码，不会修改解锁密码，也不会重新加密保险库数据。',
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(color: context.sx.mutedText),
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: _currentPasswordController,
+                              obscureText: !_showCurrentPassword,
+                              decoration: InputDecoration(
+                                labelText: '当前登录密码',
+                                suffixIcon: IconButton(
+                                  tooltip: _showCurrentPassword
+                                      ? '隐藏密码'
+                                      : '查看密码',
+                                  onPressed: () {
+                                    setState(() {
+                                      _showCurrentPassword =
+                                          !_showCurrentPassword;
+                                    });
+                                  },
+                                  icon: Icon(
+                                    _showCurrentPassword
+                                        ? Icons.visibility_off_outlined
+                                        : Icons.visibility_outlined,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _newPasswordController,
+                              obscureText: !_showNewPassword,
+                              decoration: InputDecoration(
+                                labelText: '新登录密码',
+                                suffixIcon: IconButton(
+                                  tooltip: _showNewPassword ? '隐藏密码' : '查看密码',
+                                  onPressed: () {
+                                    setState(() {
+                                      _showNewPassword = !_showNewPassword;
+                                    });
+                                  },
+                                  icon: Icon(
+                                    _showNewPassword
+                                        ? Icons.visibility_off_outlined
+                                        : Icons.visibility_outlined,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _confirmPasswordController,
+                              obscureText: !_showConfirmPassword,
+                              decoration: InputDecoration(
+                                labelText: '确认新登录密码',
+                                suffixIcon: IconButton(
+                                  tooltip: _showConfirmPassword
+                                      ? '隐藏密码'
+                                      : '查看密码',
+                                  onPressed: () {
+                                    setState(() {
+                                      _showConfirmPassword =
+                                          !_showConfirmPassword;
+                                    });
+                                  },
+                                  icon: Icon(
+                                    _showConfirmPassword
+                                        ? Icons.visibility_off_outlined
+                                        : Icons.visibility_outlined,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            if (_localMessage != null) ...[
+                              const SizedBox(height: 12),
+                              Text(
+                                _localMessage!,
+                                style: Theme.of(context).textTheme.bodyMedium
+                                    ?.copyWith(color: context.sx.danger),
+                              ),
+                            ],
+                            const SizedBox(height: 16),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: FilledButton(
+                                onPressed: widget.controller.busy
+                                    ? null
+                                    : _submit,
+                                child: const Text('保存新密码'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _submit() async {
+    final currentPassword = _currentPasswordController.text;
+    final newPassword = _newPasswordController.text;
+    final confirmPassword = _confirmPasswordController.text;
+
+    setState(() {
+      _localMessage = null;
+    });
+
+    if (currentPassword.isEmpty) {
+      setState(() {
+        _localMessage = '请输入当前登录密码。';
+      });
+      return;
+    }
+    if (newPassword.length < 8) {
+      setState(() {
+        _localMessage = '新登录密码至少需要 8 位。';
+      });
+      return;
+    }
+    if (newPassword != confirmPassword) {
+      setState(() {
+        _localMessage = '两次输入的新登录密码不一致。';
+      });
+      return;
+    }
+    if (currentPassword == newPassword) {
+      setState(() {
+        _localMessage = '新登录密码不能和当前登录密码相同。';
+      });
+      return;
+    }
+
+    try {
+      await widget.controller.changeLoginPassword(
+        currentPassword: currentPassword,
+        newPassword: newPassword,
+      );
+      if (!mounted) {
+        return;
+      }
+      _currentPasswordController.clear();
+      _newPasswordController.clear();
+      _confirmPasswordController.clear();
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('登录密码已修改')));
+    } catch (_) {}
+  }
+}
+
+class _ChangeUnlockPasswordPage extends StatefulWidget {
+  const _ChangeUnlockPasswordPage({required this.controller});
+
+  final AppController controller;
+
+  @override
+  State<_ChangeUnlockPasswordPage> createState() =>
+      _ChangeUnlockPasswordPageState();
+}
+
+class _ChangeUnlockPasswordPageState extends State<_ChangeUnlockPasswordPage> {
+  final _currentPasswordController = TextEditingController();
+  final _newPasswordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
+  bool _showCurrentPassword = false;
+  bool _showNewPassword = false;
+  bool _showConfirmPassword = false;
+  String? _localMessage;
+
+  @override
+  void dispose() {
+    _currentPasswordController.dispose();
+    _newPasswordController.dispose();
+    _confirmPasswordController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: widget.controller,
+      builder: (context, _) {
+        return Scaffold(
+          appBar: AppBar(title: const Text('解锁密码')),
+          body: SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 760),
+                child: ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    const _SettingsDetailHeader(
+                      icon: Icons.lock_open_outlined,
+                      title: '解锁密码',
+                    ),
+                    const SizedBox(height: 12),
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '这里只修改客户端解锁保险库使用的密码。服务端只保存新的密文封装结果，不会知道你的解锁密码。',
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(color: context.sx.mutedText),
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: _currentPasswordController,
+                              obscureText: !_showCurrentPassword,
+                              decoration: InputDecoration(
+                                labelText: '当前解锁密码',
+                                suffixIcon: IconButton(
+                                  tooltip: _showCurrentPassword
+                                      ? '隐藏密码'
+                                      : '查看密码',
+                                  onPressed: () {
+                                    setState(() {
+                                      _showCurrentPassword =
+                                          !_showCurrentPassword;
+                                    });
+                                  },
+                                  icon: Icon(
+                                    _showCurrentPassword
+                                        ? Icons.visibility_off_outlined
+                                        : Icons.visibility_outlined,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _newPasswordController,
+                              obscureText: !_showNewPassword,
+                              decoration: InputDecoration(
+                                labelText: '新解锁密码',
+                                suffixIcon: IconButton(
+                                  tooltip: _showNewPassword ? '隐藏密码' : '查看密码',
+                                  onPressed: () {
+                                    setState(() {
+                                      _showNewPassword = !_showNewPassword;
+                                    });
+                                  },
+                                  icon: Icon(
+                                    _showNewPassword
+                                        ? Icons.visibility_off_outlined
+                                        : Icons.visibility_outlined,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _confirmPasswordController,
+                              obscureText: !_showConfirmPassword,
+                              decoration: InputDecoration(
+                                labelText: '确认新解锁密码',
+                                suffixIcon: IconButton(
+                                  tooltip: _showConfirmPassword
+                                      ? '隐藏密码'
+                                      : '查看密码',
+                                  onPressed: () {
+                                    setState(() {
+                                      _showConfirmPassword =
+                                          !_showConfirmPassword;
+                                    });
+                                  },
+                                  icon: Icon(
+                                    _showConfirmPassword
+                                        ? Icons.visibility_off_outlined
+                                        : Icons.visibility_outlined,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            if (_localMessage != null) ...[
+                              const SizedBox(height: 12),
+                              Text(
+                                _localMessage!,
+                                style: Theme.of(context).textTheme.bodyMedium
+                                    ?.copyWith(color: context.sx.danger),
+                              ),
+                            ],
+                            const SizedBox(height: 16),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: FilledButton(
+                                onPressed: widget.controller.busy
+                                    ? null
+                                    : _submit,
+                                child: const Text('保存解锁密码'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _submit() async {
+    final currentPassword = _currentPasswordController.text;
+    final newPassword = _newPasswordController.text;
+    final confirmPassword = _confirmPasswordController.text;
+
+    setState(() {
+      _localMessage = null;
+    });
+
+    if (currentPassword.isEmpty) {
+      setState(() {
+        _localMessage = '请输入当前解锁密码。';
+      });
+      return;
+    }
+    if (newPassword.length < 8) {
+      setState(() {
+        _localMessage = '新解锁密码至少需要 8 位。';
+      });
+      return;
+    }
+    if (newPassword != confirmPassword) {
+      setState(() {
+        _localMessage = '两次输入的新解锁密码不一致。';
+      });
+      return;
+    }
+    if (currentPassword == newPassword) {
+      setState(() {
+        _localMessage = '新解锁密码不能和当前解锁密码相同。';
+      });
+      return;
+    }
+
+    try {
+      await widget.controller.changeUnlockPassword(
+        currentUnlockPassword: currentPassword,
+        newUnlockPassword: newPassword,
+      );
+      if (!mounted) {
+        return;
+      }
+      _currentPasswordController.clear();
+      _newPasswordController.clear();
+      _confirmPasswordController.clear();
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('解锁密码已修改')));
+    } catch (_) {}
+  }
+}

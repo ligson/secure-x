@@ -10,11 +10,11 @@ stop_process() {
   local pattern="$3"
   local stopped=0
 
-  cleanup_stale_pid_file "${pid_file}"
+  cleanup_stale_pid_file "${pid_file}" "${pattern}"
 
   local pid
   pid="$(read_pid_file "${pid_file}")"
-  if [[ -n "${pid}" ]] && is_pid_running "${pid}"; then
+  if [[ -n "${pid}" ]] && pid_matches_pattern "${pid}" "${pattern}"; then
     stop_pid_gracefully "${pid}" "${name}"
     stopped=1
   fi

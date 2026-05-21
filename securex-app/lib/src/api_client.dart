@@ -68,6 +68,43 @@ class ApiClient {
     return UserProfile.fromJson(data['user'] as Map<String, dynamic>);
   }
 
+  Future<void> changePassword({
+    required String baseUrl,
+    required String token,
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    await _dio.put<Map<String, dynamic>>(
+      '$baseUrl/api/v1/auth/password',
+      data: {'currentPassword': currentPassword, 'newPassword': newPassword},
+      options: _authorized(token),
+    );
+  }
+
+  Future<UserProfile> changeUnlockPassword({
+    required String baseUrl,
+    required String token,
+    required String kdfAlgorithm,
+    required String masterKeySalt,
+    required int masterKeyIterations,
+    required String wrappedVaultKey,
+  }) async {
+    final data = _unwrapMap(
+      await _dio.put<Map<String, dynamic>>(
+        '$baseUrl/api/v1/auth/unlock-password',
+        data: {
+          'kdfAlgorithm': kdfAlgorithm,
+          'masterKeySalt': masterKeySalt,
+          'masterKeyIterations': masterKeyIterations,
+          'wrappedVaultKey': wrappedVaultKey,
+        },
+        options: _authorized(token),
+      ),
+    );
+
+    return UserProfile.fromJson(data['user'] as Map<String, dynamic>);
+  }
+
   Future<Map<String, dynamic>> exportVault({
     required String baseUrl,
     required String token,
@@ -124,6 +161,54 @@ class ApiClient {
   }) async {
     await _dio.delete<Map<String, dynamic>>(
       '$baseUrl/api/v1/folders/$folderId',
+      options: _authorized(token),
+    );
+  }
+
+  Future<void> createFileFolder({
+    required String baseUrl,
+    required String token,
+    required String payload,
+    required int version,
+    String? parentFolderId,
+  }) async {
+    await _dio.post<Map<String, dynamic>>(
+      '$baseUrl/api/v1/file-folders',
+      data: {
+        'parentFolderId': parentFolderId,
+        'payload': payload,
+        'version': version,
+      },
+      options: _authorized(token),
+    );
+  }
+
+  Future<void> updateFileFolder({
+    required String baseUrl,
+    required String token,
+    required String folderId,
+    required String payload,
+    required int version,
+    String? parentFolderId,
+  }) async {
+    await _dio.put<Map<String, dynamic>>(
+      '$baseUrl/api/v1/file-folders/$folderId',
+      data: {
+        'parentFolderId': parentFolderId,
+        'payload': payload,
+        'version': version,
+      },
+      options: _authorized(token),
+    );
+  }
+
+  Future<void> deleteFileFolder({
+    required String baseUrl,
+    required String token,
+    required String folderId,
+  }) async {
+    await _dio.delete<Map<String, dynamic>>(
+      '$baseUrl/api/v1/file-folders/$folderId',
       options: _authorized(token),
     );
   }
@@ -203,6 +288,61 @@ class ApiClient {
     await _dio.post<Map<String, dynamic>>(
       '$baseUrl/api/v1/files',
       data: formData,
+      options: _authorized(token),
+    );
+  }
+
+  Future<Map<String, dynamic>> startChunkedFileUpload({
+    required String baseUrl,
+    required String token,
+    required int totalChunks,
+    required int version,
+    String? folderId,
+  }) async {
+    return _unwrapMap(
+      await _dio.post<Map<String, dynamic>>(
+        '$baseUrl/api/v1/file-uploads',
+        data: {
+          'folderId': folderId,
+          'version': version,
+          'totalChunks': totalChunks,
+        },
+        options: _authorized(token),
+      ),
+    );
+  }
+
+  Future<void> uploadFileChunk({
+    required String baseUrl,
+    required String token,
+    required String uploadId,
+    required int index,
+    required Uint8List cipherBytes,
+    ProgressCallback? onSendProgress,
+  }) async {
+    await _dio.put<Map<String, dynamic>>(
+      '$baseUrl/api/v1/file-uploads/$uploadId/chunks/$index',
+      data: Stream.fromIterable([cipherBytes]),
+      options: _authorized(token).copyWith(
+        contentType: 'application/octet-stream',
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Length': cipherBytes.length,
+        },
+      ),
+      onSendProgress: onSendProgress,
+    );
+  }
+
+  Future<void> completeChunkedFileUpload({
+    required String baseUrl,
+    required String token,
+    required String uploadId,
+    required String payload,
+  }) async {
+    await _dio.post<Map<String, dynamic>>(
+      '$baseUrl/api/v1/file-uploads/$uploadId/complete',
+      data: {'payload': payload},
       options: _authorized(token),
     );
   }

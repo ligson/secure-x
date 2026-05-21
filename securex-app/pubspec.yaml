@@ -49,6 +49,22 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+
+flutter_launcher_icons:
+  image_path: assets/brand/securex_app_icon_square.png
+  android: true
+  ios: true
+  remove_alpha_ios: true
+  macos:
+    generate: true
+    image_path: assets/brand/securex_app_icon_square.png
+  windows:
+    generate: true
+    image_path: assets/brand/securex_app_icon_square.png
+  linux:
+    generate: true
+    image_path: assets/brand/securex_app_icon_square.png
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

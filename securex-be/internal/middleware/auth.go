@@ -15,21 +15,21 @@ func RequireAuth(tokens *auth.TokenManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader("Authorization")
 		if header == "" {
-			apiresponse.RespondFailure(c, http.StatusUnauthorized, "missing authorization header")
+			apiresponse.RespondFailure(c, http.StatusUnauthorized, "请先登录")
 			c.Abort()
 			return
 		}
 
 		tokenString := strings.TrimSpace(strings.TrimPrefix(header, "Bearer"))
 		if tokenString == "" {
-			apiresponse.RespondFailure(c, http.StatusUnauthorized, "invalid authorization header")
+			apiresponse.RespondFailure(c, http.StatusUnauthorized, "登录凭证格式不正确")
 			c.Abort()
 			return
 		}
 
 		userID, err := tokens.Parse(tokenString)
 		if err != nil {
-			apiresponse.RespondFailure(c, http.StatusUnauthorized, "invalid token")
+			apiresponse.RespondFailure(c, http.StatusUnauthorized, "登录状态已失效，请重新登录")
 			c.Abort()
 			return
 		}

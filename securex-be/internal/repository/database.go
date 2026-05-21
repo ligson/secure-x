@@ -19,7 +19,7 @@ func Open(databaseDSN string) (*gorm.DB, error) {
 		return nil, err
 	}
 
-	if err := db.AutoMigrate(&model.User{}, &model.Folder{}, &model.VaultItem{}, &model.StoredFile{}); err != nil {
+	if err := db.AutoMigrate(&model.User{}, &model.Folder{}, &model.FileFolder{}, &model.VaultItem{}, &model.StoredFile{}, &model.FileUploadSession{}); err != nil {
 		return nil, err
 	}
 

@@ -19,7 +19,7 @@ func NewFileStore(baseDir string) (*FileStore, error) {
 }
 
 func (s *FileStore) Save(relativePath string, source io.Reader) (int64, string, error) {
-	fullPath := filepath.Join(s.baseDir, relativePath)
+	fullPath := s.Resolve(relativePath)
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		return 0, "", err
 	}
@@ -36,6 +36,10 @@ func (s *FileStore) Save(relativePath string, source io.Reader) (int64, string, 
 	}
 
 	return written, fullPath, nil
+}
+
+func (s *FileStore) Resolve(relativePath string) string {
+	return filepath.Join(s.baseDir, relativePath)
 }
 
 func (s *FileStore) Delete(fullPath string) error {
