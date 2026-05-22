@@ -82,6 +82,7 @@ class RealtimeChatService {
   String _userId = '';
   List<String> _iceServers = [];
   bool _manualDisconnect = true;
+  int _reconnectAttempt = 0;
 
   void Function(RealtimeIncomingMessage message)? onMessage;
   void Function(RealtimeGroupControl control)? onGroupControl;
@@ -90,6 +91,7 @@ class RealtimeChatService {
   void Function(String friendId, String messageId)? onDelivered;
   void Function(String friendId, String status)? onPeerStatus;
   void Function(String friendId, String status)? onFriendshipUpdated;
+  void Function(String status)? onSignalingState;
 
   bool get connected => _socket?.readyState == WebSocket.open;
 
@@ -109,6 +111,7 @@ class RealtimeChatService {
     _token = token;
     _userId = userId;
     _iceServers = iceServers;
+    onSignalingState?.call('connecting');
     await _openSocket();
   }
 
@@ -122,6 +125,7 @@ class RealtimeChatService {
       _signalingUrl,
       headers: {'Authorization': 'Bearer $_token'},
     );
+    _reconnectAttempt = 0;
     _socket!.pingInterval = const Duration(seconds: 20);
     _socket!.listen(
       (data) {
@@ -136,17 +140,20 @@ class RealtimeChatService {
       onError: (_) => _handleSocketClosed(),
       cancelOnError: true,
     );
+    onSignalingState?.call('connected');
   }
 
   Future<void> disconnect() async {
     _manualDisconnect = true;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    _reconnectAttempt = 0;
     _signalingUrl = '';
     _token = '';
     _userId = '';
     _iceServers = [];
     await _closeSocketAndPeers();
+    onSignalingState?.call('disconnected');
   }
 
   Future<void> _closeSocketAndPeers() async {
@@ -174,13 +181,17 @@ class RealtimeChatService {
     if (!_manualDisconnect) {
       _scheduleReconnect();
     }
+    onSignalingState?.call('disconnected');
   }
 
   void _scheduleReconnect() {
     if (_reconnectTimer != null) {
       return;
     }
-    _reconnectTimer = Timer(const Duration(seconds: 2), () async {
+    _reconnectAttempt += 1;
+    final delaySeconds = (_reconnectAttempt * 2).clamp(2, 12);
+    onSignalingState?.call('reconnecting');
+    _reconnectTimer = Timer(Duration(seconds: delaySeconds), () async {
       _reconnectTimer = null;
       try {
         await _openSocket();
@@ -214,32 +225,34 @@ class RealtimeChatService {
 
     final initiator = _shouldInitiateOffer(friend.id);
     final peer = await _ensurePeer(friend.id, initiator: initiator);
-    if (!initiator && !peer.ready) {
+    if (!initiator && !peer.canSendSecurePayloads) {
       _sendSignal(friend.id, 'connect-request', {});
     }
-    if (!peer.ready) {
+    if (!peer.canSendSecurePayloads) {
       return false;
     }
 
     final cipherText = await _encryptText(message.text, peer.sessionKey!);
-    await peer.channel!.send(
-      RTCDataChannelMessage(
-        jsonEncode({
-          'type': 'message',
-          'messageId': message.id,
-          'chatKind': conversation?.isGroup == true ? 'group' : 'direct',
-          'groupId': conversation?.isGroup == true ? conversation!.id : '',
-          'groupName': conversation?.isGroup == true ? conversation!.title : '',
-          'memberIds': conversation?.isGroup == true
-              ? [_userId, ...conversation!.members.map((member) => member.id)]
-              : const <String>[],
-          'adminUserId': conversation?.isGroup == true
-              ? conversation!.adminUserId
-              : '',
-          'cipherText': cipherText,
-        }),
-      ),
-    );
+    final payload = {
+      'messageId': message.id,
+      'chatKind': conversation?.isGroup == true ? 'group' : 'direct',
+      'groupId': conversation?.isGroup == true ? conversation!.id : '',
+      'groupName': conversation?.isGroup == true ? conversation!.title : '',
+      'memberIds': conversation?.isGroup == true
+          ? [_userId, ...conversation!.members.map((member) => member.id)]
+          : const <String>[],
+      'adminUserId': conversation?.isGroup == true
+          ? conversation!.adminUserId
+          : '',
+      'cipherText': cipherText,
+    };
+    if (peer.ready) {
+      await peer.channel!.send(
+        RTCDataChannelMessage(jsonEncode({'type': 'message', ...payload})),
+      );
+      return true;
+    }
+    _sendSignal(friend.id, 'relay-message', payload);
     return true;
   }
 
@@ -257,10 +270,10 @@ class RealtimeChatService {
 
     final initiator = _shouldInitiateOffer(friend.id);
     final peer = await _ensurePeer(friend.id, initiator: initiator);
-    if (!initiator && !peer.ready) {
+    if (!initiator && !peer.canSendSecurePayloads) {
       _sendSignal(friend.id, 'connect-request', {});
     }
-    if (!peer.ready || peer.sessionKey == null) {
+    if (!peer.canSendSecurePayloads || peer.sessionKey == null) {
       return false;
     }
 
@@ -274,16 +287,20 @@ class RealtimeChatService {
       'removedUserId': removedUserId,
     });
     final cipherText = await _encryptText(clearPayload, peer.sessionKey!);
-    await peer.channel!.send(
-      RTCDataChannelMessage(
-        jsonEncode({
-          'type': 'group-control',
-          'controlId': controlId,
-          'groupId': conversation.id,
-          'cipherText': cipherText,
-        }),
-      ),
-    );
+    final payload = {
+      'controlId': controlId,
+      'groupId': conversation.id,
+      'cipherText': cipherText,
+    };
+    if (peer.ready) {
+      await peer.channel!.send(
+        RTCDataChannelMessage(
+          jsonEncode({'type': 'group-control', ...payload}),
+        ),
+      );
+      return true;
+    }
+    _sendSignal(friend.id, 'relay-group-control', payload);
     return true;
   }
 
@@ -318,10 +335,10 @@ class RealtimeChatService {
 
     final initiator = _shouldInitiateOffer(friend.id);
     final peer = await _ensurePeer(friend.id, initiator: initiator);
-    if (!initiator && !peer.ready) {
+    if (!initiator && !peer.canSendSecurePayloads) {
       _sendSignal(friend.id, 'connect-request', {});
     }
-    if (!peer.ready || peer.sessionKey == null) {
+    if (!peer.canSendSecurePayloads || peer.sessionKey == null) {
       return false;
     }
 
@@ -329,15 +346,22 @@ class RealtimeChatService {
       jsonEncode(payload),
       peer.sessionKey!,
     );
-    await peer.channel!.send(
-      RTCDataChannelMessage(
-        jsonEncode({
-          'type': type,
-          'controlId': DateTime.now().microsecondsSinceEpoch.toString(),
-          'cipherText': cipherText,
-        }),
-      ),
-    );
+    final payloadWithCipher = {
+      'controlId': DateTime.now().microsecondsSinceEpoch.toString(),
+      'cipherText': cipherText,
+    };
+    if (peer.ready) {
+      await peer.channel!.send(
+        RTCDataChannelMessage(jsonEncode({'type': type, ...payloadWithCipher})),
+      );
+      return true;
+    }
+    final relayType = switch (type) {
+      'history-request' => 'relay-history-request',
+      'history-response' => 'relay-history-response',
+      _ => type,
+    };
+    _sendSignal(friend.id, relayType, payloadWithCipher);
     return true;
   }
 
@@ -374,8 +398,11 @@ class RealtimeChatService {
         if (!hadSessionKey) {
           await _sendLocalKey(peer);
         }
-        if (peer.ready) {
-          onPeerStatus?.call(peer.friendId, 'ready');
+        if (peer.sessionKey != null) {
+          onPeerStatus?.call(
+            peer.friendId,
+            peer.ready ? 'ready' : 'relay-ready',
+          );
         }
         break;
       case 'offer':
@@ -434,6 +461,21 @@ class RealtimeChatService {
         }
         await connection.addCandidate(iceCandidate);
         break;
+      case 'relay-message':
+        await _handleRelayMessage(from, payload);
+        break;
+      case 'relay-ack':
+        onDelivered?.call(from, payload['messageId'] as String? ?? '');
+        break;
+      case 'relay-group-control':
+        await _handleRelayGroupControl(from, payload);
+        break;
+      case 'relay-history-request':
+        await _handleRelayHistoryRequest(from, payload);
+        break;
+      case 'relay-history-response':
+        await _handleRelayHistoryResponse(from, payload);
+        break;
     }
   }
 
@@ -446,6 +488,9 @@ class RealtimeChatService {
       await existing.initializeKeyPair();
       if (existing.connection == null) {
         await _createPeerConnection(existing);
+      }
+      if (existing.sessionKey == null) {
+        await _sendLocalKey(existing);
       }
       if (initiator && existing.channel == null && !existing.offerStarted) {
         await _startOffer(existing);
@@ -529,14 +574,14 @@ class RealtimeChatService {
       _attachDataChannel(peer, channel);
     };
     connection.onConnectionState = (state) {
-      onPeerStatus?.call(peer.friendId, state.name);
+      onPeerStatus?.call(peer.friendId, 'webrtc-${state.name}');
     };
   }
 
   void _attachDataChannel(_PeerSession peer, RTCDataChannel channel) {
     peer.channel = channel;
     channel.onDataChannelState = (state) {
-      onPeerStatus?.call(peer.friendId, state.name);
+      onPeerStatus?.call(peer.friendId, 'data-${state.name}');
       if (peer.ready) {
         onPeerStatus?.call(peer.friendId, 'ready');
       }
@@ -644,6 +689,111 @@ class RealtimeChatService {
     );
   }
 
+  Future<void> _handleRelayMessage(
+    String from,
+    Map<String, dynamic> payload,
+  ) async {
+    final peer = await _ensurePeer(from, initiator: false);
+    if (peer.sessionKey == null) {
+      return;
+    }
+    final messageId = payload['messageId'] as String? ?? '';
+    final text = await _decryptText(
+      payload['cipherText'] as String? ?? '',
+      peer.sessionKey!,
+    );
+    onMessage?.call(
+      RealtimeIncomingMessage(
+        friendId: from,
+        messageId: messageId,
+        text: text,
+        groupId: payload['groupId'] as String? ?? '',
+        groupName: payload['groupName'] as String? ?? '',
+        memberIds: (payload['memberIds'] as List<dynamic>? ?? const [])
+            .map((entry) => entry.toString())
+            .where((entry) => entry.isNotEmpty)
+            .toList(),
+        adminUserId: payload['adminUserId'] as String? ?? '',
+      ),
+    );
+    _sendSignal(from, 'relay-ack', {'messageId': messageId});
+  }
+
+  Future<void> _handleRelayGroupControl(
+    String from,
+    Map<String, dynamic> payload,
+  ) async {
+    final peer = await _ensurePeer(from, initiator: false);
+    if (peer.sessionKey == null) {
+      return;
+    }
+    final clear = await _decryptText(
+      payload['cipherText'] as String? ?? '',
+      peer.sessionKey!,
+    );
+    final data = jsonDecode(clear) as Map<String, dynamic>;
+    onGroupControl?.call(
+      RealtimeGroupControl(
+        friendId: from,
+        controlId: payload['controlId'] as String? ?? '',
+        controlType: data['controlType'] as String? ?? '',
+        groupId: data['groupId'] as String? ?? '',
+        groupName: data['groupName'] as String? ?? '',
+        memberIds: (data['memberIds'] as List<dynamic>? ?? const [])
+            .map((entry) => entry.toString())
+            .where((entry) => entry.isNotEmpty)
+            .toList(),
+        adminUserId: data['adminUserId'] as String? ?? '',
+        removedUserId: data['removedUserId'] as String? ?? '',
+      ),
+    );
+  }
+
+  Future<void> _handleRelayHistoryRequest(
+    String from,
+    Map<String, dynamic> payload,
+  ) async {
+    final peer = await _ensurePeer(from, initiator: false);
+    if (peer.sessionKey == null) {
+      return;
+    }
+    final clear = await _decryptText(
+      payload['cipherText'] as String? ?? '',
+      peer.sessionKey!,
+    );
+    final data = jsonDecode(clear) as Map<String, dynamic>;
+    onHistoryRequest?.call(
+      RealtimeHistoryRequest(
+        friendId: from,
+        requestId: data['requestId'] as String? ?? '',
+      ),
+    );
+  }
+
+  Future<void> _handleRelayHistoryResponse(
+    String from,
+    Map<String, dynamic> payload,
+  ) async {
+    final peer = await _ensurePeer(from, initiator: false);
+    if (peer.sessionKey == null) {
+      return;
+    }
+    final clear = await _decryptText(
+      payload['cipherText'] as String? ?? '',
+      peer.sessionKey!,
+    );
+    final data = jsonDecode(clear) as Map<String, dynamic>;
+    onHistoryResponse?.call(
+      RealtimeHistoryResponse(
+        friendId: from,
+        requestId: data['requestId'] as String? ?? '',
+        conversations: (data['conversations'] as List<dynamic>? ?? const [])
+            .map((entry) => entry as Map<String, dynamic>)
+            .toList(),
+      ),
+    );
+  }
+
   Future<void> _sendLocalKey(_PeerSession peer) async {
     final publicKey = await peer.localPublicKeyBase64();
     _sendSignal(peer.friendId, 'key', {'publicKey': publicKey});
@@ -706,6 +856,8 @@ class _PeerSession {
   bool get ready =>
       channel?.state == RTCDataChannelState.RTCDataChannelOpen &&
       sessionKey != null;
+
+  bool get canSendSecurePayloads => sessionKey != null;
 
   Future<void> initializeKeyPair() async {
     localKeyPair ??= await x25519.newKeyPair();

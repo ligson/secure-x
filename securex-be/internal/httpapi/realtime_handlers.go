@@ -5,11 +5,18 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/ligson/secure-x/securex-be/internal/middleware"
 	"github.com/ligson/secure-x/securex-be/internal/model"
+)
+
+const (
+	realtimeWriteWait = 10 * time.Second
+	realtimePongWait  = 75 * time.Second
+	realtimePingEvery = 25 * time.Second
 )
 
 func (h *Handler) realtimeConfig(c *gin.Context) {
@@ -23,10 +30,11 @@ func (h *Handler) realtimeConfig(c *gin.Context) {
 	}
 
 	RespondSuccess(c, http.StatusOK, "实时服务配置已加载", gin.H{
-		"transport":        "webrtc",
+		"transport":        "hybrid",
 		"signalingEnabled": true,
 		"signalingUrl":     scheme + "://" + host + "/api/v1/realtime/ws",
 		"iceServers":       []string{},
+		"relayMode":        "ephemeral_encrypted_websocket",
 		"messageStorage":   "client_local_only",
 	})
 }
@@ -43,10 +51,11 @@ type realtimeHub struct {
 }
 
 type realtimeClient struct {
-	userID string
-	conn   *websocket.Conn
-	send   chan realtimeSignal
-	hub    *realtimeHub
+	userID  string
+	conn    *websocket.Conn
+	send    chan realtimeSignal
+	hub     *realtimeHub
+	writeMu sync.Mutex
 }
 
 type realtimeSignal struct {
@@ -182,10 +191,21 @@ func (h *Handler) friendIDs(userID string) []string {
 }
 
 func (c *realtimeClient) readLoop(handler *Handler) {
-	defer c.conn.Close()
+	c.conn.SetReadLimit(1 << 20)
+	_ = c.conn.SetReadDeadline(time.Now().Add(realtimePongWait))
+	c.conn.SetPingHandler(func(appData string) error {
+		_ = c.conn.SetReadDeadline(time.Now().Add(realtimePongWait))
+		return c.writeControl(websocket.PongMessage, []byte(appData))
+	})
+	c.conn.SetPongHandler(func(appData string) error {
+		_ = c.conn.SetReadDeadline(time.Now().Add(realtimePongWait))
+		return nil
+	})
+
 	for {
 		var signal realtimeSignal
 		if err := c.conn.ReadJSON(&signal); err != nil {
+			log.Printf("实时信令读取失败：userID=%s, err=%v", c.userID, err)
 			return
 		}
 		if signal.To == "" || signal.To == c.userID {
@@ -204,9 +224,48 @@ func (c *realtimeClient) readLoop(handler *Handler) {
 }
 
 func (c *realtimeClient) writeLoop() {
-	for signal := range c.send {
-		if err := c.conn.WriteJSON(signal); err != nil {
-			return
+	ticker := time.NewTicker(realtimePingEvery)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case signal, ok := <-c.send:
+			if !ok {
+				return
+			}
+			if err := c.writeJSON(signal); err != nil {
+				log.Printf(
+					"实时信令写入失败：userID=%s, type=%s, err=%v",
+					c.userID,
+					signal.Type,
+					err,
+				)
+				return
+			}
+		case <-ticker.C:
+			if err := c.writeControl(websocket.PingMessage, nil); err != nil {
+				log.Printf("实时信令心跳发送失败：userID=%s, err=%v", c.userID, err)
+				return
+			}
 		}
 	}
+}
+
+func (c *realtimeClient) writeJSON(signal realtimeSignal) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
+	_ = c.conn.SetWriteDeadline(time.Now().Add(realtimeWriteWait))
+	return c.conn.WriteJSON(signal)
+}
+
+func (c *realtimeClient) writeControl(messageType int, data []byte) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
+	return c.conn.WriteControl(
+		messageType,
+		data,
+		time.Now().Add(realtimeWriteWait),
+	)
 }

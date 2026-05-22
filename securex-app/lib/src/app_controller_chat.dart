@@ -608,13 +608,8 @@ extension AppControllerChatActions on AppController {
     final online =
         normalizedStatus == 'presence-online' ||
         normalizedStatus == 'ready' ||
-        normalizedStatus.contains('open') ||
-        normalizedStatus.contains('connected');
-    final offline =
-        normalizedStatus == 'presence-offline' ||
-        normalizedStatus.contains('closed') ||
-        normalizedStatus.contains('failed') ||
-        normalizedStatus.contains('disconnected');
+        normalizedStatus == 'relay-ready';
+    final offline = normalizedStatus == 'presence-offline';
 
     if (online || offline) {
       _chatFriendOnline[friendId] = online;

@@ -24,6 +24,7 @@ part 'app_controller_records.dart';
 part 'app_controller_friends.dart';
 part 'app_controller_chat.dart';
 part 'app_controller_session.dart';
+part 'app_controller_runtime.dart';
 part 'app_controller_helpers.dart';
 
 class FileUploadTask {
@@ -74,6 +75,7 @@ class AppController extends ChangeNotifier {
     _realtimeChatService.onDelivered = _markRealtimeMessageDelivered;
     _realtimeChatService.onPeerStatus = _handleRealtimePeerStatus;
     _realtimeChatService.onFriendshipUpdated = _handleRealtimeFriendshipUpdated;
+    _realtimeChatService.onSignalingState = _handleRealtimeSignalingState;
   }
 
   static const _baseUrlKey = 'baseUrl';
@@ -112,6 +114,7 @@ class AppController extends ChangeNotifier {
   final Set<String> _historyRequestedPeerIds = {};
   RealtimeConfig? _realtimeConfig;
   final List<FileUploadTask> _uploadTasks = [];
+  Future<void> _realtimeResumeTask = Future.value();
 
   bool get initialized => _initialized;
   bool get busy => _busy;

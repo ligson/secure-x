@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:io';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -50,11 +52,47 @@ class SecureXApp extends StatefulWidget {
   State<SecureXApp> createState() => _SecureXAppState();
 }
 
-class _SecureXAppState extends State<SecureXApp> {
+class _SecureXAppState extends State<SecureXApp> with WidgetsBindingObserver {
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     widget.controller.initialize();
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen(
+      _handleConnectivityChanged,
+    );
+    unawaited(_initializeConnectivitySnapshot());
+  }
+
+  Future<void> _initializeConnectivitySnapshot() async {
+    final results = await Connectivity().checkConnectivity();
+    await _handleConnectivityChanged(results);
+  }
+
+  Future<void> _handleConnectivityChanged(
+    List<ConnectivityResult> results,
+  ) async {
+    if (results.contains(ConnectivityResult.none)) {
+      return;
+    }
+    await widget.controller.handleNetworkReachable();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(widget.controller.handleAppResumed());
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _connectivitySubscription?.cancel();
+    _connectivitySubscription = null;
+    super.dispose();
   }
 
   @override

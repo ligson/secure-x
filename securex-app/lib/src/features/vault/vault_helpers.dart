@@ -85,61 +85,21 @@ extension _VaultHelpers on _VaultScreenState {
         .length;
   }
 
-  void _applyGeneratorPreset(String preset) {
-    setState(() {
-      switch (preset) {
-        case 'pin':
-          _generatorLength = 6;
-          _generatorUseUppercase = false;
-          _generatorUseLowercase = false;
-          _generatorUseDigits = true;
-          _generatorUseSymbols = false;
-          break;
-        case 'memorable':
-          _generatorLength = 16;
-          _generatorUseUppercase = false;
-          _generatorUseLowercase = true;
-          _generatorUseDigits = true;
-          _generatorUseSymbols = false;
-          break;
-        default:
-          _generatorLength = 20;
-          _generatorUseUppercase = true;
-          _generatorUseLowercase = true;
-          _generatorUseDigits = true;
-          _generatorUseSymbols = true;
-      }
-    });
-    _regeneratePassword();
-  }
-
   void _regeneratePassword() {
     final canGenerate =
         _generatorUseUppercase ||
         _generatorUseLowercase ||
         _generatorUseDigits ||
         _generatorUseSymbols;
-    setState(() {
-      _generatedPassword = canGenerate
-          ? widget.controller.generatePassword(
-              length: _generatorLength,
-              useUppercase: _generatorUseUppercase,
-              useLowercase: _generatorUseLowercase,
-              useDigits: _generatorUseDigits,
-              useSymbols: _generatorUseSymbols,
-            )
-          : '';
-    });
-  }
-
-  Future<void> _copyGeneratedPassword(BuildContext context) async {
-    await Clipboard.setData(ClipboardData(text: _generatedPassword));
-    if (!context.mounted) {
-      return;
-    }
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('密码已复制')));
+    _generatedPassword = canGenerate
+        ? widget.controller.generatePassword(
+            length: _generatorLength,
+            useUppercase: _generatorUseUppercase,
+            useLowercase: _generatorUseLowercase,
+            useDigits: _generatorUseDigits,
+            useSymbols: _generatorUseSymbols,
+          )
+        : '';
   }
 
   Widget _buildVaultTabScrollView({
