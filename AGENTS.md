@@ -166,6 +166,10 @@
 - 用户说“发版”时，默认从当前最新 `v*` tag 自动递增 patch 版本；例如当前最新为 `v1.0.0`，下一次就是 `v1.0.1`，除非用户明确指定其他版本
 - 发版前必须先整理代码和文档，更新对应版本的 `CHANGELOG.md` 内容，然后提交、打 tag、推送 `main` 与 tag；不要跳过文档和 changelog
 - 发版前必须更新 `CHANGELOG.md`；生产证书、签名文件、后端真实配置和密钥材料禁止提交到仓库，后续正式签名应使用 GitHub Secrets 或私有签名服务
+- 后端 release 包内可执行文件固定命名为 `secure-x`，前端各平台应用显示名也统一为 `secure-x`
+- 后端生产包应包含 `start.sh`、`stop.sh`、`status.sh` 与 `secure-x.service` 参考文件，生产日志默认支持应用日志与访问日志输出目录配置
+- 前端新增跨平台能力时必须同步检查平台权限与安全策略：Android Manifest、iOS Info.plist、macOS entitlements、Windows/Linux 平台配置都要按最小权限原则补齐；移动端生产后端地址默认建议使用 HTTPS，明文 HTTP 只为本机或局域网调试保留明确例外
+- 应用内版本更新从 `ligson/secure-x` GitHub Release 获取最新版本；Android/桌面端可下载并打开匹配平台的安装包，iOS 不能应用内自安装，只能跳转 Release/TestFlight/App Store 等系统允许渠道
 
 ## 当前文档清单
 

@@ -8,15 +8,15 @@ import (
 )
 
 func main() {
-	configPath := flag.String("config", "", "path to securex-be YAML config file")
+	configPath := flag.String("config", "", "Secure X 后端 YAML 配置文件路径")
 	flag.Parse()
 
 	server, err := app.NewServer(*configPath)
 	if err != nil {
-		log.Fatalf("failed to create server: %v", err)
+		log.Fatalf("Secure X 后端初始化失败：%v", err)
 	}
 
 	if err := server.Run(); err != nil {
-		log.Fatalf("server stopped with error: %v", err)
+		log.Fatalf("Secure X 后端异常停止：%v", err)
 	}
 }

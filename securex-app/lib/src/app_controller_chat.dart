@@ -377,7 +377,7 @@ extension AppControllerChatActions on AppController {
       await _connectRealtimeChat();
       return _realtimeChatService.sendMessage(friend: friend, message: message);
     } catch (error) {
-      debugPrint('Realtime send failed: $error');
+      appLog('实时单聊发送失败', error);
       return false;
     }
   }
@@ -406,7 +406,7 @@ extension AppControllerChatActions on AppController {
         }
       }
     } catch (error) {
-      debugPrint('Realtime group send failed: $error');
+      appLog('实时群聊发送失败', error);
     }
     return sentPeerIds;
   }
@@ -435,7 +435,7 @@ extension AppControllerChatActions on AppController {
         );
       }
     } catch (error) {
-      debugPrint('Realtime group control failed: $error');
+      appLog('实时群聊控制消息发送失败', error);
     }
   }
 
@@ -603,7 +603,7 @@ extension AppControllerChatActions on AppController {
   }
 
   void _handleRealtimePeerStatus(String friendId, String status) {
-    debugPrint('Realtime peer $friendId status: $status');
+    appLog('实时聊天好友状态变化：friendId=$friendId, status=$status');
     final normalizedStatus = status.toLowerCase();
     final online =
         normalizedStatus == 'presence-online' ||
@@ -643,7 +643,7 @@ extension AppControllerChatActions on AppController {
         _historyRequestedPeerIds.add(friendId);
       }
     } catch (error) {
-      debugPrint('Realtime history request failed: $error');
+      appLog('实时聊天历史同步请求失败', error);
     }
   }
 
@@ -662,7 +662,7 @@ extension AppControllerChatActions on AppController {
         conversations: conversations,
       );
     } catch (error) {
-      debugPrint('Realtime history response failed: $error');
+      appLog('实时聊天历史同步响应失败', error);
     }
   }
 

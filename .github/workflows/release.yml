@@ -69,9 +69,14 @@ jobs:
           version="${RELEASE_TAG#v}"
           package_dir="dist/securex-be-${version}-${{ matrix.target }}"
           mkdir -p "$package_dir"
-          go build -trimpath -ldflags="-s -w" -o "$package_dir/securex-be" ./cmd/server
+          go build -trimpath -ldflags="-s -w" -o "$package_dir/secure-x" ./cmd/server
           cp config.example.yaml "$package_dir/config.example.yaml"
           cp README.md "$package_dir/README.md"
+          cp deploy/start.sh "$package_dir/start.sh"
+          cp deploy/stop.sh "$package_dir/stop.sh"
+          cp deploy/status.sh "$package_dir/status.sh"
+          cp deploy/secure-x.service "$package_dir/secure-x.service"
+          chmod +x "$package_dir/start.sh" "$package_dir/stop.sh" "$package_dir/status.sh" "$package_dir/secure-x"
           tar -C dist -czf "dist/securex-be-${version}-${{ matrix.target }}.tar.gz" "$(basename "$package_dir")"
 
       - name: Upload backend artifact

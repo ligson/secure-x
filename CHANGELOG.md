@@ -4,8 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.1] - 2026-05-22
+
 ### Updated
 
+- 统一发布命名：后端 release 包内可执行文件改为 `secure-x`，前端 Android、iOS、macOS、Windows、Linux 应用显示/窗口名统一为 `secure-x`
+- 补齐客户端平台权限：Android release 主 manifest 增加联网与网络状态权限，并仅允许本机/模拟器调试地址使用明文 HTTP；iOS 增加本地网络访问说明与本地 HTTP 访问例外
+- 新增设置页 `关于`：展示应用图标、当前版本、版本介绍与版本更新入口，参考移动端关于页布局
+- 新增版本更新能力：客户端可从 `ligson/secure-x` GitHub Release 检查最新版本，按当前平台选择安装包下载；桌面端和 Android 下载后打开安装文件，iOS 因系统限制跳转 Release 页面
+- 新增 `package_info_plus`、`url_launcher`、`open_filex` 依赖，用公共库处理版本读取、外部链接和安装包打开
+- 新增后端日志配置：`logging.dir`、`logging.appFile`、`logging.accessFile`，应用日志与 Gin 访问日志默认写入日志目录并同时输出到控制台
+- 新增后端生产部署辅助文件：`start.sh`、`stop.sh`、`status.sh` 与 `secure-x.service`，并在 release 打包时一并放入后端压缩包
+- 优化开发脚本：本地后端调试二进制改为 `.dev/bin/secure-x`，开发配置自动写入日志目录配置
+- 补充中文日志与注释：后端启动、数据库、文件目录、实时信令连接/断开/投递失败输出中文日志；前端新增统一本地日志 helper，现有调试日志改为中文
 - 更新发版协作规则：后续用户说“发版”时默认基于当前最新 `v*` tag 自动递增 patch 版本，例如 `v1.0.0` 后下一版为 `v1.0.1`
 - 调整 changelog 规范：发布章节必须同时包含版本与日期，格式为 `## [vX.Y.Z] - YYYY-MM-DD`，方便 GitHub Release 精准读取对应版本内容
 - 调整 GitHub Actions Release 说明提取逻辑：优先按当前 tag 匹配 `CHANGELOG.md` 的对应版本章节，避免误把未发布内容写入 Release

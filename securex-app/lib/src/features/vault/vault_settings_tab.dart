@@ -61,6 +61,13 @@ extension _VaultSettingsTab on _VaultScreenState {
                           subtitle: '同步、锁定、退出登录',
                           onTap: _showSessionSettings,
                         ),
+                        Divider(height: 1, color: context.sx.border),
+                        _SettingsMenuTile(
+                          icon: Icons.info_outline,
+                          title: '关于',
+                          subtitle: '版本介绍、版本更新',
+                          onTap: _showAboutSettings,
+                        ),
                       ],
                     ),
                   ),
@@ -243,6 +250,12 @@ extension _VaultSettingsTab on _VaultScreenState {
         ],
       ),
     );
+  }
+
+  Future<void> _showAboutSettings() async {
+    await Navigator.of(
+      context,
+    ).push<void>(MaterialPageRoute(builder: (context) => const _AboutPage()));
   }
 
   Future<void> _openSettingsPage({

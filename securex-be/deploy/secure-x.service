@@ -1,0 +1,22 @@
+[Unit]
+Description=Secure X backend service
+Documentation=https://github.com/ligson/secure-x
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=securex
+Group=securex
+WorkingDirectory=/opt/secure-x
+ExecStart=/opt/secure-x/secure-x --config /opt/secure-x/config.yaml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/secure-x/data /opt/secure-x/logs
+
+[Install]
+WantedBy=multi-user.target

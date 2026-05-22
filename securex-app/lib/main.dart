@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -6,12 +8,14 @@ import 'src/api_client.dart';
 import 'src/app_controller.dart';
 import 'src/crypto_service.dart';
 import 'src/models.dart';
+import 'src/update_service.dart';
 
 part 'src/ui/theme.dart';
 part 'src/features/auth/auth_screen.dart';
 part 'src/features/auth/unlock_screen.dart';
 part 'src/features/settings/settings_widgets.dart';
 part 'src/features/settings/security_settings_pages.dart';
+part 'src/features/settings/about_pages.dart';
 part 'src/features/settings/theme_option_card.dart';
 part 'src/features/vault/vault_password_tab.dart';
 part 'src/features/vault/vault_generator_tab.dart';

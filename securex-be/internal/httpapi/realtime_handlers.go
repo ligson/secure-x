@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -63,6 +64,7 @@ func (h *Handler) realtimeWebSocket(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	conn, err := realtimeUpgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
+		log.Printf("实时信令连接升级失败：userID=%s, err=%v", userID, err)
 		return
 	}
 
@@ -74,6 +76,7 @@ func (h *Handler) realtimeWebSocket(c *gin.Context) {
 		hub:    h.realtimeHub,
 	}
 	h.realtimeHub.add(client)
+	log.Printf("实时信令已连接：userID=%s", userID)
 	go client.writeLoop()
 
 	friendIDs := h.friendIDs(userID)
@@ -83,6 +86,7 @@ func (h *Handler) realtimeWebSocket(c *gin.Context) {
 	}
 	defer func() {
 		h.realtimeHub.remove(client)
+		log.Printf("实时信令已断开：userID=%s", userID)
 		if !h.realtimeHub.isOnline(userID) {
 			h.realtimeHub.broadcastPresence(userID, false, friendIDs)
 		}
@@ -151,12 +155,14 @@ func (h *realtimeHub) forward(to string, signal realtimeSignal) bool {
 
 	clients := h.clients[to]
 	if len(clients) == 0 {
+		log.Printf("实时信令未投递：to=%s, type=%s, reason=用户不在线", to, signal.Type)
 		return false
 	}
 	for client := range clients {
 		select {
 		case client.send <- signal:
 		default:
+			log.Printf("实时信令未投递：to=%s, type=%s, reason=发送队列已满", to, signal.Type)
 		}
 	}
 	return true

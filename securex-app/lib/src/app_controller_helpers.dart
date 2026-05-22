@@ -244,7 +244,7 @@ extension AppControllerInternalHelpers on AppController {
       _sortChatConversations();
       unawaited(_openRealtimePeersForHistorySync());
     } catch (error) {
-      debugPrint('Chat snapshot decrypt failed: $error');
+      appLog('本机聊天密文快照解密失败', error);
       _chatConversations = [];
       unawaited(_openRealtimePeersForHistorySync());
     }
@@ -318,7 +318,7 @@ extension AppControllerInternalHelpers on AppController {
         return secureToken;
       }
     } catch (error) {
-      debugPrint('Secure token read failed: $error');
+      appLog('读取系统安全存储中的登录令牌失败', error);
     }
 
     if (_supportsDebugTokenFallback) {
@@ -343,7 +343,7 @@ extension AppControllerInternalHelpers on AppController {
       }
       return true;
     } catch (error) {
-      debugPrint('Secure token write failed: $error');
+      appLog('写入系统安全存储中的登录令牌失败', error);
       if (_supportsDebugTokenFallback) {
         await prefs.setString(
           _storageKey(AppController._debugTokenFallbackKey),
@@ -360,7 +360,7 @@ extension AppControllerInternalHelpers on AppController {
     try {
       await _secureStorage.delete(key: _storageKey(AppController._tokenKey));
     } catch (error) {
-      debugPrint('Secure token delete failed: $error');
+      appLog('删除系统安全存储中的登录令牌失败', error);
     }
     if (_supportsDebugTokenFallback) {
       await prefs.remove(_storageKey(AppController._debugTokenFallbackKey));

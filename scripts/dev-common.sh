@@ -8,13 +8,15 @@ PID_DIR="${DEV_DIR}/pids"
 LOG_DIR="${DEV_DIR}/logs"
 BIN_DIR="${DEV_DIR}/bin"
 
-BACKEND_PID_FILE="${PID_DIR}/securex-be.pid"
+BACKEND_PID_FILE="${PID_DIR}/secure-x.pid"
+BACKEND_LEGACY_PID_FILE="${PID_DIR}/securex-be.pid"
 
 BACKEND_LOG_FILE="${LOG_DIR}/securex-be.log"
-BACKEND_BIN_FILE="${BIN_DIR}/securex-be"
+BACKEND_BIN_FILE="${BIN_DIR}/secure-x"
+BACKEND_LEGACY_BIN_FILE="${BIN_DIR}/securex-be"
 BACKEND_CONFIG_FILE="${DEV_DIR}/securex-be.yaml"
-APP_MACOS_APP_FILE="${ROOT_DIR}/securex-app/build/macos/Build/Products/Debug/securex_app.app"
-APP_MACOS_BIN_FILE="${ROOT_DIR}/securex-app/build/macos/Build/Products/Debug/securex_app.app/Contents/MacOS/securex_app"
+APP_MACOS_APP_FILE="${ROOT_DIR}/securex-app/build/macos/Build/Products/Debug/secure-x.app"
+APP_MACOS_BIN_FILE="${ROOT_DIR}/securex-app/build/macos/Build/Products/Debug/secure-x.app/Contents/MacOS/secure-x"
 
 BACKEND_ADDR="${BACKEND_ADDR:-127.0.0.1:8080}"
 BACKEND_DATABASE_DSN="${BACKEND_DATABASE_DSN:-${ROOT_DIR}/.dev/securex.db}"
@@ -36,6 +38,10 @@ database:
   dsn: "${BACKEND_DATABASE_DSN}"
 storage:
   fileDir: "${BACKEND_FILE_DIR}"
+logging:
+  dir: "${LOG_DIR}"
+  appFile: "secure-x.log"
+  accessFile: "access.log"
 auth:
   jwtSecret: "${BACKEND_JWT_SECRET}"
 EOF

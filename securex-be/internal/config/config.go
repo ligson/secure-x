@@ -13,6 +13,7 @@ type Config struct {
 	Server   ServerConfig   `yaml:"server"`
 	Database DatabaseConfig `yaml:"database"`
 	Storage  StorageConfig  `yaml:"storage"`
+	Logging  LoggingConfig  `yaml:"logging"`
 	Auth     AuthConfig     `yaml:"auth"`
 }
 
@@ -26,6 +27,12 @@ type DatabaseConfig struct {
 
 type StorageConfig struct {
 	FileDir string `yaml:"fileDir"`
+}
+
+type LoggingConfig struct {
+	Dir        string `yaml:"dir"`
+	AppFile    string `yaml:"appFile"`
+	AccessFile string `yaml:"accessFile"`
 }
 
 type AuthConfig struct {
@@ -42,6 +49,11 @@ func Default() Config {
 		},
 		Storage: StorageConfig{
 			FileDir: "data/files",
+		},
+		Logging: LoggingConfig{
+			Dir:        "logs",
+			AppFile:    "secure-x.log",
+			AccessFile: "access.log",
 		},
 		Auth: AuthConfig{
 			JWTSecret: "securex-dev-secret",
@@ -81,6 +93,15 @@ func (c *Config) applyDefaults() {
 	if c.Storage.FileDir == "" {
 		c.Storage.FileDir = defaults.Storage.FileDir
 	}
+	if c.Logging.Dir == "" {
+		c.Logging.Dir = defaults.Logging.Dir
+	}
+	if c.Logging.AppFile == "" {
+		c.Logging.AppFile = defaults.Logging.AppFile
+	}
+	if c.Logging.AccessFile == "" {
+		c.Logging.AccessFile = defaults.Logging.AccessFile
+	}
 	if c.Auth.JWTSecret == "" {
 		c.Auth.JWTSecret = defaults.Auth.JWTSecret
 	}
@@ -95,5 +116,8 @@ func (c *Config) resolveRelativePaths(baseDir string) {
 	}
 	if c.Storage.FileDir != "" && !filepath.IsAbs(c.Storage.FileDir) {
 		c.Storage.FileDir = filepath.Join(baseDir, c.Storage.FileDir)
+	}
+	if c.Logging.Dir != "" && !filepath.IsAbs(c.Logging.Dir) {
+		c.Logging.Dir = filepath.Join(baseDir, c.Logging.Dir)
 	}
 }

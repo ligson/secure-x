@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_client.dart';
+import 'app_logger.dart';
 import 'crypto_service.dart';
 import 'models.dart';
 import 'realtime_chat_service.dart';

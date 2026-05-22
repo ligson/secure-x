@@ -1,8 +1,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 正式包也必须声明网络权限，否则无法访问用户配置的 Secure X 后端。 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- 用于判断网络状态，便于后续给出更友好的中文连接提示。 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- Android 更新 APK 时需要用户授权“安装未知应用”，这里只用于用户主动点击版本更新。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+
     <application
-        android:label="securex_app"
+        android:label="secure-x"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:networkSecurityConfig="@xml/network_security_config">
         <activity
             android:name=".MainActivity"
             android:exported="true"

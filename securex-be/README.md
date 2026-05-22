@@ -50,6 +50,35 @@ database:
 storage:
   fileDir: "data/files"
 
+logging:
+  dir: "logs"
+  appFile: "secure-x.log"
+  accessFile: "access.log"
+
 auth:
   jwtSecret: "replace-with-a-long-random-secret"
 ```
+
+## 生产部署脚本
+
+Release 后端包中的可执行文件名为 `secure-x`，并包含以下生产辅助文件：
+
+- `start.sh`：使用当前目录下的 `secure-x` 与 `config.yaml` 后台启动服务
+- `stop.sh`：根据 `run/secure-x.pid` 停止服务
+- `status.sh`：查看当前服务进程状态
+- `secure-x.service`：systemd 参考配置，默认路径为 `/opt/secure-x`
+
+首次部署建议：
+
+```bash
+cp config.example.yaml config.yaml
+chmod 600 config.yaml
+./start.sh
+./status.sh
+```
+
+默认日志：
+
+- 应用日志：`logs/secure-x.log`
+- 访问日志：`logs/access.log`
+- 脚本启动兜底日志：`logs/secure-x-console.log`

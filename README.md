@@ -104,9 +104,11 @@ Secure X 是一个面向个人与小团队的安全敏感信息存储维护系�
 
 ## 发布打包
 
-仓库已提供 GitHub Actions `Release` workflow。推送 `v*` 标签后会自动构建后端 Linux/macOS 包、Flutter Windows/macOS/Android/iOS 产物，并把产物上传到对应 GitHub Release。Release 说明从 `CHANGELOG.md` 最新章节读取。
+仓库已提供 GitHub Actions `Release` workflow。推送 `v*` 标签后会自动构建后端 Linux/macOS 包、Flutter Windows/macOS/Android/iOS 产物，并把产物上传到对应 GitHub Release。Release 说明从 `CHANGELOG.md` 中与当前 tag 匹配的版本章节读取。
 
 iOS 当前输出未签名包，适合作为后续签名/TestFlight 流程输入；正式分发仍需要单独配置 Apple 证书和 Provisioning Profile。
+
+后端发布包内的可执行文件统一命名为 `secure-x`，并附带生产环境 `start.sh`、`stop.sh`、`status.sh` 与 `secure-x.service` 示例。前端各平台应用显示名统一为 `secure-x`。
 
 ## 当前状态
 

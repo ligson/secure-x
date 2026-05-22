@@ -39,7 +39,7 @@ extension AppControllerFriendActions on AppController {
       }
       notifyListeners();
     } catch (error) {
-      debugPrint('Realtime friendship refresh failed: $error');
+      appLog('实时好友关系刷新失败', error);
     }
   }
 

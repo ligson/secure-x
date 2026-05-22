@@ -10,14 +10,21 @@ require_command python3
 write_backend_config
 
 cleanup_stale_pid_file "${BACKEND_PID_FILE}" "${BACKEND_BIN_FILE}"
+cleanup_stale_pid_file "${BACKEND_LEGACY_PID_FILE}" "${BACKEND_LEGACY_BIN_FILE}"
 
 existing_pid="$(read_pid_file "${BACKEND_PID_FILE}")"
 if [[ -n "${existing_pid}" ]] && pid_matches_pattern "${existing_pid}" "${BACKEND_BIN_FILE}"; then
-  echo "securex-be is already running (pid ${existing_pid})"
+  echo "secure-x 后端已在运行 (pid ${existing_pid})"
 else
-  stop_matching_processes "${BACKEND_BIN_FILE}" "securex-be stray instance" || true
+  legacy_pid="$(read_pid_file "${BACKEND_LEGACY_PID_FILE}")"
+  if [[ -n "${legacy_pid}" ]] && pid_matches_pattern "${legacy_pid}" "${BACKEND_LEGACY_BIN_FILE}"; then
+    stop_pid_gracefully "${legacy_pid}" "旧版 securex-be 后端实例"
+    rm -f "${BACKEND_LEGACY_PID_FILE}"
+  fi
+  stop_matching_processes "${BACKEND_LEGACY_BIN_FILE}" "旧版 securex-be 后端残留实例" || true
+  stop_matching_processes "${BACKEND_BIN_FILE}" "secure-x 后端残留实例" || true
 
-  echo "Starting securex-be on ${BACKEND_ADDR}"
+  echo "正在启动 secure-x 后端：${BACKEND_ADDR}"
   (
     cd "${ROOT_DIR}/securex-be"
     go build -o "${BACKEND_BIN_FILE}" ./cmd/server
@@ -65,14 +72,14 @@ fi
 sleep 1
 pid="$(read_pid_file "${BACKEND_PID_FILE}")"
 if [[ -z "${pid}" ]] || ! is_pid_running "${pid}"; then
-  echo "Failed to start securex-be. Check ${BACKEND_LOG_FILE}" >&2
+  echo "secure-x 后端启动失败，请查看 ${BACKEND_LOG_FILE}" >&2
   exit 1
 fi
 
 if ! wait_for_backend_ready; then
-  echo "securex-be started (pid ${pid}) but health check did not become ready. Check ${BACKEND_LOG_FILE}" >&2
+  echo "secure-x 后端已启动 (pid ${pid})，但健康检查未就绪，请查看 ${BACKEND_LOG_FILE}" >&2
   exit 1
 fi
 
-echo "securex-be started (pid ${pid})"
-echo "Log: ${BACKEND_LOG_FILE}"
+echo "secure-x 后端已启动 (pid ${pid})"
+echo "日志：${BACKEND_LOG_FILE}"

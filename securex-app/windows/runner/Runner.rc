@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.ligson" "\0"
-            VALUE "FileDescription", "securex_app" "\0"
+            VALUE "FileDescription", "secure-x" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "securex_app" "\0"
+            VALUE "InternalName", "secure-x" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 com.ligson. All rights reserved." "\0"
-            VALUE "OriginalFilename", "securex_app.exe" "\0"
-            VALUE "ProductName", "securex_app" "\0"
+            VALUE "OriginalFilename", "secure-x.exe" "\0"
+            VALUE "ProductName", "secure-x" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
