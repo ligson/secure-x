@@ -286,20 +286,22 @@ jobs:
         with:
           path: artifacts
 
-      - name: Extract latest changelog section
+      - name: Extract changelog section for tag
         shell: bash
         run: |
           set -euo pipefail
-          awk '
+          tag="$RELEASE_TAG"
+          awk -v tag="$tag" '
             /^## / {
               if (started) exit
-              started=1
+              if ($0 ~ "^## \\[" tag "\\]") started=1
             }
             started { print }
           ' CHANGELOG.md > release_notes.md
 
           if [ ! -s release_notes.md ]; then
-            echo 'Failed to extract latest changelog section from CHANGELOG.md.' >&2
+            echo "Failed to extract changelog section for ${tag} from CHANGELOG.md." >&2
+            echo "Expected heading format: ## [${tag}] - YYYY-MM-DD" >&2
             exit 1
           fi
 

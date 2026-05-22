@@ -2,7 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
-## 2026-05-21
+## [Unreleased]
+
+### Updated
+
+- 更新发版协作规则：后续用户说“发版”时默认基于当前最新 `v*` tag 自动递增 patch 版本，例如 `v1.0.0` 后下一版为 `v1.0.1`
+- 调整 changelog 规范：发布章节必须同时包含版本与日期，格式为 `## [vX.Y.Z] - YYYY-MM-DD`，方便 GitHub Release 精准读取对应版本内容
+- 调整 GitHub Actions Release 说明提取逻辑：优先按当前 tag 匹配 `CHANGELOG.md` 的对应版本章节，避免误把未发布内容写入 Release
+
+## [v1.0.0] - 2026-05-21
 
 ### Updated
 
@@ -138,7 +146,7 @@ All notable changes to this project will be documented in this file.
 - `securex-be`: 有效注册请求仍可返回 `201`
 - `scripts/start-dev.sh`: 在回退无签名调试方案后可再次成功构建并启动 macOS 客户端
 
-## 2026-05-20
+## [v0.1.0] - 2026-05-20
 
 ### Added
 

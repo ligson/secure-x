@@ -28,8 +28,11 @@
 ## 版本说明
 
 - Release 标题使用 tag，例如 `Secure X v1.0.0`
-- Release 内容从 `CHANGELOG.md` 的最新 `##` 章节自动提取
+- Release 内容从 `CHANGELOG.md` 中与当前 tag 对应的章节自动提取
+- 发布章节必须使用 `## [vX.Y.Z] - YYYY-MM-DD` 格式，例如 `## [v1.0.1] - 2026-05-22`
 - 每次准备发版前必须先更新 `CHANGELOG.md`
+- 用户说“发版”时，默认基于当前最新 `v*` tag 自动递增 patch 版本；例如当前最新为 `v1.0.0`，下一次发版就是 `v1.0.1`
+- 发版流程默认顺序为：整理代码与文档、更新对应版本 changelog、提交、打 tag、推送 main 与 tag
 
 ## iOS 签名边界
 
