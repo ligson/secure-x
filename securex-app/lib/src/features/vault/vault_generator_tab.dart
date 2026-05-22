@@ -3,6 +3,19 @@
 part of '../../../main.dart';
 
 extension _VaultGeneratorTab on _VaultScreenState {
+  Future<void> _showGeneratorPage() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (context) {
+          return Scaffold(
+            appBar: AppBar(title: const Text('密码生成器')),
+            body: SafeArea(child: _buildGeneratorTab(context)),
+          );
+        },
+      ),
+    );
+  }
+
   Widget _buildGeneratorTab(BuildContext context) {
     final canGenerate =
         _generatorUseUppercase ||

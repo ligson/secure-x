@@ -40,6 +40,15 @@ func (h *Handler) uploadFile(c *gin.Context) {
 		RespondFailure(c, http.StatusBadRequest, "invalid metadata")
 		return
 	}
+	folderID, ok, err := h.ownedFileFolderID(userID, metadata.FolderID)
+	if err != nil {
+		RespondFailure(c, http.StatusInternalServerError, "校验文件目录失败")
+		return
+	}
+	if !ok {
+		RespondFailure(c, http.StatusBadRequest, "文件目录不存在或不属于当前用户")
+		return
+	}
 
 	fileHeader, err := c.FormFile("cipher_file")
 	if err != nil {
@@ -65,7 +74,7 @@ func (h *Handler) uploadFile(c *gin.Context) {
 	record := model.StoredFile{
 		ID:          fileID,
 		UserID:      userID,
-		FolderID:    metadata.FolderID,
+		FolderID:    folderID,
 		Payload:     metadata.Payload,
 		StoragePath: fullPath,
 		CipherSize:  cipherSize,
@@ -94,7 +103,18 @@ func (h *Handler) updateFileMetadata(c *gin.Context) {
 		return
 	}
 
-	file.FolderID = req.FolderID
+	userID := middleware.CurrentUserID(c)
+	folderID, ok, err := h.ownedFileFolderID(userID, req.FolderID)
+	if err != nil {
+		RespondFailure(c, http.StatusInternalServerError, "校验文件目录失败")
+		return
+	}
+	if !ok {
+		RespondFailure(c, http.StatusBadRequest, "文件目录不存在或不属于当前用户")
+		return
+	}
+
+	file.FolderID = folderID
 	file.Payload = req.Payload
 	file.Version = normalizeVersion(req.Version)
 

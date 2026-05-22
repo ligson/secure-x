@@ -203,3 +203,231 @@ class DecryptedFileRecord {
 
   bool get chunked => chunkCipherSizes.isNotEmpty;
 }
+
+class PublicUser {
+  PublicUser({required this.id, required this.username, required this.email});
+
+  final String id;
+  final String username;
+  final String email;
+
+  factory PublicUser.fromJson(Map<String, dynamic> json) {
+    return PublicUser(
+      id: json['id'] as String? ?? '',
+      username: json['username'] as String? ?? '',
+      email: json['email'] as String? ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {'id': id, 'username': username, 'email': email};
+  }
+}
+
+class FriendRequestRecord {
+  FriendRequestRecord({
+    required this.id,
+    required this.requester,
+    required this.addressee,
+    required this.message,
+    required this.status,
+  });
+
+  final String id;
+  final PublicUser requester;
+  final PublicUser addressee;
+  final String message;
+  final String status;
+
+  factory FriendRequestRecord.fromJson(Map<String, dynamic> json) {
+    return FriendRequestRecord(
+      id: json['id'] as String? ?? '',
+      requester: PublicUser.fromJson(
+        json['requester'] as Map<String, dynamic>? ?? <String, dynamic>{},
+      ),
+      addressee: PublicUser.fromJson(
+        json['addressee'] as Map<String, dynamic>? ?? <String, dynamic>{},
+      ),
+      message: json['message'] as String? ?? '',
+      status: json['status'] as String? ?? '',
+    );
+  }
+}
+
+class RealtimeConfig {
+  RealtimeConfig({
+    required this.transport,
+    required this.signalingUrl,
+    required this.signalingEnabled,
+    required this.iceServers,
+  });
+
+  final String transport;
+  final String signalingUrl;
+  final bool signalingEnabled;
+  final List<String> iceServers;
+
+  factory RealtimeConfig.fromJson(Map<String, dynamic> json) {
+    return RealtimeConfig(
+      transport: json['transport'] as String? ?? 'webrtc',
+      signalingUrl: json['signalingUrl'] as String? ?? '',
+      signalingEnabled: json['signalingEnabled'] as bool? ?? false,
+      iceServers: (json['iceServers'] as List<dynamic>? ?? [])
+          .map((entry) => entry.toString())
+          .toList(),
+    );
+  }
+}
+
+class ChatMessage {
+  ChatMessage({
+    required this.id,
+    required this.friendId,
+    required this.text,
+    required this.sentByMe,
+    required this.createdAt,
+    required this.status,
+    this.senderId = '',
+    this.senderName = '',
+    this.sentPeerIds = const [],
+    this.deliveredPeerIds = const [],
+  });
+
+  final String id;
+  final String friendId;
+  final String text;
+  final bool sentByMe;
+  final DateTime createdAt;
+  final String status;
+  final String senderId;
+  final String senderName;
+  final List<String> sentPeerIds;
+  final List<String> deliveredPeerIds;
+
+  ChatMessage copyWith({
+    String? id,
+    String? friendId,
+    String? text,
+    bool? sentByMe,
+    DateTime? createdAt,
+    String? status,
+    String? senderId,
+    String? senderName,
+    List<String>? sentPeerIds,
+    List<String>? deliveredPeerIds,
+  }) {
+    return ChatMessage(
+      id: id ?? this.id,
+      friendId: friendId ?? this.friendId,
+      text: text ?? this.text,
+      sentByMe: sentByMe ?? this.sentByMe,
+      createdAt: createdAt ?? this.createdAt,
+      status: status ?? this.status,
+      senderId: senderId ?? this.senderId,
+      senderName: senderName ?? this.senderName,
+      sentPeerIds: sentPeerIds ?? this.sentPeerIds,
+      deliveredPeerIds: deliveredPeerIds ?? this.deliveredPeerIds,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'friendId': friendId,
+      'text': text,
+      'sentByMe': sentByMe,
+      'createdAt': createdAt.toIso8601String(),
+      'status': status,
+      'senderId': senderId,
+      'senderName': senderName,
+      'sentPeerIds': sentPeerIds,
+      'deliveredPeerIds': deliveredPeerIds,
+    };
+  }
+
+  factory ChatMessage.fromJson(Map<String, dynamic> json) {
+    return ChatMessage(
+      id: json['id'] as String? ?? '',
+      friendId: json['friendId'] as String? ?? '',
+      text: json['text'] as String? ?? '',
+      sentByMe: json['sentByMe'] as bool? ?? false,
+      createdAt:
+          DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+          DateTime.now(),
+      status: json['status'] as String? ?? 'localOnly',
+      senderId: json['senderId'] as String? ?? '',
+      senderName: json['senderName'] as String? ?? '',
+      sentPeerIds: (json['sentPeerIds'] as List<dynamic>? ?? const [])
+          .map((entry) => entry.toString())
+          .where((entry) => entry.isNotEmpty)
+          .toList(),
+      deliveredPeerIds: (json['deliveredPeerIds'] as List<dynamic>? ?? const [])
+          .map((entry) => entry.toString())
+          .where((entry) => entry.isNotEmpty)
+          .toList(),
+    );
+  }
+}
+
+class ChatConversation {
+  ChatConversation({
+    required this.messages,
+    this.friend,
+    String? id,
+    String? title,
+    List<PublicUser>? members,
+    this.adminUserId = '',
+    this.isGroup = false,
+  }) : id = id ?? friend?.id ?? '',
+       title = title ?? _chatUserDisplayName(friend),
+       members = List.unmodifiable(
+         members ?? (friend == null ? const <PublicUser>[] : [friend]),
+       );
+
+  final String id;
+  final String title;
+  final PublicUser? friend;
+  final List<PublicUser> members;
+  final String adminUserId;
+  final bool isGroup;
+  final List<ChatMessage> messages;
+
+  ChatMessage? get lastMessage => messages.isEmpty ? null : messages.last;
+
+  int get pendingCount =>
+      messages.where((message) => message.status != 'delivered').length;
+
+  String get displayTitle {
+    if (isGroup) {
+      return title.isEmpty ? '未命名群聊' : title;
+    }
+    return _chatUserDisplayName(friend);
+  }
+
+  ChatConversation copyWith({
+    String? id,
+    String? title,
+    PublicUser? friend,
+    List<PublicUser>? members,
+    String? adminUserId,
+    bool? isGroup,
+    List<ChatMessage>? messages,
+  }) {
+    return ChatConversation(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      friend: friend ?? this.friend,
+      members: members ?? this.members,
+      adminUserId: adminUserId ?? this.adminUserId,
+      isGroup: isGroup ?? this.isGroup,
+      messages: messages ?? this.messages,
+    );
+  }
+}
+
+String _chatUserDisplayName(PublicUser? user) {
+  if (user == null) {
+    return '';
+  }
+  return user.username.isEmpty ? user.email : user.username;
+}

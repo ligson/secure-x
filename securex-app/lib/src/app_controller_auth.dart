@@ -5,8 +5,10 @@ part of 'app_controller.dart';
 extension AppControllerAuthActions on AppController {
   Future<void> initialize() async {
     final prefs = await SharedPreferences.getInstance();
-    _baseUrl = prefs.getString(AppController._baseUrlKey) ?? _baseUrl;
-    _themeId = prefs.getString(AppController._themeIdKey) ?? _themeId;
+    _baseUrl =
+        prefs.getString(_storageKey(AppController._baseUrlKey)) ?? _baseUrl;
+    _themeId =
+        prefs.getString(_storageKey(AppController._themeIdKey)) ?? _themeId;
     _token = await _readPersistedToken(prefs);
 
     if (_token != null) {
@@ -24,14 +26,14 @@ extension AppControllerAuthActions on AppController {
   Future<void> saveBaseUrl(String value) async {
     _baseUrl = _normalizeBaseUrl(value);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(AppController._baseUrlKey, _baseUrl);
+    await prefs.setString(_storageKey(AppController._baseUrlKey), _baseUrl);
     notifyListeners();
   }
 
   Future<void> saveThemeId(String value) async {
     _themeId = value;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(AppController._themeIdKey, _themeId);
+    await prefs.setString(_storageKey(AppController._themeIdKey), _themeId);
     notifyListeners();
   }
 
@@ -59,6 +61,8 @@ extension AppControllerAuthActions on AppController {
       _vaultKey = bundle.vaultKeyBytes;
       final tokenPersisted = await _persistToken(_token!);
       await _loadVaultSnapshot();
+      await _loadFriendsSnapshot();
+      await _loadChatSnapshot();
       _statusMessage = tokenPersisted
           ? '注册成功，保险库已经解锁。'
           : '注册成功，当前会话已解锁；本机安全存储暂不可用，重启应用后需要重新登录。';
@@ -99,6 +103,8 @@ extension AppControllerAuthActions on AppController {
         iterations: _user!.masterKeyIterations,
       );
       await _loadVaultSnapshot();
+      await _loadFriendsSnapshot();
+      await _loadChatSnapshot();
       _statusMessage = '保险库已解锁。';
     });
   }

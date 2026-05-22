@@ -1,0 +1,11 @@
+server:
+  addr: ":8080"
+
+database:
+  dsn: "data/securex.db"
+
+storage:
+  fileDir: "data/files"
+
+auth:
+  jwtSecret: "replace-with-a-long-random-secret"

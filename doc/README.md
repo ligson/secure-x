@@ -14,6 +14,8 @@
   - 说明建议迭代顺序、里程碑与实现阶段拆分
 - [05-open-questions.md](/Users/ligson/workspace/work-org/github/secure-x/doc/05-open-questions.md)
   - 汇总需要用户拍板的关键设计决策，避免实现阶段反复返工
+- [06-release.md](/Users/ligson/workspace/work-org/github/secure-x/doc/06-release.md)
+  - 说明 GitHub Actions 多端打包、Release 产物与签名边界
 
 ## 使用原则
 

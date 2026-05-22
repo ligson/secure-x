@@ -8,26 +8,9 @@ extension _VaultPasswordTab on _VaultScreenState {
     final items = _filteredVaultItems();
 
     return _buildVaultTabScrollView(
+      header: _buildPasswordVaultHeader(context),
       sections: [
-        Row(
-          children: [
-            Expanded(
-              child: _buildModuleHeader(
-                icon: Icons.key_outlined,
-                title: '密码库',
-                tag: '本地加密',
-              ),
-            ),
-            const SizedBox(width: 12),
-            FilledButton.icon(
-              onPressed: widget.controller.busy
-                  ? null
-                  : () => _showPasswordComposer(),
-              icon: const Icon(Icons.add),
-              label: const Text('创建'),
-            ),
-          ],
-        ),
+        ..._buildPageStatusSections(),
         TextField(
           controller: _itemSearchController,
           onChanged: (_) => setState(() {}),
@@ -147,6 +130,52 @@ extension _VaultPasswordTab on _VaultScreenState {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildPasswordVaultHeader(BuildContext context) {
+    final actions = [
+      OutlinedButton.icon(
+        onPressed: _showGeneratorPage,
+        icon: const Icon(Icons.password_outlined),
+        label: const Text('生成器'),
+      ),
+      FilledButton.icon(
+        onPressed: widget.controller.busy
+            ? null
+            : () => _showPasswordComposer(),
+        icon: const Icon(Icons.add),
+        label: const Text('创建'),
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final header = _buildModuleHeader(
+          icon: Icons.key_outlined,
+          title: '密码库',
+          tag: '本地加密',
+        );
+
+        if (constraints.maxWidth < 560) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              header,
+              const SizedBox(height: 12),
+              Wrap(spacing: 10, runSpacing: 10, children: actions),
+            ],
+          );
+        }
+
+        return Row(
+          children: [
+            Expanded(child: header),
+            const SizedBox(width: 12),
+            ...actions.expand((action) => [action, const SizedBox(width: 10)]),
+          ]..removeLast(),
+        );
+      },
     );
   }
 }

@@ -11,9 +11,10 @@ import (
 )
 
 type Handler struct {
-	db        *gorm.DB
-	tokens    *auth.TokenManager
-	fileStore *storage.FileStore
+	db          *gorm.DB
+	tokens      *auth.TokenManager
+	fileStore   *storage.FileStore
+	realtimeHub *realtimeHub
 }
 
 func NewRouter(db *gorm.DB, tokens *auth.TokenManager, fileStore *storage.FileStore) *gin.Engine {
@@ -24,6 +25,7 @@ func NewRouter(db *gorm.DB, tokens *auth.TokenManager, fileStore *storage.FileSt
 		tokens:    tokens,
 		fileStore: fileStore,
 	}
+	handler.realtimeHub = newRealtimeHub()
 
 	router := gin.Default()
 	router.GET("/healthz", func(c *gin.Context) {
@@ -42,6 +44,15 @@ func NewRouter(db *gorm.DB, tokens *auth.TokenManager, fileStore *storage.FileSt
 		protected := v1.Group("/")
 		protected.Use(middleware.RequireAuth(tokens))
 		protected.GET("/sync/export", handler.exportVault)
+		protected.GET("/realtime/config", handler.realtimeConfig)
+		protected.GET("/realtime/ws", handler.realtimeWebSocket)
+
+		protected.GET("/friends", handler.listFriends)
+		protected.DELETE("/friends/:id", handler.deleteFriend)
+		protected.GET("/friend-requests", handler.listFriendRequests)
+		protected.POST("/friend-requests", handler.createFriendRequest)
+		protected.PUT("/friend-requests/:id/accept", handler.acceptFriendRequest)
+		protected.PUT("/friend-requests/:id/reject", handler.rejectFriendRequest)
 
 		protected.GET("/folders", handler.listFolders)
 		protected.POST("/folders", handler.createFolder)

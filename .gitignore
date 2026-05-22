@@ -15,6 +15,10 @@
 .env
 .env.*
 !.env.example
+securex-be/config.yaml
+securex-be/config/*.yaml
+!securex-be/config.example.yaml
+!securex-be/config/*.example.yaml
 *.pem
 *.key
 *.p12

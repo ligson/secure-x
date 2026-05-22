@@ -1,28 +1,99 @@
 package config
 
-import "os"
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/goccy/go-yaml"
+)
 
 type Config struct {
-	ServerAddr  string
-	DatabaseDSN string
-	FileDir     string
-	JWTSecret   string
+	Server   ServerConfig   `yaml:"server"`
+	Database DatabaseConfig `yaml:"database"`
+	Storage  StorageConfig  `yaml:"storage"`
+	Auth     AuthConfig     `yaml:"auth"`
 }
 
-func Load() Config {
+type ServerConfig struct {
+	Addr string `yaml:"addr"`
+}
+
+type DatabaseConfig struct {
+	DSN string `yaml:"dsn"`
+}
+
+type StorageConfig struct {
+	FileDir string `yaml:"fileDir"`
+}
+
+type AuthConfig struct {
+	JWTSecret string `yaml:"jwtSecret"`
+}
+
+func Default() Config {
 	return Config{
-		ServerAddr:  getEnv("SECUREX_SERVER_ADDR", ":8080"),
-		DatabaseDSN: getEnv("SECUREX_DATABASE_DSN", "data/securex.db"),
-		FileDir:     getEnv("SECUREX_FILE_DIR", "data/files"),
-		JWTSecret:   getEnv("SECUREX_JWT_SECRET", "securex-dev-secret"),
+		Server: ServerConfig{
+			Addr: ":8080",
+		},
+		Database: DatabaseConfig{
+			DSN: "data/securex.db",
+		},
+		Storage: StorageConfig{
+			FileDir: "data/files",
+		},
+		Auth: AuthConfig{
+			JWTSecret: "securex-dev-secret",
+		},
 	}
 }
 
-func getEnv(key, fallback string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
+func Load(path string) (Config, error) {
+	cfg := Default()
+	if path == "" {
+		return cfg, nil
 	}
 
-	return value
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Config{}, fmt.Errorf("config file not found: %s", path)
+		}
+		return Config{}, fmt.Errorf("read config file: %w", err)
+	}
+	if err := yaml.Unmarshal(content, &cfg); err != nil {
+		return Config{}, fmt.Errorf("parse config file: %w", err)
+	}
+	cfg.applyDefaults()
+	cfg.resolveRelativePaths(filepath.Dir(path))
+	return cfg, nil
+}
+
+func (c *Config) applyDefaults() {
+	defaults := Default()
+	if c.Server.Addr == "" {
+		c.Server.Addr = defaults.Server.Addr
+	}
+	if c.Database.DSN == "" {
+		c.Database.DSN = defaults.Database.DSN
+	}
+	if c.Storage.FileDir == "" {
+		c.Storage.FileDir = defaults.Storage.FileDir
+	}
+	if c.Auth.JWTSecret == "" {
+		c.Auth.JWTSecret = defaults.Auth.JWTSecret
+	}
+}
+
+func (c *Config) resolveRelativePaths(baseDir string) {
+	if baseDir == "" || baseDir == "." {
+		return
+	}
+	if c.Database.DSN != "" && !filepath.IsAbs(c.Database.DSN) {
+		c.Database.DSN = filepath.Join(baseDir, c.Database.DSN)
+	}
+	if c.Storage.FileDir != "" && !filepath.IsAbs(c.Storage.FileDir) {
+		c.Storage.FileDir = filepath.Join(baseDir, c.Storage.FileDir)
+	}
 }

@@ -139,12 +139,180 @@ extension AppControllerInternalHelpers on AppController {
     );
   }
 
+  Future<void> _loadFriendsSnapshot() async {
+    if (_token == null) {
+      return;
+    }
+
+    _friends = await _apiClient.listFriends(baseUrl: _baseUrl, token: _token!);
+    final requests = await _apiClient.listFriendRequests(
+      baseUrl: _baseUrl,
+      token: _token!,
+    );
+    _incomingFriendRequests = requests['incoming'] ?? [];
+    _outgoingFriendRequests = requests['outgoing'] ?? [];
+  }
+
+  Future<void> _loadChatSnapshot() async {
+    if (_user == null || _vaultKey == null) {
+      return;
+    }
+
+    _realtimeConfig = await _apiClient.realtimeConfig(
+      baseUrl: _baseUrl,
+      token: _token!,
+    );
+    await _connectRealtimeChat();
+
+    final file = await _chatStoreFile();
+    if (!await file.exists()) {
+      _chatConversations = [];
+      unawaited(_openRealtimePeersForHistorySync());
+      return;
+    }
+
+    try {
+      final encrypted = await file.readAsString();
+      final data = await _cryptoService.decryptJson(encrypted, _vaultKey!);
+      final friendById = {for (final friend in _friends) friend.id: friend};
+
+      final conversations = data['conversations'] as List<dynamic>?;
+      if (conversations != null) {
+        _chatConversations = conversations
+            .map((entry) => entry as Map<String, dynamic>)
+            .map((entry) {
+              final isGroup = entry['isGroup'] as bool? ?? false;
+              final messages =
+                  (entry['messages'] as List<dynamic>? ?? const [])
+                      .map(
+                        (message) => ChatMessage.fromJson(
+                          message as Map<String, dynamic>,
+                        ),
+                      )
+                      .toList()
+                    ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+              if (isGroup) {
+                final members = (entry['members'] as List<dynamic>? ?? const [])
+                    .map(
+                      (member) =>
+                          PublicUser.fromJson(member as Map<String, dynamic>),
+                    )
+                    .where((member) => friendById.containsKey(member.id))
+                    .map((member) => friendById[member.id]!)
+                    .toList();
+                return ChatConversation(
+                  id: entry['id'] as String? ?? '',
+                  title: entry['title'] as String? ?? '未命名群聊',
+                  members: members,
+                  adminUserId: entry['adminUserId'] as String? ?? '',
+                  isGroup: true,
+                  messages: messages,
+                );
+              }
+
+              final friendId = entry['friendId'] as String? ?? '';
+              final friend = friendById[friendId];
+              if (friend == null) {
+                return null;
+              }
+              return ChatConversation(friend: friend, messages: messages);
+            })
+            .whereType<ChatConversation>()
+            .toList();
+        _sortChatConversations();
+        unawaited(_openRealtimePeersForHistorySync());
+        return;
+      }
+
+      final messages = (data['messages'] as List<dynamic>? ?? [])
+          .map((entry) => ChatMessage.fromJson(entry as Map<String, dynamic>))
+          .toList();
+      final grouped = <String, List<ChatMessage>>{};
+      for (final message in messages) {
+        grouped.putIfAbsent(message.friendId, () => []).add(message);
+      }
+      _chatConversations = grouped.entries
+          .where((entry) => friendById.containsKey(entry.key))
+          .map(
+            (entry) => ChatConversation(
+              friend: friendById[entry.key]!,
+              messages: entry.value
+                ..sort((a, b) => a.createdAt.compareTo(b.createdAt)),
+            ),
+          )
+          .toList();
+      _sortChatConversations();
+      unawaited(_openRealtimePeersForHistorySync());
+    } catch (error) {
+      debugPrint('Chat snapshot decrypt failed: $error');
+      _chatConversations = [];
+      unawaited(_openRealtimePeersForHistorySync());
+    }
+  }
+
+  Future<void> _persistChatSnapshot() async {
+    if (_user == null || _vaultKey == null) {
+      return;
+    }
+
+    final conversations = _chatConversations.map((conversation) {
+      return {
+        'id': conversation.id,
+        'title': conversation.title,
+        'isGroup': conversation.isGroup,
+        'friendId': conversation.friend?.id ?? '',
+        'adminUserId': conversation.adminUserId,
+        'members': conversation.members
+            .map((member) => member.toJson())
+            .toList(),
+        'messages': conversation.messages
+            .map((message) => message.toJson())
+            .toList(),
+      };
+    }).toList();
+    final encrypted = await _cryptoService.encryptJson({
+      'version': 2,
+      'conversations': conversations,
+    }, _vaultKey!);
+    final file = await _chatStoreFile();
+    await file.parent.create(recursive: true);
+    await file.writeAsString(encrypted);
+    _sortChatConversations();
+  }
+
+  Future<File> _chatStoreFile() async {
+    final directory = await _chatStoreBaseDirectory();
+    return File(
+      '${directory.path}/securex-$_storageNamespace/chat-${_user!.id}.json',
+    );
+  }
+
+  Future<Directory> _chatStoreBaseDirectory() async {
+    final devDataDir = _devDataDir.trim();
+    if (devDataDir.isEmpty || Platform.isMacOS || Platform.isIOS) {
+      return getApplicationSupportDirectory();
+    }
+    return Directory(devDataDir);
+  }
+
+  String _storageKey(String key) => 'securex.$_storageNamespace.$key';
+
+  void _sortChatConversations() {
+    _chatConversations.sort((a, b) {
+      final aTime =
+          a.lastMessage?.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final bTime =
+          b.lastMessage?.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return bTime.compareTo(aTime);
+    });
+  }
+
   bool get _supportsDebugTokenFallback => !kReleaseMode && Platform.isMacOS;
 
   Future<String?> _readPersistedToken(SharedPreferences? prefs) async {
     try {
       final secureToken = await _secureStorage.read(
-        key: AppController._tokenKey,
+        key: _storageKey(AppController._tokenKey),
       );
       if (secureToken != null && secureToken.isNotEmpty) {
         return secureToken;
@@ -155,7 +323,9 @@ extension AppControllerInternalHelpers on AppController {
 
     if (_supportsDebugTokenFallback) {
       final resolvedPrefs = prefs ?? await SharedPreferences.getInstance();
-      return resolvedPrefs.getString(AppController._debugTokenFallbackKey);
+      return resolvedPrefs.getString(
+        _storageKey(AppController._debugTokenFallbackKey),
+      );
     }
 
     return null;
@@ -164,15 +334,21 @@ extension AppControllerInternalHelpers on AppController {
   Future<bool> _persistToken(String token) async {
     final prefs = await SharedPreferences.getInstance();
     try {
-      await _secureStorage.write(key: AppController._tokenKey, value: token);
+      await _secureStorage.write(
+        key: _storageKey(AppController._tokenKey),
+        value: token,
+      );
       if (_supportsDebugTokenFallback) {
-        await prefs.remove(AppController._debugTokenFallbackKey);
+        await prefs.remove(_storageKey(AppController._debugTokenFallbackKey));
       }
       return true;
     } catch (error) {
       debugPrint('Secure token write failed: $error');
       if (_supportsDebugTokenFallback) {
-        await prefs.setString(AppController._debugTokenFallbackKey, token);
+        await prefs.setString(
+          _storageKey(AppController._debugTokenFallbackKey),
+          token,
+        );
         return true;
       }
       return false;
@@ -182,12 +358,12 @@ extension AppControllerInternalHelpers on AppController {
   Future<void> _clearPersistedToken() async {
     final prefs = await SharedPreferences.getInstance();
     try {
-      await _secureStorage.delete(key: AppController._tokenKey);
+      await _secureStorage.delete(key: _storageKey(AppController._tokenKey));
     } catch (error) {
       debugPrint('Secure token delete failed: $error');
     }
     if (_supportsDebugTokenFallback) {
-      await prefs.remove(AppController._debugTokenFallbackKey);
+      await prefs.remove(_storageKey(AppController._debugTokenFallbackKey));
     }
   }
 

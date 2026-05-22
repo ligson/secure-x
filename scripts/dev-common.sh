@@ -9,22 +9,64 @@ LOG_DIR="${DEV_DIR}/logs"
 BIN_DIR="${DEV_DIR}/bin"
 
 BACKEND_PID_FILE="${PID_DIR}/securex-be.pid"
-APP_PID_FILE="${PID_DIR}/securex-app.pid"
 
 BACKEND_LOG_FILE="${LOG_DIR}/securex-be.log"
-APP_LOG_FILE="${LOG_DIR}/securex-app.log"
 BACKEND_BIN_FILE="${BIN_DIR}/securex-be"
+BACKEND_CONFIG_FILE="${DEV_DIR}/securex-be.yaml"
 APP_MACOS_APP_FILE="${ROOT_DIR}/securex-app/build/macos/Build/Products/Debug/securex_app.app"
 APP_MACOS_BIN_FILE="${ROOT_DIR}/securex-app/build/macos/Build/Products/Debug/securex_app.app/Contents/MacOS/securex_app"
 
 BACKEND_ADDR="${BACKEND_ADDR:-127.0.0.1:8080}"
 BACKEND_DATABASE_DSN="${BACKEND_DATABASE_DSN:-${ROOT_DIR}/.dev/securex.db}"
 BACKEND_FILE_DIR="${BACKEND_FILE_DIR:-${ROOT_DIR}/.dev/files}"
+BACKEND_JWT_SECRET="${BACKEND_JWT_SECRET:-securex-dev-secret}"
 FLUTTER_DEVICE="${FLUTTER_DEVICE:-macos}"
 BACKEND_HEALTHCHECK_URL="${BACKEND_HEALTHCHECK_URL:-http://${BACKEND_ADDR}/healthz}"
 
 ensure_dev_dirs() {
   mkdir -p "${PID_DIR}" "${LOG_DIR}" "${BIN_DIR}" "${BACKEND_FILE_DIR}"
+}
+
+write_backend_config() {
+  umask 077
+  cat >"${BACKEND_CONFIG_FILE}" <<EOF
+server:
+  addr: "${BACKEND_ADDR}"
+database:
+  dsn: "${BACKEND_DATABASE_DSN}"
+storage:
+  fileDir: "${BACKEND_FILE_DIR}"
+auth:
+  jwtSecret: "${BACKEND_JWT_SECRET}"
+EOF
+}
+
+sanitize_instance_name() {
+  local value="$1"
+  value="${value//[^a-zA-Z0-9_.-]/-}"
+  if [[ -z "${value}" ]]; then
+    value="default"
+  fi
+  printf '%s' "${value}"
+}
+
+new_app_instance_name() {
+  sanitize_instance_name "${APP_INSTANCE:-app-$(date +%Y%m%d%H%M%S)-$$}"
+}
+
+app_pid_file() {
+  local instance="$1"
+  printf '%s/securex-app-%s.pid' "${PID_DIR}" "$(sanitize_instance_name "${instance}")"
+}
+
+app_log_file() {
+  local instance="$1"
+  printf '%s/securex-app-%s.log' "${LOG_DIR}" "$(sanitize_instance_name "${instance}")"
+}
+
+app_data_dir() {
+  local instance="$1"
+  printf '%s/app-data/%s' "${DEV_DIR}" "$(sanitize_instance_name "${instance}")"
 }
 
 is_pid_running() {

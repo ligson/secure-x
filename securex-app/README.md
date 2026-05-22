@@ -29,10 +29,19 @@
 
 ```bash
 cd ..
-./scripts/start-dev.sh
+./scripts/start-dev-all.sh
 ```
 
 首次进入后，在登录页填写后端地址，例如 `http://127.0.0.1:8080`。
+
+调试两个用户聊天时，可以启动多个隔离的前端实例：
+
+```bash
+APP_INSTANCE=user-a ./scripts/start-dev-app.sh
+APP_INSTANCE=user-b ./scripts/start-dev-app.sh
+```
+
+每个 `APP_INSTANCE` 都会隔离本地配置、登录 token、主题与本机聊天密文队列，避免调试用户之间串数据。
 
 ## 应用图标
 
@@ -43,4 +52,4 @@ cd ..
 
 - macOS 本地 `Debug` 包会优先尝试使用系统 Keychain 保存认证 token
 - 如果当前机器的本地签名环境不满足 Keychain 要求，客户端会在 `Debug` 模式下自动回退到本地调试存储，避免每次重启都重新登录
-- 日常联调请优先使用根目录 `./scripts/start-dev.sh` 与 `./scripts/stop-dev.sh`
+- 日常联调请优先使用根目录 `./scripts/start-dev-*.sh` 与 `./scripts/stop-dev-*.sh`

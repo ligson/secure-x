@@ -25,10 +25,21 @@ func (h *Handler) createFolder(c *gin.Context) {
 		return
 	}
 
+	userID := middleware.CurrentUserID(c)
+	parentFolderID, ok, err := h.ownedPasswordFolderID(userID, req.ParentFolderID)
+	if err != nil {
+		RespondFailure(c, http.StatusInternalServerError, "校验父级分类失败")
+		return
+	}
+	if !ok {
+		RespondFailure(c, http.StatusBadRequest, "父级分类不存在或不属于当前用户")
+		return
+	}
+
 	folder := model.Folder{
 		ID:             uuid.NewString(),
-		UserID:         middleware.CurrentUserID(c),
-		ParentFolderID: req.ParentFolderID,
+		UserID:         userID,
+		ParentFolderID: parentFolderID,
 		Payload:        req.Payload,
 		Version:        normalizeVersion(req.Version),
 	}
@@ -54,7 +65,22 @@ func (h *Handler) updateFolder(c *gin.Context) {
 		return
 	}
 
-	folder.ParentFolderID = req.ParentFolderID
+	userID := middleware.CurrentUserID(c)
+	parentFolderID, ok, err := h.ownedPasswordFolderID(userID, req.ParentFolderID)
+	if err != nil {
+		RespondFailure(c, http.StatusInternalServerError, "校验父级分类失败")
+		return
+	}
+	if !ok {
+		RespondFailure(c, http.StatusBadRequest, "父级分类不存在或不属于当前用户")
+		return
+	}
+	if parentFolderID != nil && *parentFolderID == folder.ID {
+		RespondFailure(c, http.StatusBadRequest, "父级分类不能选择当前分类")
+		return
+	}
+
+	folder.ParentFolderID = parentFolderID
 	folder.Payload = req.Payload
 	folder.Version = normalizeVersion(req.Version)
 
@@ -108,10 +134,21 @@ func (h *Handler) createFileFolder(c *gin.Context) {
 		return
 	}
 
+	userID := middleware.CurrentUserID(c)
+	parentFolderID, ok, err := h.ownedFileFolderID(userID, req.ParentFolderID)
+	if err != nil {
+		RespondFailure(c, http.StatusInternalServerError, "校验父级文件夹失败")
+		return
+	}
+	if !ok {
+		RespondFailure(c, http.StatusBadRequest, "父级文件夹不存在或不属于当前用户")
+		return
+	}
+
 	folder := model.FileFolder{
 		ID:             uuid.NewString(),
-		UserID:         middleware.CurrentUserID(c),
-		ParentFolderID: req.ParentFolderID,
+		UserID:         userID,
+		ParentFolderID: parentFolderID,
 		Payload:        req.Payload,
 		Version:        normalizeVersion(req.Version),
 	}
@@ -137,7 +174,22 @@ func (h *Handler) updateFileFolder(c *gin.Context) {
 		return
 	}
 
-	folder.ParentFolderID = req.ParentFolderID
+	userID := middleware.CurrentUserID(c)
+	parentFolderID, ok, err := h.ownedFileFolderID(userID, req.ParentFolderID)
+	if err != nil {
+		RespondFailure(c, http.StatusInternalServerError, "校验父级文件夹失败")
+		return
+	}
+	if !ok {
+		RespondFailure(c, http.StatusBadRequest, "父级文件夹不存在或不属于当前用户")
+		return
+	}
+	if parentFolderID != nil && *parentFolderID == folder.ID {
+		RespondFailure(c, http.StatusBadRequest, "父级文件夹不能选择当前文件夹")
+		return
+	}
+
+	folder.ParentFolderID = parentFolderID
 	folder.Payload = req.Payload
 	folder.Version = normalizeVersion(req.Version)
 

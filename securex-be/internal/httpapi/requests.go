@@ -62,6 +62,11 @@ type fileUploadCompleteRequest struct {
 	Payload string `json:"payload" binding:"required"`
 }
 
+type friendRequestCreateRequest struct {
+	Identifier string `json:"identifier" binding:"required"`
+	Message    string `json:"message"`
+}
+
 func bindErrorMessage(err error) string {
 	var validationErrors validator.ValidationErrors
 	if errors.As(err, &validationErrors) {

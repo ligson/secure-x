@@ -67,3 +67,21 @@ type FileUploadSession struct {
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
+
+type FriendRequest struct {
+	ID          string    `gorm:"primaryKey;size:36" json:"id"`
+	RequesterID string    `gorm:"index;size:36;not null" json:"requesterId"`
+	AddresseeID string    `gorm:"index;size:36;not null" json:"addresseeId"`
+	Message     string    `gorm:"size:255" json:"message"`
+	Status      string    `gorm:"index;size:24;not null" json:"status"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+type Friendship struct {
+	ID        string    `gorm:"primaryKey;size:36" json:"id"`
+	UserID    string    `gorm:"uniqueIndex:idx_friendship_pair;size:36;not null" json:"userId"`
+	FriendID  string    `gorm:"uniqueIndex:idx_friendship_pair;size:36;not null" json:"friendId"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}

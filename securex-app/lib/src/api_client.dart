@@ -388,6 +388,105 @@ class ApiClient {
     return Uint8List.fromList(base64Decode(data['cipherTextBase64'] as String));
   }
 
+  Future<List<PublicUser>> listFriends({
+    required String baseUrl,
+    required String token,
+  }) async {
+    final data = _unwrapMap(
+      await _dio.get<Map<String, dynamic>>(
+        '$baseUrl/api/v1/friends',
+        options: _authorized(token),
+      ),
+    );
+
+    return (data['friends'] as List<dynamic>? ?? [])
+        .map((entry) => PublicUser.fromJson(entry as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<Map<String, List<FriendRequestRecord>>> listFriendRequests({
+    required String baseUrl,
+    required String token,
+  }) async {
+    final data = _unwrapMap(
+      await _dio.get<Map<String, dynamic>>(
+        '$baseUrl/api/v1/friend-requests',
+        options: _authorized(token),
+      ),
+    );
+
+    List<FriendRequestRecord> parse(String key) {
+      return (data[key] as List<dynamic>? ?? [])
+          .map(
+            (entry) =>
+                FriendRequestRecord.fromJson(entry as Map<String, dynamic>),
+          )
+          .toList();
+    }
+
+    return {'incoming': parse('incoming'), 'outgoing': parse('outgoing')};
+  }
+
+  Future<void> sendFriendRequest({
+    required String baseUrl,
+    required String token,
+    required String identifier,
+    required String message,
+  }) async {
+    await _dio.post<Map<String, dynamic>>(
+      '$baseUrl/api/v1/friend-requests',
+      data: {'identifier': identifier, 'message': message},
+      options: _authorized(token),
+    );
+  }
+
+  Future<void> acceptFriendRequest({
+    required String baseUrl,
+    required String token,
+    required String requestId,
+  }) async {
+    await _dio.put<Map<String, dynamic>>(
+      '$baseUrl/api/v1/friend-requests/$requestId/accept',
+      options: _authorized(token),
+    );
+  }
+
+  Future<void> rejectFriendRequest({
+    required String baseUrl,
+    required String token,
+    required String requestId,
+  }) async {
+    await _dio.put<Map<String, dynamic>>(
+      '$baseUrl/api/v1/friend-requests/$requestId/reject',
+      options: _authorized(token),
+    );
+  }
+
+  Future<void> deleteFriend({
+    required String baseUrl,
+    required String token,
+    required String friendId,
+  }) async {
+    await _dio.delete<Map<String, dynamic>>(
+      '$baseUrl/api/v1/friends/$friendId',
+      options: _authorized(token),
+    );
+  }
+
+  Future<RealtimeConfig> realtimeConfig({
+    required String baseUrl,
+    required String token,
+  }) async {
+    final data = _unwrapMap(
+      await _dio.get<Map<String, dynamic>>(
+        '$baseUrl/api/v1/realtime/config',
+        options: _authorized(token),
+      ),
+    );
+
+    return RealtimeConfig.fromJson(data);
+  }
+
   Map<String, dynamic> _unwrapMap(Response<Map<String, dynamic>> response) {
     final envelope = response.data ?? <String, dynamic>{};
     final data = envelope['data'];

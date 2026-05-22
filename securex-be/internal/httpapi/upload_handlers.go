@@ -25,10 +25,21 @@ func (h *Handler) startFileUpload(c *gin.Context) {
 		return
 	}
 
+	userID := middleware.CurrentUserID(c)
+	folderID, ok, err := h.ownedFileFolderID(userID, req.FolderID)
+	if err != nil {
+		RespondFailure(c, http.StatusInternalServerError, "校验文件目录失败")
+		return
+	}
+	if !ok {
+		RespondFailure(c, http.StatusBadRequest, "文件目录不存在或不属于当前用户")
+		return
+	}
+
 	session := model.FileUploadSession{
 		ID:          uuid.NewString(),
-		UserID:      middleware.CurrentUserID(c),
-		FolderID:    req.FolderID,
+		UserID:      userID,
+		FolderID:    folderID,
 		Version:     normalizeVersion(req.Version),
 		TotalChunks: req.TotalChunks,
 	}

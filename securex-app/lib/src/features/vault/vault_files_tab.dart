@@ -12,32 +12,33 @@ extension _VaultFilesTab on _VaultScreenState {
     );
 
     return _buildVaultTabScrollView(
+      header: Row(
+        children: [
+          Expanded(
+            child: _buildModuleHeader(
+              icon: Icons.folder_outlined,
+              title: '文件',
+              tag: '加密上传',
+            ),
+          ),
+          const SizedBox(width: 12),
+          FilledButton.icon(
+            onPressed: widget.controller.busy
+                ? null
+                : () async {
+                    try {
+                      await widget.controller.uploadFile(
+                        folderId: _activeFileFolderId,
+                      );
+                    } catch (_) {}
+                  },
+            icon: const Icon(Icons.upload_file_outlined),
+            label: const Text('上传文件'),
+          ),
+        ],
+      ),
       sections: [
-        Row(
-          children: [
-            Expanded(
-              child: _buildModuleHeader(
-                icon: Icons.folder_outlined,
-                title: '文件',
-                tag: '加密上传',
-              ),
-            ),
-            const SizedBox(width: 12),
-            FilledButton.icon(
-              onPressed: widget.controller.busy
-                  ? null
-                  : () async {
-                      try {
-                        await widget.controller.uploadFile(
-                          folderId: _activeFileFolderId,
-                        );
-                      } catch (_) {}
-                    },
-              icon: const Icon(Icons.upload_file_outlined),
-              label: const Text('上传文件'),
-            ),
-          ],
-        ),
+        ..._buildPageStatusSections(),
         TextField(
           controller: _fileSearchController,
           onChanged: (_) => setState(() {}),

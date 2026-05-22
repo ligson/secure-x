@@ -9,7 +9,7 @@ Secure X 是一个面向个人与小团队的安全敏感信息存储维护系�
 - 提供跨平台客户端：`macOS`、`Windows`、`Linux`、`Android`、`iOS`
 - 后端提供账号、同步、加密数据与加密文件的存储能力
 - 所有敏感内容仅在客户端完成加密与解密，服务端只保存密文
-- 支持密码库、登录信息、密码分类管理、网盘式加密文件目录、随机密码生成
+- 支持密码库、登录信息、密码分类管理、网盘式加密文件目录、加密聊天、好友通讯录、随机密码生成
 - 前端允许用户手动配置后端服务地址，兼容私有部署场景
 
 ## 建议技术栈
@@ -23,15 +23,17 @@ Secure X 是一个面向个人与小团队的安全敏感信息存储维护系�
 
 - `securex-be/`
   - Go 后端服务
-  - 已实现健康检查、注册、登录、用户信息、登录密码修改、解锁密码配置更新、密码分类管理、文件目录、登录项、密文文件上传下载、分片上传、同步导出
+  - 已实现健康检查、注册、登录、用户信息、登录密码修改、解锁密码配置更新、密码分类管理、文件目录、登录项、好友申请与通讯录、实时服务配置、密文文件上传下载、分片上传、同步导出
 - `securex-app/`
   - Flutter 多端客户端
-  - 已实现后端地址配置、注册、登录、登录密码修改、解锁密码解锁与修改、密码分类管理、文件目录、登录项管理、随机密码生成、加密文件后台分片上传与进度展示、重命名、删除与解密下载
+  - 已实现后端地址配置、注册、登录、登录密码修改、解锁密码解锁与修改、密码分类管理、文件目录、登录项管理、聊天会话本机加密队列、好友通讯录与申请处理、随机密码生成、加密文件后台分片上传与进度展示、重命名、删除与解密下载
 
 ## 核心原则
 
 - `Zero-knowledge`：服务端不接触明文
 - `Client-side encryption`：敏感数据只在客户端加解密
+- `Per-user isolation`：每个用户的数据只能由自己解密，其他用户和服务端都不能解密看到
+- `Strict ownership checks`：服务端所有读写接口都必须校验资源归属，禁止跨用户读取、下载、引用、修改或删除
 - `Offline-friendly`：客户端优先维护本地缓存与解密态会话
 - `Self-hostable`：支持用户自部署后端
 - `Document-first`：实现前先固化设计、边界与协作规范
@@ -45,6 +47,8 @@ Secure X 是一个面向个人与小团队的安全敏感信息存储维护系�
 - 创建与管理网盘式文件目录
 - 创建与管理密码/登录信息
 - 上传、下载与删除加密文件
+- 好友聊天入口、会话列表、发起群聊与本机加密消息队列
+- 好友通讯录、好友申请与同意/拒绝
 - 随机密码生成器
 - 客户端后端地址配置
 - 多端同步基础能力
@@ -57,6 +61,14 @@ Secure X 是一个面向个人与小团队的安全敏感信息存储维护系�
 - `Go` 服务端：负责身份认证、密文元数据管理、密文文件存储、版本同步、访问控制、审计基础能力
 
 建议采用“账号主密钥 + 数据项密钥 + 文件密钥”的分层加密结构，避免单一密钥承担全部数据范围，并为后续分享、密钥轮换与文件大对象处理预留空间。
+
+好友关系当前仅作为通讯录和后续协作入口，不代表任何保险库授权；成为好友不会让对方读取、下载或解密你的密码库、文件密文或任何业务明文。
+
+聊天能力按“好友在线才实时发送、服务端不落消息”的方向设计：客户端通过 HTTP 配置接口获取实时服务信息，再使用 WebSocket 信令与 WebRTC DataChannel 建立实时通道；聊天正文会使用客户端协商出的会话密钥再做 AES-GCM 加密。好友不在线或通道未建立时，消息只加密保存在发送方本机。
+
+登录解锁后，客户端会通过端到端实时通道向在线好友或共同群成员请求历史消息，并把对方本机已有的单聊/群聊历史合并到当前客户端；服务端仍不保存聊天正文或历史消息。
+
+群聊当前采用客户端本机加密会话与成员逐个投递模型：服务端不保存群消息正文、不保存群会话密钥，也不作为离线消息队列。后续若实现群历史同步与成员删除后的密钥轮换，需要继续保持客户端端到端加密边界。
 
 ## 接口约定
 
@@ -86,8 +98,15 @@ Secure X 是一个面向个人与小团队的安全敏感信息存储维护系�
 - 加密与存储设计：[doc/03-crypto-storage.md](/Users/ligson/workspace/work-org/github/secure-x/doc/03-crypto-storage.md)
 - 迭代计划：[doc/04-roadmap.md](/Users/ligson/workspace/work-org/github/secure-x/doc/04-roadmap.md)
 - 待确认决策：[doc/05-open-questions.md](/Users/ligson/workspace/work-org/github/secure-x/doc/05-open-questions.md)
+- 发布打包：[doc/06-release.md](/Users/ligson/workspace/work-org/github/secure-x/doc/06-release.md)
 - 协作记忆：[AGENTS.md](/Users/ligson/workspace/work-org/github/secure-x/AGENTS.md)
 - 变更记录：[CHANGELOG.md](/Users/ligson/workspace/work-org/github/secure-x/CHANGELOG.md)
+
+## 发布打包
+
+仓库已提供 GitHub Actions `Release` workflow。推送 `v*` 标签后会自动构建后端 Linux/macOS 包、Flutter Windows/macOS/Android/iOS 产物，并把产物上传到对应 GitHub Release。Release 说明从 `CHANGELOG.md` 最新章节读取。
+
+iOS 当前输出未签名包，适合作为后续签名/TestFlight 流程输入；正式分发仍需要单独配置 Apple 证书和 Provisioning Profile。
 
 ## 当前状态
 
@@ -118,24 +137,30 @@ Secure X 是一个面向个人与小团队的安全敏感信息存储维护系�
 
 说明：
 
-- 日常联调统一使用这两个脚本，避免和手工执行 `flutter run`、`go run` 混用
-- `start-dev.sh` 会尽量复用已记录实例，并清理本项目残留的旧进程，保证单实例启动
-- 切换设备、端口或需要重启时，优先先执行一次 `./scripts/stop-dev.sh`
-- `FLUTTER_DEVICE=macos` 时，脚本会先构建 `Debug` 桌面包，再启动单实例应用进程，优先保证脚本可控和停止一致性
+- `start-dev.sh` / `stop-dev.sh` 仍保留为兼容入口，实际转到 `start-dev-all.sh` / `stop-dev-all.sh`
+- 后端单独启动：`./scripts/start-dev-be.sh`，单独停止：`./scripts/stop-dev-be.sh`
+- 前端单独启动：`./scripts/start-dev-app.sh`，单独停止：`./scripts/stop-dev-app.sh`
+- 同时启动/停止：`./scripts/start-dev-all.sh` 与 `./scripts/stop-dev-all.sh`
+- `start-dev-app.sh` 支持重复执行，每次默认启动一个新的前端实例，方便两个用户聊天联调
+- 多前端调试时建议显式指定实例名，例如 `APP_INSTANCE=user-a ./scripts/start-dev-app.sh` 与 `APP_INSTANCE=user-b ./scripts/start-dev-app.sh`
+- 同一个 `APP_INSTANCE` 已运行时不会重复启动，避免两个进程共享同一本地数据命名空间
+- 每个 `APP_INSTANCE` 会使用独立本地存储命名空间，隔离后端地址、token、主题、本机聊天密文队列等本地数据
+- 停止某个前端实例：`APP_INSTANCE=user-a ./scripts/stop-dev-app.sh`；不传 `APP_INSTANCE` 会停止所有脚本记录的前端实例
 - macOS 本地调试若遇到系统安全存储不可用，客户端会自动回退到调试存储，优先保证联调连续性
 
 常用可选变量：
 
-- `FLUTTER_DEVICE=macos ./scripts/start-dev.sh`
-- `FLUTTER_DEVICE=ios ./scripts/start-dev.sh`
-- `START_APP=0 ./scripts/start-dev.sh`
-- `START_BACKEND=0 ./scripts/start-dev.sh`
+- `FLUTTER_DEVICE=macos APP_INSTANCE=user-a ./scripts/start-dev-app.sh`
+- `FLUTTER_DEVICE=ios APP_INSTANCE=user-a ./scripts/start-dev-app.sh`
+- `BACKEND_ADDR=127.0.0.1:8081 ./scripts/start-dev-be.sh`，脚本会生成 `.dev/securex-be.yaml` 并通过 `--config` 启动后端
 
 ### 单独启动后端
 
 ```bash
 cd securex-be
-go run ./cmd/server
+cp config.example.yaml config.yaml
+chmod 600 config.yaml
+go run ./cmd/server --config ./config.yaml
 ```
 
 默认监听 `http://127.0.0.1:8080`。

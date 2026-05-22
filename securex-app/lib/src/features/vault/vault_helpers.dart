@@ -143,6 +143,7 @@ extension _VaultHelpers on _VaultScreenState {
   }
 
   Widget _buildVaultTabScrollView({
+    required Widget header,
     required List<Widget> sections,
     required Widget listSection,
   }) {
@@ -153,20 +154,54 @@ extension _VaultHelpers on _VaultScreenState {
 
     return Padding(
       padding: const EdgeInsets.all(16),
-      child: CustomScrollView(
-        slivers: [
-          for (var index = 0; index < sections.length; index++) ...[
-            SliverToBoxAdapter(child: sections[index]),
-            if (index != sections.length - 1)
-              const SliverToBoxAdapter(child: SizedBox(height: 12)),
-          ],
-          const SliverToBoxAdapter(child: SizedBox(height: 12)),
-          SliverToBoxAdapter(
-            child: SizedBox(height: listHeight, child: listSection),
+      child: Column(
+        children: [
+          header,
+          const SizedBox(height: 12),
+          Expanded(
+            child: CustomScrollView(
+              slivers: [
+                for (var index = 0; index < sections.length; index++) ...[
+                  SliverToBoxAdapter(child: sections[index]),
+                  if (index != sections.length - 1)
+                    const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                ],
+                if (sections.isNotEmpty)
+                  const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                SliverToBoxAdapter(
+                  child: SizedBox(height: listHeight, child: listSection),
+                ),
+              ],
+            ),
           ),
         ],
       ),
     );
+  }
+
+  List<Widget> _buildPageStatusSections({
+    _PageNoticeTone tone = _PageNoticeTone.neutral,
+  }) {
+    final message = widget.controller.busy
+        ? '处理中...'
+        : widget.controller.statusMessage;
+    if (message == null ||
+        message.isEmpty ||
+        _dismissedPageStatusMessage == message) {
+      return const [];
+    }
+
+    return [
+      _PageNotice(
+        message: message,
+        tone: tone,
+        onClose: () {
+          setState(() {
+            _dismissedPageStatusMessage = message;
+          });
+        },
+      ),
+    ];
   }
 
   TextStyle _chipLabelStyle(bool selected) {

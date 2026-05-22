@@ -25,10 +25,21 @@ func (h *Handler) createItem(c *gin.Context) {
 		return
 	}
 
+	userID := middleware.CurrentUserID(c)
+	folderID, ok, err := h.ownedPasswordFolderID(userID, req.FolderID)
+	if err != nil {
+		RespondFailure(c, http.StatusInternalServerError, "校验密码分类失败")
+		return
+	}
+	if !ok {
+		RespondFailure(c, http.StatusBadRequest, "密码分类不存在或不属于当前用户")
+		return
+	}
+
 	item := model.VaultItem{
 		ID:       uuid.NewString(),
-		UserID:   middleware.CurrentUserID(c),
-		FolderID: req.FolderID,
+		UserID:   userID,
+		FolderID: folderID,
 		Kind:     req.Kind,
 		Payload:  req.Payload,
 		Version:  normalizeVersion(req.Version),
@@ -55,7 +66,18 @@ func (h *Handler) updateItem(c *gin.Context) {
 		return
 	}
 
-	item.FolderID = req.FolderID
+	userID := middleware.CurrentUserID(c)
+	folderID, ok, err := h.ownedPasswordFolderID(userID, req.FolderID)
+	if err != nil {
+		RespondFailure(c, http.StatusInternalServerError, "校验密码分类失败")
+		return
+	}
+	if !ok {
+		RespondFailure(c, http.StatusBadRequest, "密码分类不存在或不属于当前用户")
+		return
+	}
+
+	item.FolderID = folderID
 	item.Kind = req.Kind
 	item.Payload = req.Payload
 	item.Version = normalizeVersion(req.Version)

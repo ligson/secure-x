@@ -14,20 +14,23 @@ type Server struct {
 	router *gin.Engine
 }
 
-func NewServer() (*Server, error) {
-	cfg := config.Load()
-
-	db, err := repository.Open(cfg.DatabaseDSN)
+func NewServer(configPath string) (*Server, error) {
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		return nil, err
 	}
 
-	fileStore, err := storage.NewFileStore(cfg.FileDir)
+	db, err := repository.Open(cfg.Database.DSN)
 	if err != nil {
 		return nil, err
 	}
 
-	tokens := auth.NewTokenManager(cfg.JWTSecret)
+	fileStore, err := storage.NewFileStore(cfg.Storage.FileDir)
+	if err != nil {
+		return nil, err
+	}
+
+	tokens := auth.NewTokenManager(cfg.Auth.JWTSecret)
 	router := httpapi.NewRouter(db, tokens, fileStore)
 
 	return &Server{
@@ -37,5 +40,5 @@ func NewServer() (*Server, error) {
 }
 
 func (s *Server) Run() error {
-	return s.router.Run(s.config.ServerAddr)
+	return s.router.Run(s.config.Server.Addr)
 }

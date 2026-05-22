@@ -18,15 +18,24 @@ extension AppControllerSessionActions on AppController {
   );
 
   Future<void> lock() async {
+    await _realtimeChatService.disconnect();
     _vaultKey = null;
     _folders = [];
     _fileFolders = [];
     _items = [];
     _files = [];
+    _friends = [];
+    _incomingFriendRequests = [];
+    _outgoingFriendRequests = [];
+    _chatConversations = [];
+    _chatFriendOnline.clear();
+    _historyRequestedPeerIds.clear();
+    _realtimeConfig = null;
     notifyListeners();
   }
 
   Future<void> logout() async {
+    await _realtimeChatService.disconnect();
     _token = null;
     _user = null;
     _vaultKey = null;
@@ -34,6 +43,13 @@ extension AppControllerSessionActions on AppController {
     _fileFolders = [];
     _items = [];
     _files = [];
+    _friends = [];
+    _incomingFriendRequests = [];
+    _outgoingFriendRequests = [];
+    _chatConversations = [];
+    _chatFriendOnline.clear();
+    _historyRequestedPeerIds.clear();
+    _realtimeConfig = null;
     await _clearPersistedToken();
     notifyListeners();
   }

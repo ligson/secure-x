@@ -26,12 +26,30 @@
 ## 运行方式
 
 ```bash
-go run ./cmd/server
+go run ./cmd/server --config ./config.yaml
 ```
 
-## 可选环境变量
+可先复制示例配置：
 
-- `SECUREX_SERVER_ADDR`：监听地址，默认 `:8080`
-- `SECUREX_DATABASE_DSN`：SQLite 文件路径，默认 `data/securex.db`
-- `SECUREX_FILE_DIR`：密文文件目录，默认 `data/files`
-- `SECUREX_JWT_SECRET`：JWT 密钥，开发环境默认 `securex-dev-secret`
+```bash
+cp config.example.yaml config.yaml
+chmod 600 config.yaml
+```
+
+## 配置文件
+
+后端使用 YAML 配置文件，不再读取 `SECUREX_*` 环境变量。仓库只提交 `config.example.yaml`，真实 `config.yaml` 不应提交。
+
+```yaml
+server:
+  addr: ":8080"
+
+database:
+  dsn: "data/securex.db"
+
+storage:
+  fileDir: "data/files"
+
+auth:
+  jwtSecret: "replace-with-a-long-random-secret"
+```

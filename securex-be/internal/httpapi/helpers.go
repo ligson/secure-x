@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/ligson/secure-x/securex-be/internal/model"
 )
@@ -32,6 +34,49 @@ func normalizeVersion(version int) int {
 		return 1
 	}
 	return version
+}
+
+func normalizeOptionalID(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+func (h *Handler) ownedPasswordFolderID(userID string, folderID *string) (*string, bool, error) {
+	normalizedID := normalizeOptionalID(folderID)
+	if normalizedID == nil {
+		return nil, true, nil
+	}
+
+	var count int64
+	if err := h.db.Model(&model.Folder{}).
+		Where("id = ? AND user_id = ?", *normalizedID, userID).
+		Count(&count).Error; err != nil {
+		return nil, false, err
+	}
+
+	return normalizedID, count > 0, nil
+}
+
+func (h *Handler) ownedFileFolderID(userID string, folderID *string) (*string, bool, error) {
+	normalizedID := normalizeOptionalID(folderID)
+	if normalizedID == nil {
+		return nil, true, nil
+	}
+
+	var count int64
+	if err := h.db.Model(&model.FileFolder{}).
+		Where("id = ? AND user_id = ?", *normalizedID, userID).
+		Count(&count).Error; err != nil {
+		return nil, false, err
+	}
+
+	return normalizedID, count > 0, nil
 }
 
 func (h *Handler) folderInUse(userID, folderID string) (bool, error) {

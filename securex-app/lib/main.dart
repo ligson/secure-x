@@ -16,6 +16,8 @@ part 'src/features/settings/theme_option_card.dart';
 part 'src/features/vault/vault_password_tab.dart';
 part 'src/features/vault/vault_generator_tab.dart';
 part 'src/features/vault/vault_files_tab.dart';
+part 'src/features/chat/chat_pages.dart';
+part 'src/features/friends/friends_pages.dart';
 part 'src/features/vault/vault_settings_tab.dart';
 part 'src/features/vault/vault_helpers.dart';
 part 'src/features/vault/password_folder_pages.dart';
@@ -103,9 +105,12 @@ class _VaultScreenState extends State<VaultScreen> {
   final _itemSearchController = TextEditingController();
   final _fileFolderCreateController = TextEditingController();
   final _fileSearchController = TextEditingController();
+  final _friendSearchController = TextEditingController();
   final _settingsBaseUrlController = TextEditingController();
   String _activeVaultFolderId = '';
   String _activeFileFolderId = '';
+  String? _dismissedChatRealtimeNotice;
+  String? _dismissedPageStatusMessage;
   int _selectedMainIndex = 0;
   int _generatorLength = 20;
   bool _generatorUseUppercase = true;
@@ -134,6 +139,7 @@ class _VaultScreenState extends State<VaultScreen> {
     _itemSearchController.dispose();
     _fileFolderCreateController.dispose();
     _fileSearchController.dispose();
+    _friendSearchController.dispose();
     _settingsBaseUrlController.dispose();
     super.dispose();
   }
@@ -142,32 +148,19 @@ class _VaultScreenState extends State<VaultScreen> {
   Widget build(BuildContext context) {
     final pages = [
       _buildPasswordVaultTab(context),
-      _buildGeneratorTab(context),
       _buildFilesWorkspaceTab(context),
+      _buildChatTab(context),
+      _buildFriendsTab(context),
       _buildSettingsTab(context),
     ];
+    final selectedMainIndex = _selectedMainIndex.clamp(0, pages.length - 1);
 
     return Scaffold(
       body: SafeArea(
-        child: Column(
-          children: [
-            if (widget.controller.statusMessage != null ||
-                widget.controller.busy)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                child: _StatusLine(
-                  message: widget.controller.statusMessage,
-                  busy: widget.controller.busy,
-                ),
-              ),
-            Expanded(
-              child: IndexedStack(index: _selectedMainIndex, children: pages),
-            ),
-          ],
-        ),
+        child: IndexedStack(index: selectedMainIndex, children: pages),
       ),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedMainIndex,
+        selectedIndex: selectedMainIndex,
         onDestinationSelected: (value) {
           setState(() {
             _selectedMainIndex = value;
@@ -175,11 +168,12 @@ class _VaultScreenState extends State<VaultScreen> {
         },
         destinations: const [
           NavigationDestination(icon: Icon(Icons.key_outlined), label: '密码库'),
-          NavigationDestination(
-            icon: Icon(Icons.password_outlined),
-            label: '生成器',
-          ),
           NavigationDestination(icon: Icon(Icons.folder_outlined), label: '文件'),
+          NavigationDestination(
+            icon: Icon(Icons.chat_bubble_outline),
+            label: '聊天',
+          ),
+          NavigationDestination(icon: Icon(Icons.people_outline), label: '好友'),
           NavigationDestination(
             icon: Icon(Icons.settings_outlined),
             label: '设置',

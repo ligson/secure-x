@@ -4,7 +4,7 @@ part of '../../../main.dart';
 
 extension _VaultSettingsTab on _VaultScreenState {
   Widget _buildSettingsTab(BuildContext context) {
-    return SingleChildScrollView(
+    return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
@@ -14,46 +14,58 @@ extension _VaultSettingsTab on _VaultScreenState {
             tag: '已加密',
           ),
           const SizedBox(height: 12),
-          Card(
-            child: Column(
-              children: [
-                _SettingsMenuTile(
-                  icon: Icons.person_outline,
-                  title: '个人信息',
-                  subtitle: widget.controller.user?.username ?? '当前账号',
-                  onTap: _showProfileSettings,
-                ),
-                Divider(height: 1, color: context.sx.border),
-                _SettingsMenuTile(
-                  icon: Icons.palette_outlined,
-                  title: '主题外观',
-                  subtitle: SecureXThemeSpec.byId(
-                    widget.controller.themeId,
-                  ).name,
-                  onTap: _showThemeSettings,
-                ),
-                Divider(height: 1, color: context.sx.border),
-                _SettingsMenuTile(
-                  icon: Icons.lan_outlined,
-                  title: '连接设置',
-                  subtitle: widget.controller.baseUrl,
-                  onTap: _showConnectionSettings,
-                ),
-                Divider(height: 1, color: context.sx.border),
-                _SettingsMenuTile(
-                  icon: Icons.security_outlined,
-                  title: '安全设置',
-                  subtitle: '登录密码、解锁密码',
-                  onTap: _showSecuritySettings,
-                ),
-                Divider(height: 1, color: context.sx.border),
-                _SettingsMenuTile(
-                  icon: Icons.power_settings_new_outlined,
-                  title: '会话操作',
-                  subtitle: '同步、锁定、退出登录',
-                  onTap: _showSessionSettings,
-                ),
-              ],
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  for (final notice in _buildPageStatusSections()) ...[
+                    notice,
+                    const SizedBox(height: 12),
+                  ],
+                  Card(
+                    child: Column(
+                      children: [
+                        _SettingsMenuTile(
+                          icon: Icons.person_outline,
+                          title: '个人信息',
+                          subtitle: widget.controller.user?.username ?? '当前账号',
+                          onTap: _showProfileSettings,
+                        ),
+                        Divider(height: 1, color: context.sx.border),
+                        _SettingsMenuTile(
+                          icon: Icons.palette_outlined,
+                          title: '主题外观',
+                          subtitle: SecureXThemeSpec.byId(
+                            widget.controller.themeId,
+                          ).name,
+                          onTap: _showThemeSettings,
+                        ),
+                        Divider(height: 1, color: context.sx.border),
+                        _SettingsMenuTile(
+                          icon: Icons.lan_outlined,
+                          title: '连接设置',
+                          subtitle: widget.controller.baseUrl,
+                          onTap: _showConnectionSettings,
+                        ),
+                        Divider(height: 1, color: context.sx.border),
+                        _SettingsMenuTile(
+                          icon: Icons.security_outlined,
+                          title: '安全设置',
+                          subtitle: '登录密码、解锁密码',
+                          onTap: _showSecuritySettings,
+                        ),
+                        Divider(height: 1, color: context.sx.border),
+                        _SettingsMenuTile(
+                          icon: Icons.power_settings_new_outlined,
+                          title: '会话操作',
+                          subtitle: '同步、锁定、退出登录',
+                          onTap: _showSessionSettings,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],
