@@ -14,6 +14,28 @@ extension AppControllerFriendActions on AppController {
     });
   }
 
+  Future<void> refreshFriendsSilently() {
+    if (_token == null) {
+      return Future.value();
+    }
+
+    _friendsRefreshTask = _friendsRefreshTask.then((_) async {
+      try {
+        await _loadFriendsSnapshot();
+        if (_vaultKey != null) {
+          await _mergeServerGroupsIntoChatConversations();
+        }
+        _markFriendsChanged();
+        _markChatChanged();
+        _statusMessage = '好友列表已刷新。';
+      } catch (error) {
+        _statusMessage = _friendlyError(error);
+      }
+      notifyListeners();
+    });
+    return _friendsRefreshTask;
+  }
+
   void _handleRealtimeFriendshipUpdated(String friendId, String status) {
     if (_token == null) {
       return;
@@ -28,13 +50,15 @@ extension AppControllerFriendActions on AppController {
     try {
       await _loadFriendsSnapshot();
       if (status == 'accepted') {
-        await _connectRealtimeChat();
+        await _ensureRealtimeChatConnected();
         await _requestHistoryFromPeer(friendId);
         _statusMessage = '好友关系已更新。';
       } else if (status == 'deleted') {
         _chatFriendOnline.remove(friendId);
         _statusMessage = '好友关系已更新。';
       }
+      _markFriendsChanged();
+      _markChatChanged();
       notifyListeners();
     } catch (error) {
       appLog('实时好友关系刷新失败', error);

@@ -104,6 +104,10 @@ class AppController extends ChangeNotifier {
   final FlutterSecureStorage _secureStorage;
   final ChatProtocol _chatProtocol = SecureXChatProtocolV1();
   final RealtimeChatService _realtimeChatService = RealtimeChatService();
+  final ValueNotifier<int> _appShellRevision = ValueNotifier(0);
+  final ValueNotifier<int> _themeRevision = ValueNotifier(0);
+  final ValueNotifier<int> _chatRevision = ValueNotifier(0);
+  final ValueNotifier<int> _friendsRevision = ValueNotifier(0);
   final String _storageNamespace = _resolveStorageNamespace();
   final String _devDataDir = Platform.environment['SECUREX_DEV_DATA_DIR'] ?? '';
 
@@ -129,6 +133,9 @@ class AppController extends ChangeNotifier {
   RealtimeConfig? _realtimeConfig;
   final List<FileUploadTask> _uploadTasks = [];
   Future<void> _realtimeResumeTask = Future.value();
+  Future<void> _realtimeConnectTask = Future.value();
+  Future<void> _chatRefreshTask = Future.value();
+  Future<void> _friendsRefreshTask = Future.value();
   Timer? _chatArchiveSyncTimer;
   String? _pendingChatArchivePayload;
   int _pendingChatArchiveVersion = 0;
@@ -157,6 +164,10 @@ class AppController extends ChangeNotifier {
       List.unmodifiable(_chatConversations);
   RealtimeConfig? get realtimeConfig => _realtimeConfig;
   List<FileUploadTask> get uploadTasks => List.unmodifiable(_uploadTasks);
+  Listenable get appShellListenable => _appShellRevision;
+  Listenable get themeListenable => _themeRevision;
+  Listenable get chatListenable => _chatRevision;
+  Listenable get friendsListenable => _friendsRevision;
 
   String get devInstance => _storageNamespace;
 
@@ -178,4 +189,16 @@ class AppController extends ChangeNotifier {
     final safe = value.replaceAll(RegExp(r'[^a-zA-Z0-9_.-]+'), '-');
     return safe.isEmpty ? 'default' : safe;
   }
+
+  void _bumpRevision(ValueNotifier<int> revision) {
+    revision.value = revision.value + 1;
+  }
+
+  void _markAppShellChanged() => _bumpRevision(_appShellRevision);
+
+  void _markThemeChanged() => _bumpRevision(_themeRevision);
+
+  void _markChatChanged() => _bumpRevision(_chatRevision);
+
+  void _markFriendsChanged() => _bumpRevision(_friendsRevision);
 }

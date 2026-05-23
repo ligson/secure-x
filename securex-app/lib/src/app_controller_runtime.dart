@@ -34,6 +34,7 @@ extension AppControllerRuntimeActions on AppController {
         return;
       case 'reconnecting':
         _statusMessage = '网络切换中，正在自动恢复实时加密通道。';
+        _markChatChanged();
         notifyListeners();
         return;
       case 'disconnected':
@@ -41,6 +42,7 @@ extension AppControllerRuntimeActions on AppController {
           _chatFriendOnline.updateAll((key, value) => false);
         }
         _statusMessage = '实时通道暂时断开，已切换到自动重连。';
+        _markChatChanged();
         notifyListeners();
         return;
       default:
@@ -68,10 +70,11 @@ extension AppControllerRuntimeActions on AppController {
             token: _token!,
           );
         }
-        await _connectRealtimeChat(forceReconnect: forceReconnect);
+        await _ensureRealtimeChatConnected(forceReconnect: forceReconnect);
         _historyRequestedPeerIds.clear();
         await _openRealtimePeersForHistorySync();
         _statusMessage = reason;
+        _markChatChanged();
         notifyListeners();
       } catch (error) {
         appLog('移动网络恢复实时通道失败', error);

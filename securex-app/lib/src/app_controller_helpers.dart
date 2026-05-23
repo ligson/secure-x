@@ -151,6 +151,7 @@ extension AppControllerInternalHelpers on AppController {
     );
     _incomingFriendRequests = requests['incoming'] ?? [];
     _outgoingFriendRequests = requests['outgoing'] ?? [];
+    _markFriendsChanged();
   }
 
   Future<void> _loadChatSnapshot() async {
@@ -162,13 +163,14 @@ extension AppControllerInternalHelpers on AppController {
       baseUrl: _baseUrl,
       token: _token!,
     );
-    await _connectRealtimeChat();
+    await _ensureRealtimeChatConnected();
     _chatConversations = [];
     final friendById = {for (final friend in _friends) friend.id: friend};
     await _mergeLocalChatSnapshot(friendById);
     await _mergeRemoteChatArchive(friendById);
     await _mergeServerGroupsIntoChatConversations();
     _sortChatConversations();
+    _markChatChanged();
     unawaited(_openRealtimePeersForHistorySync());
   }
 

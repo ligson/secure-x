@@ -20,6 +20,7 @@ extension AppControllerAuthActions on AppController {
     }
 
     _initialized = true;
+    _markAppShellChanged();
     notifyListeners();
   }
 
@@ -34,6 +35,7 @@ extension AppControllerAuthActions on AppController {
     _themeId = value;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_storageKey(AppController._themeIdKey), _themeId);
+    _markThemeChanged();
     notifyListeners();
   }
 
@@ -64,6 +66,7 @@ extension AppControllerAuthActions on AppController {
       await _loadVaultSnapshot();
       await _loadFriendsSnapshot();
       await _loadChatSnapshot();
+      _markAppShellChanged();
       _statusMessage = tokenPersisted
           ? '注册成功，保险库已经解锁。'
           : '注册成功，当前会话已解锁；本机安全存储暂不可用，重启应用后需要重新登录。';
@@ -84,6 +87,7 @@ extension AppControllerAuthActions on AppController {
       _token = response['token'] as String;
       _user = UserProfile.fromJson(response['user'] as Map<String, dynamic>);
       _vaultKey = null;
+      _markAppShellChanged();
       final tokenPersisted = await _persistToken(_token!);
       _statusMessage = tokenPersisted
           ? '登录成功，请输入解锁密码。'
@@ -107,6 +111,7 @@ extension AppControllerAuthActions on AppController {
       await _loadVaultSnapshot();
       await _loadFriendsSnapshot();
       await _loadChatSnapshot();
+      _markAppShellChanged();
       _statusMessage = '保险库已解锁。';
     });
   }

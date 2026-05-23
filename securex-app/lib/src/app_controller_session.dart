@@ -34,6 +34,7 @@ extension AppControllerSessionActions on AppController {
     _historyRequestedPeerIds.clear();
     _realtimeConfig = null;
     _cancelPendingChatArchiveSync();
+    _markAppShellChanged();
     notifyListeners();
   }
 
@@ -57,6 +58,7 @@ extension AppControllerSessionActions on AppController {
     _realtimeConfig = null;
     _cancelPendingChatArchiveSync();
     await _clearPersistedToken();
+    _markAppShellChanged();
     notifyListeners();
   }
 

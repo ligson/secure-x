@@ -4,133 +4,151 @@ part of '../../../main.dart';
 
 extension _FriendsTab on _VaultScreenState {
   Widget _buildFriendsTab(BuildContext context) {
-    final friends = _filteredFriends();
-    final groupedFriends = _groupFriends(friends);
-    final incomingCount = widget.controller.incomingFriendRequests.length;
+    return ListenableBuilder(
+      listenable: widget.controller.friendsListenable,
+      builder: (context, _) {
+        final friends = _filteredFriends();
+        final groupedFriends = _groupFriends(friends);
+        final incomingCount = widget.controller.incomingFriendRequests.length;
 
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          _buildFriendsHeader(context, incomingCount),
-          const SizedBox(height: 12),
-          Expanded(
-            child: CustomScrollView(
-              slivers: [
-                ..._buildSliverPageStatusSections(),
-                SliverToBoxAdapter(
-                  child: TextField(
-                    controller: _friendSearchController,
-                    onChanged: (_) => setState(() {}),
-                    decoration: const InputDecoration(
-                      hintText: '搜索好友',
-                      prefixIcon: Icon(Icons.search),
-                    ),
-                  ),
-                ),
-                const SliverToBoxAdapter(child: SizedBox(height: 12)),
-                SliverToBoxAdapter(
-                  child: Card(
-                    child: Column(
-                      children: [
-                        _FriendActionTile(
-                          color: const Color(0xFFFFA13A),
-                          icon: Icons.person_add_alt_1_outlined,
-                          title: '新的朋友',
-                          subtitle: incomingCount == 0
-                              ? '查看好友申请'
-                              : '$incomingCount 条待处理申请',
-                          trailing: incomingCount == 0
-                              ? const Icon(Icons.chevron_right_rounded)
-                              : _RequestBadge(count: incomingCount),
-                          onTap: _showFriendRequests,
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              _buildFriendsHeader(context, incomingCount),
+              const SizedBox(height: 12),
+              Expanded(
+                child: RefreshIndicator(
+                  onRefresh: widget.controller.refreshFriendsSilently,
+                  child: CustomScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    slivers: [
+                      ..._buildSliverPageStatusSections(),
+                      SliverToBoxAdapter(
+                        child: TextField(
+                          controller: _friendSearchController,
+                          onChanged: (_) => setState(() {}),
+                          decoration: const InputDecoration(
+                            hintText: '搜索好友',
+                            prefixIcon: Icon(Icons.search),
+                          ),
                         ),
-                        Divider(height: 1, color: context.sx.border),
-                        _FriendActionTile(
-                          color: const Color(0xFF12A594),
-                          icon: Icons.groups_2_outlined,
-                          title: '群聊',
-                          subtitle: '查看我创建和加入的群聊',
-                          trailing: const Icon(Icons.chevron_right_rounded),
-                          onTap: _showFriendGroups,
+                      ),
+                      const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                      SliverToBoxAdapter(
+                        child: Card(
+                          child: Column(
+                            children: [
+                              _FriendActionTile(
+                                color: const Color(0xFFFFA13A),
+                                icon: Icons.person_add_alt_1_outlined,
+                                title: '新的朋友',
+                                subtitle: incomingCount == 0
+                                    ? '查看好友申请'
+                                    : '$incomingCount 条待处理申请',
+                                trailing: incomingCount == 0
+                                    ? const Icon(Icons.chevron_right_rounded)
+                                    : _RequestBadge(count: incomingCount),
+                                onTap: _showFriendRequests,
+                              ),
+                              Divider(height: 1, color: context.sx.border),
+                              _FriendActionTile(
+                                color: const Color(0xFF12A594),
+                                icon: Icons.groups_2_outlined,
+                                title: '群聊',
+                                subtitle: '查看我创建和加入的群聊',
+                                trailing: const Icon(
+                                  Icons.chevron_right_rounded,
+                                ),
+                                onTap: _showFriendGroups,
+                              ),
+                              Divider(height: 1, color: context.sx.border),
+                              _FriendActionTile(
+                                color: context.sx.primary,
+                                icon: Icons.group_add_outlined,
+                                title: '添加好友',
+                                subtitle: '通过用户名或邮箱发送申请',
+                                trailing: const Icon(
+                                  Icons.chevron_right_rounded,
+                                ),
+                                onTap: _showAddFriendPage,
+                              ),
+                            ],
+                          ),
                         ),
-                        Divider(height: 1, color: context.sx.border),
-                        _FriendActionTile(
-                          color: context.sx.primary,
-                          icon: Icons.group_add_outlined,
-                          title: '添加好友',
-                          subtitle: '通过用户名或邮箱发送申请',
-                          trailing: const Icon(Icons.chevron_right_rounded),
-                          onTap: _showAddFriendPage,
+                      ),
+                      const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                      if (friends.isEmpty)
+                        SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: Center(
+                            child: Text(
+                              _friendSearchController.text.trim().isEmpty
+                                  ? '还没有好友'
+                                  : '没有匹配的好友',
+                              style: Theme.of(
+                                context,
+                              ).textTheme.bodyMedium?.copyWith(
+                                color: context.sx.mutedText,
+                              ),
+                            ),
+                          ),
+                        )
+                      else ...[
+                        for (final entry in groupedFriends.entries) ...[
+                          SliverToBoxAdapter(
+                            child: _FriendSectionHeader(label: entry.key),
+                          ),
+                          SliverToBoxAdapter(
+                            child: Card(
+                              child: Column(
+                                children: [
+                                  for (
+                                    var index = 0;
+                                    index < entry.value.length;
+                                    index++
+                                  ) ...[
+                                    _FriendListTile(
+                                      friend: entry.value[index],
+                                      onTap: () =>
+                                          _showFriendDetail(entry.value[index]),
+                                    ),
+                                    if (index != entry.value.length - 1)
+                                      Divider(
+                                        height: 1,
+                                        color: context.sx.border,
+                                      ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                        ],
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: const EdgeInsets.only(bottom: 24),
+                            child: Center(
+                              child: Text(
+                                '${widget.controller.friends.length} 个好友',
+                                style: Theme.of(context).textTheme.bodyMedium
+                                    ?.copyWith(
+                                      color: context.sx.mutedText,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                              ),
+                            ),
+                          ),
                         ),
                       ],
-                    ),
+                    ],
                   ),
                 ),
-                const SliverToBoxAdapter(child: SizedBox(height: 12)),
-                if (friends.isEmpty)
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: Center(
-                      child: Text(
-                        _friendSearchController.text.trim().isEmpty
-                            ? '还没有好友'
-                            : '没有匹配的好友',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: context.sx.mutedText,
-                        ),
-                      ),
-                    ),
-                  )
-                else ...[
-                  for (final entry in groupedFriends.entries) ...[
-                    SliverToBoxAdapter(
-                      child: _FriendSectionHeader(label: entry.key),
-                    ),
-                    SliverToBoxAdapter(
-                      child: Card(
-                        child: Column(
-                          children: [
-                            for (
-                              var index = 0;
-                              index < entry.value.length;
-                              index++
-                            ) ...[
-                              _FriendListTile(
-                                friend: entry.value[index],
-                                onTap: () =>
-                                    _showFriendDetail(entry.value[index]),
-                              ),
-                              if (index != entry.value.length - 1)
-                                Divider(height: 1, color: context.sx.border),
-                            ],
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SliverToBoxAdapter(child: SizedBox(height: 12)),
-                  ],
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.only(bottom: 24),
-                      child: Center(
-                        child: Text(
-                          '${widget.controller.friends.length} 个好友',
-                          style: Theme.of(context).textTheme.bodyMedium
-                              ?.copyWith(
-                                color: context.sx.mutedText,
-                                fontWeight: FontWeight.w700,
-                              ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -146,42 +164,10 @@ extension _FriendsTab on _VaultScreenState {
   }
 
   Widget _buildFriendsHeader(BuildContext context, int incomingCount) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final header = _buildModuleHeader(
-          icon: Icons.people_outline,
-          title: '好友',
-          tag: incomingCount == 0 ? '通讯录' : '$incomingCount 个申请',
-        );
-        final actions = [
-          OutlinedButton.icon(
-            onPressed: widget.controller.busy
-                ? null
-                : widget.controller.refreshFriends,
-            icon: const Icon(Icons.sync),
-            label: const Text('同步'),
-          ),
-        ];
-
-        if (constraints.maxWidth < 560) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              header,
-              const SizedBox(height: 12),
-              Wrap(spacing: 10, runSpacing: 10, children: actions),
-            ],
-          );
-        }
-
-        return Row(
-          children: [
-            Expanded(child: header),
-            const SizedBox(width: 12),
-            ...actions.expand((action) => [action, const SizedBox(width: 10)]),
-          ]..removeLast(),
-        );
-      },
+    return _buildModuleHeader(
+      icon: Icons.people_outline,
+      title: '好友',
+      tag: incomingCount == 0 ? '通讯录' : '$incomingCount 个申请',
     );
   }
 
@@ -316,8 +302,8 @@ class _FriendGroupsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return DefaultTabController(
       length: 2,
-      child: AnimatedBuilder(
-        animation: controller,
+      child: ListenableBuilder(
+        listenable: controller.chatListenable,
         builder: (context, _) {
           final groups = controller.chatConversations
               .where((conversation) => conversation.isGroup)
@@ -428,7 +414,7 @@ class _FriendGroupTile extends StatelessWidget {
     final lastMessage = conversation.lastMessage;
     return ListTile(
       onTap: () async {
-        await controller.openGroupChat(conversation.id);
+        unawaited(controller.openGroupChat(conversation.id));
         if (!context.mounted) {
           return;
         }
@@ -708,7 +694,7 @@ class _FriendRequestsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: controller,
+      animation: controller.friendsListenable,
       builder: (context, _) {
         return Scaffold(
           appBar: AppBar(title: const Text('新的朋友')),
@@ -717,7 +703,7 @@ class _FriendRequestsPage extends StatelessWidget {
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 820),
                 child: RefreshIndicator(
-                  onRefresh: controller.refreshFriends,
+                  onRefresh: controller.refreshFriendsSilently,
                   child: ListView(
                     padding: const EdgeInsets.all(16),
                     children: [
@@ -859,7 +845,7 @@ class _FriendDetailPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: controller,
+      animation: controller.friendsListenable,
       builder: (context, _) {
         return Scaffold(
           appBar: AppBar(title: const Text('好友信息')),
@@ -917,7 +903,7 @@ class _FriendDetailPage extends StatelessWidget {
                     const SizedBox(height: 12),
                     FilledButton.icon(
                       onPressed: () async {
-                        await controller.openChatWith(friend);
+                        unawaited(controller.openChatWith(friend));
                         if (!context.mounted) {
                           return;
                         }

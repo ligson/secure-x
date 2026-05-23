@@ -13,17 +13,53 @@ extension AppControllerChatActions on AppController {
         baseUrl: _baseUrl,
         token: _token!,
       );
-      await _connectRealtimeChat();
+      await _ensureRealtimeChatConnected();
       _statusMessage = _realtimeConfig!.signalingEnabled
           ? '实时聊天配置已加载。'
           : '实时聊天信令暂未启用，消息会先加密保存在本机。';
     });
   }
 
+  Future<void> refreshChatOverview() {
+    if (_token == null || _user == null || _vaultKey == null) {
+      return Future.value();
+    }
+
+    _chatRefreshTask = _chatRefreshTask.then((_) async {
+      try {
+        await _loadFriendsSnapshot();
+        _realtimeConfig = await _apiClient.realtimeConfig(
+          baseUrl: _baseUrl,
+          token: _token!,
+        );
+        await _ensureRealtimeChatConnected(forceReconnect: true);
+        await _mergeServerGroupsIntoChatConversations();
+        final friendById = {for (final friend in _friends) friend.id: friend};
+        await _mergeRemoteChatArchive(friendById);
+        final identity = _chatIdentity;
+        if (identity != null) {
+          await _pullPendingChatMessages(expectedDeviceId: identity.deviceId);
+        }
+        _historyRequestedPeerIds.clear();
+        await _openRealtimePeersForHistorySync();
+        _sortChatConversations();
+        _markChatChanged();
+        _statusMessage = '聊天会话已刷新。';
+      } catch (error) {
+        _statusMessage = _friendlyError(error);
+      }
+      notifyListeners();
+    });
+    return _chatRefreshTask;
+  }
+
   Future<void> openChatWith(PublicUser friend) async {
+    final hadConversation = _findDirectConversation(friend.id) != null;
     _ensureConversation(friend);
-    await _connectRealtimeChat();
-    notifyListeners();
+    if (!hadConversation) {
+      notifyListeners();
+    }
+    unawaited(_ensureRealtimeChatConnected());
   }
 
   Future<ChatConversation> createGroupChat({
@@ -60,15 +96,14 @@ extension AppControllerChatActions on AppController {
     if (conversation == null || !conversation.isGroup) {
       return;
     }
-    await _connectRealtimeChat();
-    notifyListeners();
+    unawaited(_ensureRealtimeChatConnected());
   }
 
   Future<void> _openRealtimePeersForHistorySync() async {
     if (_token == null || _user == null || _vaultKey == null) {
       return;
     }
-    await _connectRealtimeChat();
+    await _ensureRealtimeChatConnected();
     final peers = <String, PublicUser>{
       for (final friend in _friends) friend.id: friend,
     };
@@ -321,6 +356,7 @@ extension AppControllerChatActions on AppController {
     final conversation = ChatConversation(friend: friend, messages: []);
     _chatConversations = [..._chatConversations, conversation];
     _sortChatConversations();
+    _markChatChanged();
     return conversation;
   }
 
@@ -344,6 +380,7 @@ extension AppControllerChatActions on AppController {
     }
     _chatConversations = conversations;
     _sortChatConversations();
+    _markChatChanged();
   }
 
   void _replaceConversationMessagesById(
@@ -363,10 +400,24 @@ extension AppControllerChatActions on AppController {
     );
     _chatConversations = conversations;
     _sortChatConversations();
+    _markChatChanged();
   }
 
   List<ChatMessage> _sortMessages(List<ChatMessage> messages) {
     return messages..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  }
+
+  Future<void> _ensureRealtimeChatConnected({
+    bool forceReconnect = false,
+  }) {
+    _realtimeConnectTask = _realtimeConnectTask.then((_) async {
+      try {
+        await _connectRealtimeChat(forceReconnect: forceReconnect);
+      } catch (error) {
+        appLog('预热聊天实时通道失败', error);
+      }
+    });
+    return _realtimeConnectTask;
   }
 
   Future<void> _connectRealtimeChat({bool forceReconnect = false}) async {
@@ -978,6 +1029,7 @@ extension AppControllerChatActions on AppController {
 
     if (online || offline) {
       _chatFriendOnline[friendId] = online;
+      _markChatChanged();
       notifyListeners();
     }
 
@@ -1151,6 +1203,7 @@ extension AppControllerChatActions on AppController {
         )
         .toList();
     _sortChatConversations();
+    _markChatChanged();
   }
 
   ChatConversation _ensureGroupConversation({
@@ -1172,6 +1225,7 @@ extension AppControllerChatActions on AppController {
       );
       _chatConversations = conversations;
       _sortChatConversations();
+      _markChatChanged();
       return conversations[index];
     }
 
@@ -1185,6 +1239,7 @@ extension AppControllerChatActions on AppController {
     );
     _chatConversations = [..._chatConversations, conversation];
     _sortChatConversations();
+    _markChatChanged();
     return conversation;
   }
 

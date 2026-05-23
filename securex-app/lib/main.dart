@@ -97,8 +97,11 @@ class _SecureXAppState extends State<SecureXApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: widget.controller,
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        widget.controller.appShellListenable,
+        widget.controller.themeListenable,
+      ]),
       builder: (context, _) {
         final theme = SecureXThemeSpec.byId(widget.controller.themeId);
         return MaterialApp(

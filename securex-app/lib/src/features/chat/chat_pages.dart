@@ -4,101 +4,113 @@ part of '../../../main.dart';
 
 extension _ChatTab on _VaultScreenState {
   Widget _buildChatTab(BuildContext context) {
-    final conversations = widget.controller.chatConversations;
-    final realtimeConfig = widget.controller.realtimeConfig;
-    final realtimeReady = realtimeConfig?.signalingEnabled == true;
-    final realtimeNotice = realtimeReady
-        ? '实时信令已就绪，消息会在端到端加密通道中发送。'
-        : '实时通道暂未建立，聊天内容只会加密保存在本机，不会上传服务器保存。';
-    final statusNotice = widget.controller.busy
-        ? '处理中...'
-        : widget.controller.statusMessage;
-    final showStatusNotice =
-        statusNotice != null &&
-        statusNotice.isNotEmpty &&
-        _dismissedPageStatusMessage != statusNotice;
-    final showRealtimeNotice = _dismissedChatRealtimeNotice != realtimeNotice;
+    return ListenableBuilder(
+      listenable: widget.controller.chatListenable,
+      builder: (context, _) {
+        final conversations = widget.controller.chatConversations;
+        final realtimeConfig = widget.controller.realtimeConfig;
+        final realtimeReady = realtimeConfig?.signalingEnabled == true;
+        final realtimeNotice = realtimeReady
+            ? '实时信令已就绪，消息会在端到端加密通道中发送。'
+            : '实时通道暂未建立，聊天内容只会加密保存在本机，不会上传服务器保存。';
+        final statusNotice = widget.controller.busy
+            ? '处理中...'
+            : widget.controller.statusMessage;
+        final showStatusNotice =
+            statusNotice != null &&
+            statusNotice.isNotEmpty &&
+            _dismissedPageStatusMessage != statusNotice;
+        final showRealtimeNotice =
+            _dismissedChatRealtimeNotice != realtimeNotice;
 
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          _buildChatHeader(context, realtimeReady),
-          const SizedBox(height: 12),
-          Expanded(
-            child: CustomScrollView(
-              slivers: [
-                if (showStatusNotice) ...[
-                  SliverToBoxAdapter(
-                    child: _PageNotice(
-                      message: statusNotice,
-                      tone: _PageNoticeTone.neutral,
-                      onClose: () {
-                        setState(() {
-                          _dismissedPageStatusMessage = statusNotice;
-                        });
-                      },
-                    ),
-                  ),
-                ],
-                if (showRealtimeNotice) ...[
-                  if (showStatusNotice)
-                    const SliverToBoxAdapter(child: SizedBox(height: 12)),
-                  SliverToBoxAdapter(
-                    child: _PageNotice(
-                      message: realtimeNotice,
-                      tone: realtimeReady
-                          ? _PageNoticeTone.success
-                          : _PageNoticeTone.warn,
-                      onClose: () {
-                        setState(() {
-                          _dismissedChatRealtimeNotice = realtimeNotice;
-                        });
-                      },
-                    ),
-                  ),
-                ],
-                if (showStatusNotice || showRealtimeNotice)
-                  const SliverToBoxAdapter(child: SizedBox(height: 12)),
-                if (conversations.isEmpty)
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: Center(
-                      child: Text(
-                        '还没有会话，可以从好友详情发起聊天',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: context.sx.mutedText,
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              _buildChatHeader(context, realtimeReady),
+              const SizedBox(height: 12),
+              Expanded(
+                child: RefreshIndicator(
+                  onRefresh: widget.controller.refreshChatOverview,
+                  child: CustomScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    slivers: [
+                      if (showStatusNotice) ...[
+                        SliverToBoxAdapter(
+                          child: _PageNotice(
+                            message: statusNotice,
+                            tone: _PageNoticeTone.neutral,
+                            onClose: () {
+                              setState(() {
+                                _dismissedPageStatusMessage = statusNotice;
+                              });
+                            },
+                          ),
                         ),
-                      ),
-                    ),
-                  )
-                else
-                  SliverToBoxAdapter(
-                    child: Card(
-                      child: Column(
-                        children: [
-                          for (
-                            var index = 0;
-                            index < conversations.length;
-                            index++
-                          ) ...[
-                            _ConversationTile(
-                              conversation: conversations[index],
-                              onTap: () =>
-                                  _showConversation(conversations[index]),
+                      ],
+                      if (showRealtimeNotice) ...[
+                        if (showStatusNotice)
+                          const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                        SliverToBoxAdapter(
+                          child: _PageNotice(
+                            message: realtimeNotice,
+                            tone: realtimeReady
+                                ? _PageNoticeTone.success
+                                : _PageNoticeTone.warn,
+                            onClose: () {
+                              setState(() {
+                                _dismissedChatRealtimeNotice = realtimeNotice;
+                              });
+                            },
+                          ),
+                        ),
+                      ],
+                      if (showStatusNotice || showRealtimeNotice)
+                        const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                      if (conversations.isEmpty)
+                        SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: Center(
+                            child: Text(
+                              '还没有会话，可以从好友详情发起聊天',
+                              style: Theme.of(
+                                context,
+                              ).textTheme.bodyMedium?.copyWith(
+                                color: context.sx.mutedText,
+                              ),
                             ),
-                            if (index != conversations.length - 1)
-                              Divider(height: 1, color: context.sx.border),
-                          ],
-                        ],
-                      ),
-                    ),
+                          ),
+                        )
+                      else
+                        SliverToBoxAdapter(
+                          child: Card(
+                            child: Column(
+                              children: [
+                                for (
+                                  var index = 0;
+                                  index < conversations.length;
+                                  index++
+                                ) ...[
+                                  _ConversationTile(
+                                    conversation: conversations[index],
+                                    onTap: () =>
+                                        _showConversation(conversations[index]),
+                                  ),
+                                  if (index != conversations.length - 1)
+                                    Divider(height: 1, color: context.sx.border),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
-              ],
-            ),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -158,7 +170,7 @@ extension _ChatTab on _VaultScreenState {
 
   Future<void> _showConversation(ChatConversation conversation) async {
     if (conversation.isGroup) {
-      await widget.controller.openGroupChat(conversation.id);
+      unawaited(widget.controller.openGroupChat(conversation.id));
       if (!mounted) {
         return;
       }
@@ -181,7 +193,7 @@ extension _ChatTab on _VaultScreenState {
   }
 
   Future<void> _showChatRoom(PublicUser friend) async {
-    await widget.controller.openChatWith(friend);
+    unawaited(widget.controller.openChatWith(friend));
     if (!mounted) {
       return;
     }
@@ -358,8 +370,8 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: widget.controller,
+    return ListenableBuilder(
+      listenable: widget.controller.chatListenable,
       builder: (context, _) {
         final conversation = _conversation();
         final messages = conversation?.messages ?? [];
@@ -379,6 +391,7 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
             (friend == null
                 ? '聊天'
                 : (friend.username.isEmpty ? friend.email : friend.username));
+        final messageCount = messages.length;
         return Scaffold(
           backgroundColor: context.sx.scaffold,
           appBar: AppBar(
@@ -466,19 +479,22 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
               child: Column(
                 children: [
                   Expanded(
-                    child: ListView(
+                    child: ListView.builder(
                       reverse: true,
                       padding: const EdgeInsets.fromLTRB(22, 18, 22, 24),
-                      children: [
-                        for (final message in messages.reversed)
-                          _ChatMessageBubble(
-                            controller: widget.controller,
-                            conversation: conversation,
-                            friend: friend,
-                            message: message,
-                          ),
-                        if (messages.isEmpty) const _ChatEmptyState(),
-                      ],
+                      itemCount: messageCount == 0 ? 1 : messageCount,
+                      itemBuilder: (context, index) {
+                        if (messageCount == 0) {
+                          return const _ChatEmptyState();
+                        }
+                        final message = messages[messageCount - 1 - index];
+                        return _ChatMessageBubble(
+                          controller: widget.controller,
+                          conversation: conversation,
+                          friend: friend,
+                          message: message,
+                        );
+                      },
                     ),
                   ),
                   _ChatComposer(
@@ -922,7 +938,7 @@ class _StartGroupChatPageState extends State<_StartGroupChatPage> {
 
     if (selectedFriends.length == 1) {
       final friend = selectedFriends.first;
-      await widget.controller.openChatWith(friend);
+      unawaited(widget.controller.openChatWith(friend));
       if (!mounted) {
         return;
       }
