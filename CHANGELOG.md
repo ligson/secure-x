@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.3] - 2026-05-23
+
 ### Updated
 
 - 修复 GitHub Actions 的 macOS/iOS 构建失败：将 `connectivity_plus` 精确锁定到兼容 Xcode 16.4 runner 的 `6.1.5`，避免 `7.1.1` 在 Apple 平台编译时使用 `NWPath.isUltraConstrained` 导致 `Flutter macOS x64`、`Flutter macOS arm64` 与 `Flutter iOS unsigned` 任务失败
