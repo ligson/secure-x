@@ -18,6 +18,7 @@ extension AppControllerSessionActions on AppController {
   );
 
   Future<void> lock() async {
+    await _flushPendingChatArchiveSync();
     await _realtimeChatService.disconnect();
     _vaultKey = null;
     _folders = [];
@@ -28,13 +29,16 @@ extension AppControllerSessionActions on AppController {
     _incomingFriendRequests = [];
     _outgoingFriendRequests = [];
     _chatConversations = [];
+    _chatIdentity = null;
     _chatFriendOnline.clear();
     _historyRequestedPeerIds.clear();
     _realtimeConfig = null;
+    _cancelPendingChatArchiveSync();
     notifyListeners();
   }
 
   Future<void> logout() async {
+    await _flushPendingChatArchiveSync();
     await _realtimeChatService.disconnect();
     _token = null;
     _user = null;
@@ -47,9 +51,11 @@ extension AppControllerSessionActions on AppController {
     _incomingFriendRequests = [];
     _outgoingFriendRequests = [];
     _chatConversations = [];
+    _chatIdentity = null;
     _chatFriendOnline.clear();
     _historyRequestedPeerIds.clear();
     _realtimeConfig = null;
+    _cancelPendingChatArchiveSync();
     await _clearPersistedToken();
     notifyListeners();
   }

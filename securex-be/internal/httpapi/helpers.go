@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -122,4 +123,80 @@ func (h *Handler) fileFolderInUse(userID, folderID string) (bool, error) {
 	}
 
 	return fileCount > 0, nil
+}
+
+func normalizeUniqueIDs(ids []string) []string {
+	result := make([]string, 0, len(ids))
+	seen := map[string]struct{}{}
+	for _, raw := range ids {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		result = append(result, id)
+	}
+	return result
+}
+
+func normalizeGroupMemberIDs(currentUserID string, memberIDs []string) []string {
+	result := []string{currentUserID}
+	seen := map[string]struct{}{currentUserID: {}}
+	for _, raw := range memberIDs {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		result = append(result, id)
+	}
+	return result
+}
+
+func uniqueWithout(ids []string, exclude string) []string {
+	result := make([]string, 0, len(ids))
+	for _, id := range normalizeUniqueIDs(ids) {
+		if id == exclude {
+			continue
+		}
+		result = append(result, id)
+	}
+	return result
+}
+
+func containsID(ids []string, target string) bool {
+	for _, id := range ids {
+		if id == target {
+			return true
+		}
+	}
+	return false
+}
+
+func diffIDs(current []string, next []string) (added []string, removed []string) {
+	currentSet := map[string]struct{}{}
+	nextSet := map[string]struct{}{}
+	for _, id := range normalizeUniqueIDs(current) {
+		currentSet[id] = struct{}{}
+	}
+	for _, id := range normalizeUniqueIDs(next) {
+		nextSet[id] = struct{}{}
+		if _, ok := currentSet[id]; !ok {
+			added = append(added, id)
+		}
+	}
+	for _, id := range normalizeUniqueIDs(current) {
+		if _, ok := nextSet[id]; !ok {
+			removed = append(removed, id)
+		}
+	}
+	slices.Sort(added)
+	slices.Sort(removed)
+	return added, removed
 }

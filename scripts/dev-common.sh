@@ -7,6 +7,7 @@ DEV_DIR="${ROOT_DIR}/.dev"
 PID_DIR="${DEV_DIR}/pids"
 LOG_DIR="${DEV_DIR}/logs"
 BIN_DIR="${DEV_DIR}/bin"
+LOCK_DIR="${DEV_DIR}/locks"
 
 BACKEND_PID_FILE="${PID_DIR}/secure-x.pid"
 BACKEND_LEGACY_PID_FILE="${PID_DIR}/securex-be.pid"
@@ -26,7 +27,33 @@ FLUTTER_DEVICE="${FLUTTER_DEVICE:-macos}"
 BACKEND_HEALTHCHECK_URL="${BACKEND_HEALTHCHECK_URL:-http://${BACKEND_ADDR}/healthz}"
 
 ensure_dev_dirs() {
-  mkdir -p "${PID_DIR}" "${LOG_DIR}" "${BIN_DIR}" "${BACKEND_FILE_DIR}"
+  mkdir -p "${PID_DIR}" "${LOG_DIR}" "${BIN_DIR}" "${LOCK_DIR}" "${BACKEND_FILE_DIR}"
+}
+
+lock_path() {
+  local name="$1"
+  printf '%s/%s.lock' "${LOCK_DIR}" "${name}"
+}
+
+acquire_lock() {
+  local lock_name="$1"
+  local lock_path_value
+  lock_path_value="$(lock_path "${lock_name}")"
+  local attempts=0
+
+  while ! mkdir "${lock_path_value}" >/dev/null 2>&1; do
+    attempts=$((attempts + 1))
+    if (( attempts > 240 )); then
+      echo "Timed out waiting for lock: ${lock_name}" >&2
+      return 1
+    fi
+    sleep 0.5
+  done
+}
+
+release_lock() {
+  local lock_name="$1"
+  rm -rf "$(lock_path "${lock_name}")"
 }
 
 write_backend_config() {

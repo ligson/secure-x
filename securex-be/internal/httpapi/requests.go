@@ -67,6 +67,54 @@ type friendRequestCreateRequest struct {
 	Message    string `json:"message"`
 }
 
+type groupUpsertRequest struct {
+	GroupID     string   `json:"groupId"`
+	Payload     string   `json:"payload" binding:"required"`
+	Version     int      `json:"version"`
+	MemberIDs   []string `json:"memberIds"`
+	AdminUserID string   `json:"adminUserId"`
+}
+
+type groupSnapshotUpsertRequest struct {
+	Payload string `json:"payload" binding:"required"`
+	Version int    `json:"version"`
+}
+
+type groupLeaveRequest struct {
+	NextAdminUserID string `json:"nextAdminUserId"`
+}
+
+type chatArchiveUpsertRequest struct {
+	Payload string `json:"payload" binding:"required"`
+	Version int    `json:"version"`
+}
+
+type chatDeviceUpsertRequest struct {
+	DeviceID        string `json:"deviceId" binding:"required"`
+	Protocol        string `json:"protocol" binding:"required"`
+	ProtocolVersion int    `json:"protocolVersion"`
+	PublicKey       string `json:"publicKey" binding:"required"`
+	AppInstance     string `json:"appInstance"`
+}
+
+type chatMessageDispatchRequest struct {
+	Messages []chatEnvelopeDispatchRequest `json:"messages" binding:"required"`
+}
+
+type chatEnvelopeDispatchRequest struct {
+	RecipientUserID   string `json:"recipientUserId" binding:"required"`
+	RecipientDeviceID string `json:"recipientDeviceId" binding:"required"`
+	SenderDeviceID    string `json:"senderDeviceId" binding:"required"`
+	Protocol          string `json:"protocol" binding:"required"`
+	Payload           string `json:"payload" binding:"required"`
+	ExpiresInSeconds  int    `json:"expiresInSeconds"`
+}
+
+type chatMessageAckRequest struct {
+	DeviceID   string   `json:"deviceId" binding:"required"`
+	MessageIDs []string `json:"messageIds" binding:"required"`
+}
+
 func bindErrorMessage(err error) string {
 	var validationErrors validator.ValidationErrors
 	if errors.As(err, &validationErrors) {
@@ -113,6 +161,24 @@ func validationErrorMessage(fieldErr validator.FieldError) string {
 		return "缺少加密负载内容"
 	case "Kind":
 		return "缺少条目类型"
+	case "MemberIDs":
+		return "缺少群成员信息"
+	case "DeviceID":
+		return "缺少设备标识"
+	case "Protocol":
+		return "缺少聊天协议标识"
+	case "PublicKey":
+		return "缺少设备公钥"
+	case "Messages":
+		return "缺少聊天消息"
+	case "RecipientUserID":
+		return "缺少接收用户标识"
+	case "RecipientDeviceID":
+		return "缺少接收设备标识"
+	case "SenderDeviceID":
+		return "缺少发送设备标识"
+	case "MessageIDs":
+		return "缺少待确认消息标识"
 	default:
 		return "请求参数校验失败"
 	}

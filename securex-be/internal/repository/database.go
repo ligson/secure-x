@@ -28,6 +28,12 @@ func Open(databaseDSN string) (*gorm.DB, error) {
 		&model.FileUploadSession{},
 		&model.FriendRequest{},
 		&model.Friendship{},
+		&model.GroupRoom{},
+		&model.GroupMembership{},
+		&model.GroupSnapshot{},
+		&model.ChatArchive{},
+		&model.ChatDevice{},
+		&model.ChatQueuedEnvelope{},
 	); err != nil {
 		return nil, err
 	}

@@ -163,91 +163,13 @@ extension AppControllerInternalHelpers on AppController {
       token: _token!,
     );
     await _connectRealtimeChat();
-
-    final file = await _chatStoreFile();
-    if (!await file.exists()) {
-      _chatConversations = [];
-      unawaited(_openRealtimePeersForHistorySync());
-      return;
-    }
-
-    try {
-      final encrypted = await file.readAsString();
-      final data = await _cryptoService.decryptJson(encrypted, _vaultKey!);
-      final friendById = {for (final friend in _friends) friend.id: friend};
-
-      final conversations = data['conversations'] as List<dynamic>?;
-      if (conversations != null) {
-        _chatConversations = conversations
-            .map((entry) => entry as Map<String, dynamic>)
-            .map((entry) {
-              final isGroup = entry['isGroup'] as bool? ?? false;
-              final messages =
-                  (entry['messages'] as List<dynamic>? ?? const [])
-                      .map(
-                        (message) => ChatMessage.fromJson(
-                          message as Map<String, dynamic>,
-                        ),
-                      )
-                      .toList()
-                    ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-              if (isGroup) {
-                final members = (entry['members'] as List<dynamic>? ?? const [])
-                    .map(
-                      (member) =>
-                          PublicUser.fromJson(member as Map<String, dynamic>),
-                    )
-                    .where((member) => friendById.containsKey(member.id))
-                    .map((member) => friendById[member.id]!)
-                    .toList();
-                return ChatConversation(
-                  id: entry['id'] as String? ?? '',
-                  title: entry['title'] as String? ?? '未命名群聊',
-                  members: members,
-                  adminUserId: entry['adminUserId'] as String? ?? '',
-                  isGroup: true,
-                  messages: messages,
-                );
-              }
-
-              final friendId = entry['friendId'] as String? ?? '';
-              final friend = friendById[friendId];
-              if (friend == null) {
-                return null;
-              }
-              return ChatConversation(friend: friend, messages: messages);
-            })
-            .whereType<ChatConversation>()
-            .toList();
-        _sortChatConversations();
-        unawaited(_openRealtimePeersForHistorySync());
-        return;
-      }
-
-      final messages = (data['messages'] as List<dynamic>? ?? [])
-          .map((entry) => ChatMessage.fromJson(entry as Map<String, dynamic>))
-          .toList();
-      final grouped = <String, List<ChatMessage>>{};
-      for (final message in messages) {
-        grouped.putIfAbsent(message.friendId, () => []).add(message);
-      }
-      _chatConversations = grouped.entries
-          .where((entry) => friendById.containsKey(entry.key))
-          .map(
-            (entry) => ChatConversation(
-              friend: friendById[entry.key]!,
-              messages: entry.value
-                ..sort((a, b) => a.createdAt.compareTo(b.createdAt)),
-            ),
-          )
-          .toList();
-      _sortChatConversations();
-      unawaited(_openRealtimePeersForHistorySync());
-    } catch (error) {
-      appLog('本机聊天密文快照解密失败', error);
-      _chatConversations = [];
-      unawaited(_openRealtimePeersForHistorySync());
-    }
+    _chatConversations = [];
+    final friendById = {for (final friend in _friends) friend.id: friend};
+    await _mergeLocalChatSnapshot(friendById);
+    await _mergeRemoteChatArchive(friendById);
+    await _mergeServerGroupsIntoChatConversations();
+    _sortChatConversations();
+    unawaited(_openRealtimePeersForHistorySync());
   }
 
   Future<void> _persistChatSnapshot() async {
@@ -255,28 +177,11 @@ extension AppControllerInternalHelpers on AppController {
       return;
     }
 
-    final conversations = _chatConversations.map((conversation) {
-      return {
-        'id': conversation.id,
-        'title': conversation.title,
-        'isGroup': conversation.isGroup,
-        'friendId': conversation.friend?.id ?? '',
-        'adminUserId': conversation.adminUserId,
-        'members': conversation.members
-            .map((member) => member.toJson())
-            .toList(),
-        'messages': conversation.messages
-            .map((message) => message.toJson())
-            .toList(),
-      };
-    }).toList();
-    final encrypted = await _cryptoService.encryptJson({
-      'version': 2,
-      'conversations': conversations,
-    }, _vaultKey!);
+    final encrypted = await _encryptedChatSnapshotPayload();
     final file = await _chatStoreFile();
     await file.parent.create(recursive: true);
     await file.writeAsString(encrypted);
+    _scheduleChatArchiveSync(encrypted);
     _sortChatConversations();
   }
 
@@ -307,64 +212,459 @@ extension AppControllerInternalHelpers on AppController {
     });
   }
 
-  bool get _supportsDebugTokenFallback => !kReleaseMode && Platform.isMacOS;
-
-  Future<String?> _readPersistedToken(SharedPreferences? prefs) async {
+  Future<void> _mergeLocalChatSnapshot(
+    Map<String, PublicUser> friendByID,
+  ) async {
+    final file = await _chatStoreFile();
+    if (!await file.exists()) {
+      return;
+    }
     try {
-      final secureToken = await _secureStorage.read(
-        key: _storageKey(AppController._tokenKey),
-      );
-      if (secureToken != null && secureToken.isNotEmpty) {
-        return secureToken;
-      }
+      final encrypted = await file.readAsString();
+      final data = await _cryptoService.decryptJson(encrypted, _vaultKey!);
+      _mergeChatSnapshotData(data, friendByID);
     } catch (error) {
-      appLog('读取系统安全存储中的登录令牌失败', error);
+      appLog('本机聊天密文快照解密失败', error);
+    }
+  }
+
+  Future<void> _mergeRemoteChatArchive(
+    Map<String, PublicUser> friendByID,
+  ) async {
+    if (_token == null) {
+      return;
+    }
+    try {
+      final archive = await _apiClient.getChatArchive(
+        baseUrl: _baseUrl,
+        token: _token!,
+      );
+      if (archive.payload.isEmpty) {
+        return;
+      }
+      final data = await _cryptoService.decryptJson(
+        archive.payload,
+        _vaultKey!,
+      );
+      _mergeChatSnapshotData(data, friendByID);
+    } catch (error) {
+      appLog('服务端聊天归档解密失败', error);
+    }
+  }
+
+  void _mergeChatSnapshotData(
+    Map<String, dynamic> data,
+    Map<String, PublicUser> friendByID,
+  ) {
+    final conversations = data['conversations'] as List<dynamic>?;
+    if (conversations != null) {
+      for (final rawEntry in conversations) {
+        _mergeConversationSnapshot(
+          rawEntry as Map<String, dynamic>,
+          friendByID,
+        );
+      }
+      return;
     }
 
-    if (_supportsDebugTokenFallback) {
-      final resolvedPrefs = prefs ?? await SharedPreferences.getInstance();
-      return resolvedPrefs.getString(
-        _storageKey(AppController._debugTokenFallbackKey),
+    final messages = (data['messages'] as List<dynamic>? ?? const [])
+        .map((entry) => ChatMessage.fromJson(entry as Map<String, dynamic>))
+        .toList();
+    final grouped = <String, List<ChatMessage>>{};
+    for (final message in messages) {
+      grouped.putIfAbsent(message.friendId, () => []).add(message);
+    }
+    for (final entry in grouped.entries) {
+      final friend = friendByID[entry.key];
+      if (friend == null) {
+        continue;
+      }
+      _replaceConversationMessages(friend, (current) {
+        return _mergeMessages(current, entry.value);
+      });
+    }
+  }
+
+  void _mergeConversationSnapshot(
+    Map<String, dynamic> entry,
+    Map<String, PublicUser> friendByID,
+  ) {
+    final isGroup = entry['isGroup'] as bool? ?? false;
+    final messages =
+        (entry['messages'] as List<dynamic>? ?? const [])
+            .map(
+              (message) =>
+                  ChatMessage.fromJson(message as Map<String, dynamic>),
+            )
+            .toList()
+          ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    if (isGroup) {
+      final members = (entry['members'] as List<dynamic>? ?? const [])
+          .map((member) => PublicUser.fromJson(member as Map<String, dynamic>))
+          .where((member) => member.id.isNotEmpty)
+          .map((member) => friendByID[member.id] ?? member)
+          .toList();
+      final conversation = _ensureGroupConversation(
+        id: entry['id'] as String? ?? '',
+        title: entry['title'] as String? ?? '未命名群聊',
+        members: members,
+        adminUserId: entry['adminUserId'] as String? ?? '',
       );
+      _replaceConversationMessagesById(conversation.id, (current) {
+        return _mergeMessages(current, messages);
+      });
+      return;
+    }
+
+    final friendId = entry['friendId'] as String? ?? '';
+    final snapshotFriend = PublicUser.fromJson(
+      entry['friend'] as Map<String, dynamic>? ?? <String, dynamic>{},
+    );
+    final friend =
+        friendByID[friendId] ??
+        (snapshotFriend.id.isNotEmpty ? snapshotFriend : null);
+    if (friend == null) {
+      return;
+    }
+    _replaceConversationMessages(friend, (current) {
+      return _mergeMessages(current, messages);
+    });
+  }
+
+  Future<String> _encryptedChatSnapshotPayload() async {
+    final conversations = _chatConversations.map((conversation) {
+      return {
+        'id': conversation.id,
+        'title': conversation.title,
+        'isGroup': conversation.isGroup,
+        'friendId': conversation.friend?.id ?? '',
+        'friend': conversation.friend?.toJson() ?? <String, dynamic>{},
+        'adminUserId': conversation.adminUserId,
+        'members': conversation.members
+            .map((member) => member.toJson())
+            .toList(),
+        'messages': conversation.messages
+            .map((message) => message.toJson())
+            .toList(),
+      };
+    }).toList();
+    return _cryptoService.encryptJson({
+      'version': 3,
+      'conversations': conversations,
+    }, _vaultKey!);
+  }
+
+  void _scheduleChatArchiveSync(String payload) {
+    if (_token == null || _vaultKey == null) {
+      return;
+    }
+    _pendingChatArchivePayload = payload;
+    _pendingChatArchiveVersion = DateTime.now().millisecondsSinceEpoch;
+    _chatArchiveSyncTimer?.cancel();
+    _chatArchiveSyncTimer = Timer(const Duration(milliseconds: 900), () {
+      _chatArchiveSyncTimer = null;
+      unawaited(_flushPendingChatArchiveSync());
+    });
+  }
+
+  Future<void> _flushPendingChatArchiveSync() async {
+    _chatArchiveSyncTimer?.cancel();
+    _chatArchiveSyncTimer = null;
+    final payload = _pendingChatArchivePayload;
+    final version = _pendingChatArchiveVersion;
+    if (_token == null || payload == null || payload.isEmpty) {
+      return;
+    }
+    _pendingChatArchivePayload = null;
+    _pendingChatArchiveVersion = 0;
+    _chatArchiveSyncTask = _chatArchiveSyncTask.then((_) async {
+      try {
+        await _apiClient.upsertChatArchive(
+          baseUrl: _baseUrl,
+          token: _token!,
+          payload: payload,
+          version: version,
+        );
+      } catch (error) {
+        appLog('聊天归档同步失败', error);
+      }
+    });
+    await _chatArchiveSyncTask;
+  }
+
+  void _cancelPendingChatArchiveSync() {
+    _chatArchiveSyncTimer?.cancel();
+    _chatArchiveSyncTimer = null;
+    _pendingChatArchivePayload = null;
+    _pendingChatArchiveVersion = 0;
+  }
+
+  Future<void> _mergeServerGroupsIntoChatConversations() async {
+    if (_token == null || _vaultKey == null || _user == null) {
+      return;
+    }
+
+    final groups = await _apiClient.listGroups(
+      baseUrl: _baseUrl,
+      token: _token!,
+    );
+    final serverGroupIDs = groups.map((group) => group.id).toSet();
+    _chatConversations = _chatConversations
+        .where(
+          (conversation) =>
+              !conversation.isGroup || serverGroupIDs.contains(conversation.id),
+        )
+        .toList();
+
+    for (final group in groups) {
+      var title = '未命名群聊';
+      if (group.snapshotPayload.isNotEmpty) {
+        try {
+          final data = await _cryptoService.decryptJson(
+            group.snapshotPayload,
+            _vaultKey!,
+          );
+          final value = (data['title'] as String? ?? '').trim();
+          if (value.isNotEmpty) {
+            title = value;
+          }
+        } catch (error) {
+          appLog('服务端群聊快照解密失败：groupId=${group.id}', error);
+        }
+      }
+      _ensureGroupConversation(
+        id: group.id,
+        title: title,
+        members: group.members
+            .where((member) => member.id != _user!.id)
+            .toList(),
+        adminUserId: group.adminUserId,
+      );
+    }
+    _sortChatConversations();
+  }
+
+  bool get _supportsDebugTokenFallback => !kReleaseMode && Platform.isMacOS;
+
+  bool get _supportsDebugSecretFallback => !kReleaseMode && Platform.isMacOS;
+
+  Future<String?> _readPersistedToken(SharedPreferences? prefs) async {
+    return _readSecureValue(
+      _storageKey(AppController._tokenKey),
+      prefs: prefs,
+      allowDebugFallback: _supportsDebugTokenFallback,
+      debugFallbackKey: _storageKey(AppController._debugTokenFallbackKey),
+    );
+  }
+
+  Future<bool> _persistToken(String token) async {
+    return _writeSecureValue(
+      _storageKey(AppController._tokenKey),
+      token,
+      allowDebugFallback: _supportsDebugTokenFallback,
+      debugFallbackKey: _storageKey(AppController._debugTokenFallbackKey),
+    );
+  }
+
+  Future<void> _clearPersistedToken() async {
+    await _deleteSecureValue(
+      _storageKey(AppController._tokenKey),
+      allowDebugFallback: _supportsDebugTokenFallback,
+      debugFallbackKey: _storageKey(AppController._debugTokenFallbackKey),
+    );
+  }
+
+  Future<String?> _readSecureValue(
+    String key, {
+    SharedPreferences? prefs,
+    required bool allowDebugFallback,
+    required String debugFallbackKey,
+  }) async {
+    try {
+      final secureValue = await _secureStorage.read(key: key);
+      if (secureValue != null && secureValue.isNotEmpty) {
+        return secureValue;
+      }
+    } catch (error) {
+      appLog('读取系统安全存储失败：$key', error);
+    }
+
+    if (allowDebugFallback) {
+      final resolvedPrefs = prefs ?? await SharedPreferences.getInstance();
+      return resolvedPrefs.getString(debugFallbackKey);
     }
 
     return null;
   }
 
-  Future<bool> _persistToken(String token) async {
+  Future<File> _chatIdentityFallbackFile(String userId) async {
+    final directory = await _chatStoreBaseDirectory();
+    return File(
+      '${directory.path}/securex-$_storageNamespace/chat-identity-$userId.json',
+    );
+  }
+
+  Future<String?> _readEncryptedChatIdentitySeedFallback(String userId) async {
+    if (_vaultKey == null) {
+      return null;
+    }
+    try {
+      final file = await _chatIdentityFallbackFile(userId);
+      if (!await file.exists()) {
+        return null;
+      }
+      final encrypted = await file.readAsString();
+      if (encrypted.trim().isEmpty) {
+        return null;
+      }
+      final data = await _cryptoService.decryptJson(encrypted, _vaultKey!);
+      final seed = (data['seedBase64'] as String? ?? '').trim();
+      return seed.isEmpty ? null : seed;
+    } catch (error) {
+      appLog('读取聊天身份种子本地加密兜底失败：userId=$userId', error);
+      return null;
+    }
+  }
+
+  Future<void> _writeEncryptedChatIdentitySeedFallback(
+    String userId,
+    String seedBase64,
+  ) async {
+    if (_vaultKey == null || seedBase64.trim().isEmpty) {
+      return;
+    }
+    try {
+      final file = await _chatIdentityFallbackFile(userId);
+      await file.parent.create(recursive: true);
+      final encrypted = await _cryptoService.encryptJson({
+        'version': 1,
+        'seedBase64': seedBase64.trim(),
+      }, _vaultKey!);
+      await file.writeAsString(encrypted);
+    } catch (error) {
+      appLog('写入聊天身份种子本地加密兜底失败：userId=$userId', error);
+    }
+  }
+
+  Future<bool> _writeSecureValue(
+    String key,
+    String value, {
+    required bool allowDebugFallback,
+    required String debugFallbackKey,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     try {
-      await _secureStorage.write(
-        key: _storageKey(AppController._tokenKey),
-        value: token,
-      );
-      if (_supportsDebugTokenFallback) {
-        await prefs.remove(_storageKey(AppController._debugTokenFallbackKey));
+      await _secureStorage.write(key: key, value: value);
+      if (allowDebugFallback) {
+        await prefs.remove(debugFallbackKey);
       }
       return true;
     } catch (error) {
-      appLog('写入系统安全存储中的登录令牌失败', error);
-      if (_supportsDebugTokenFallback) {
-        await prefs.setString(
-          _storageKey(AppController._debugTokenFallbackKey),
-          token,
-        );
+      appLog('写入系统安全存储失败：$key', error);
+      if (allowDebugFallback) {
+        await prefs.setString(debugFallbackKey, value);
         return true;
       }
       return false;
     }
   }
 
-  Future<void> _clearPersistedToken() async {
+  Future<void> _deleteSecureValue(
+    String key, {
+    required bool allowDebugFallback,
+    required String debugFallbackKey,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     try {
-      await _secureStorage.delete(key: _storageKey(AppController._tokenKey));
+      await _secureStorage.delete(key: key);
     } catch (error) {
-      appLog('删除系统安全存储中的登录令牌失败', error);
+      appLog('删除系统安全存储失败：$key', error);
     }
-    if (_supportsDebugTokenFallback) {
-      await prefs.remove(_storageKey(AppController._debugTokenFallbackKey));
+    if (allowDebugFallback) {
+      await prefs.remove(debugFallbackKey);
     }
+  }
+
+  String _chatDeviceStorageKeyForUser(String userId) =>
+      _storageKey('${AppController._chatDeviceIdKey}.$userId');
+
+  String _chatIdentitySeedStorageKeyForUser(String userId) =>
+      _storageKey('${AppController._chatIdentitySeedKey}.$userId');
+
+  Future<ChatIdentityBundle?> _ensureChatIdentity({
+    bool registerOnServer = false,
+  }) async {
+    final user = _user;
+    final token = _token;
+    if (user == null || token == null) {
+      return null;
+    }
+    if (_chatIdentity != null && !registerOnServer) {
+      return _chatIdentity;
+    }
+
+    final deviceKey = _chatDeviceStorageKeyForUser(user.id);
+    final seedKey = _chatIdentitySeedStorageKeyForUser(user.id);
+    final existingDeviceId = await _readSecureValue(
+      deviceKey,
+      allowDebugFallback: _supportsDebugSecretFallback,
+      debugFallbackKey: _storageKey(
+        '${AppController._debugSecretFallbackPrefix}.$deviceKey',
+      ),
+    );
+    final existingSeed = await _readSecureValue(
+      seedKey,
+      allowDebugFallback: false,
+      debugFallbackKey: '',
+    );
+    final fallbackSeed =
+        existingSeed ?? await _readEncryptedChatIdentitySeedFallback(user.id);
+    final identity = await _chatProtocol.createIdentity(
+      existingDeviceId: existingDeviceId,
+      existingSeedBase64: fallbackSeed,
+    );
+    _chatIdentity = identity;
+
+    if (existingDeviceId != identity.deviceId) {
+      await _writeSecureValue(
+        deviceKey,
+        identity.deviceId,
+        allowDebugFallback: _supportsDebugSecretFallback,
+        debugFallbackKey: _storageKey(
+          '${AppController._debugSecretFallbackPrefix}.$deviceKey',
+        ),
+      );
+    }
+    final seedAlreadyPersisted =
+        existingSeed == identity.seedBase64 ||
+        fallbackSeed == identity.seedBase64;
+    if (!seedAlreadyPersisted) {
+      final seedPersisted = await _writeSecureValue(
+        seedKey,
+        identity.seedBase64,
+        allowDebugFallback: false,
+        debugFallbackKey: '',
+      );
+      if (!seedPersisted || fallbackSeed != identity.seedBase64) {
+        await _writeEncryptedChatIdentitySeedFallback(
+          user.id,
+          identity.seedBase64,
+        );
+      }
+    }
+
+    if (registerOnServer) {
+      await _apiClient.upsertCurrentChatDevice(
+        baseUrl: _baseUrl,
+        token: token,
+        deviceId: identity.deviceId,
+        protocol: _chatProtocol.protocolId,
+        protocolVersion: SecureXChatProtocolV1.schemaVersion,
+        publicKey: identity.publicKeyBase64,
+        appInstance: _storageNamespace,
+      );
+    }
+    return identity;
   }
 
   String _normalizeBaseUrl(String value) {

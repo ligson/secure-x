@@ -30,12 +30,12 @@ func (h *Handler) realtimeConfig(c *gin.Context) {
 	}
 
 	RespondSuccess(c, http.StatusOK, "实时服务配置已加载", gin.H{
-		"transport":        "hybrid",
+		"transport":        "websocket_e2ee",
 		"signalingEnabled": true,
 		"signalingUrl":     scheme + "://" + host + "/api/v1/realtime/ws",
 		"iceServers":       []string{},
-		"relayMode":        "ephemeral_encrypted_websocket",
-		"messageStorage":   "client_local_only",
+		"relayMode":        "encrypted_websocket_primary",
+		"messageStorage":   "user_encrypted_archive",
 	})
 }
 
@@ -52,6 +52,7 @@ type realtimeHub struct {
 
 type realtimeClient struct {
 	userID  string
+	deviceID string
 	conn    *websocket.Conn
 	send    chan realtimeSignal
 	hub     *realtimeHub
@@ -79,25 +80,32 @@ func (h *Handler) realtimeWebSocket(c *gin.Context) {
 
 	wasOnline := h.realtimeHub.isOnline(userID)
 	client := &realtimeClient{
-		userID: userID,
-		conn:   conn,
-		send:   make(chan realtimeSignal, 16),
-		hub:    h.realtimeHub,
+		userID:   userID,
+		deviceID: strings.TrimSpace(c.Query("deviceId")),
+		conn:     conn,
+		send:     make(chan realtimeSignal, 16),
+		hub:      h.realtimeHub,
 	}
 	h.realtimeHub.add(client)
+	if client.deviceID != "" {
+		_ = h.db.Model(&model.ChatDevice{}).
+			Where("id = ? AND user_id = ?", client.deviceID, userID).
+			Update("last_seen_at", time.Now()).
+			Error
+	}
 	log.Printf("实时信令已连接：userID=%s", userID)
 	go client.writeLoop()
 
-	friendIDs := h.friendIDs(userID)
-	h.realtimeHub.sendPresenceSnapshot(client, friendIDs)
+	peerIDs := h.realtimePeerIDs(userID)
+	h.realtimeHub.sendPresenceSnapshot(client, peerIDs)
 	if !wasOnline {
-		h.realtimeHub.broadcastPresence(userID, true, friendIDs)
+		h.realtimeHub.broadcastPresence(userID, true, peerIDs)
 	}
 	defer func() {
 		h.realtimeHub.remove(client)
 		log.Printf("实时信令已断开：userID=%s", userID)
 		if !h.realtimeHub.isOnline(userID) {
-			h.realtimeHub.broadcastPresence(userID, false, friendIDs)
+			h.realtimeHub.broadcastPresence(userID, false, peerIDs)
 		}
 	}()
 
@@ -177,6 +185,20 @@ func (h *realtimeHub) forward(to string, signal realtimeSignal) bool {
 	return true
 }
 
+func (h *realtimeHub) notifyChatPending(
+	recipientUserID string,
+	recipientDeviceID string,
+	senderUserID string,
+) {
+	h.forward(recipientUserID, realtimeSignal{
+		Type: "chat-pending",
+		From: senderUserID,
+		Payload: map[string]any{
+			"recipientDeviceId": recipientDeviceID,
+		},
+	})
+}
+
 func (h *Handler) friendIDs(userID string) []string {
 	var friendships []model.Friendship
 	if err := h.db.Where("user_id = ?", userID).Find(&friendships).Error; err != nil {
@@ -188,6 +210,63 @@ func (h *Handler) friendIDs(userID string) []string {
 		friendIDs = append(friendIDs, friendship.FriendID)
 	}
 	return friendIDs
+}
+
+func (h *Handler) realtimePeerIDs(userID string) []string {
+	ids := h.friendIDs(userID)
+
+	var memberships []model.GroupMembership
+	if err := h.db.Where("user_id = ?", userID).Find(&memberships).Error; err != nil {
+		return normalizeUniqueIDs(ids)
+	}
+	if len(memberships) == 0 {
+		return normalizeUniqueIDs(ids)
+	}
+
+	groupIDs := make([]string, 0, len(memberships))
+	for _, membership := range memberships {
+		groupIDs = append(groupIDs, membership.GroupID)
+	}
+
+	var peers []model.GroupMembership
+	if err := h.db.
+		Where("group_id IN ? AND user_id <> ?", normalizeUniqueIDs(groupIDs), userID).
+		Find(&peers).Error; err != nil {
+		return normalizeUniqueIDs(ids)
+	}
+	for _, peer := range peers {
+		ids = append(ids, peer.UserID)
+	}
+	return normalizeUniqueIDs(ids)
+}
+
+func (h *Handler) canExchangeRealtime(userID, peerID string) bool {
+	if userID == peerID {
+		return false
+	}
+	if h.areFriends(userID, peerID) {
+		return true
+	}
+
+	var memberships []model.GroupMembership
+	if err := h.db.Where("user_id = ?", userID).Find(&memberships).Error; err != nil {
+		return false
+	}
+	if len(memberships) == 0 {
+		return false
+	}
+
+	groupIDs := make([]string, 0, len(memberships))
+	for _, membership := range memberships {
+		groupIDs = append(groupIDs, membership.GroupID)
+	}
+	var count int64
+	if err := h.db.Model(&model.GroupMembership{}).
+		Where("user_id = ? AND group_id IN ?", peerID, normalizeUniqueIDs(groupIDs)).
+		Count(&count).Error; err != nil {
+		return false
+	}
+	return count > 0
 }
 
 func (c *realtimeClient) readLoop(handler *Handler) {
@@ -211,7 +290,7 @@ func (c *realtimeClient) readLoop(handler *Handler) {
 		if signal.To == "" || signal.To == c.userID {
 			continue
 		}
-		if !handler.areFriends(c.userID, signal.To) {
+		if !handler.canExchangeRealtime(c.userID, signal.To) {
 			continue
 		}
 

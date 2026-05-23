@@ -4,11 +4,19 @@ part of 'app_controller.dart';
 
 extension AppControllerRuntimeActions on AppController {
   Future<void> handleAppResumed() async {
-    await _queueRealtimeResume(reason: '应用已回到前台', refreshConfig: false);
+    await _queueRealtimeResume(
+      reason: '应用已回到前台，正在恢复实时加密通道',
+      refreshConfig: false,
+      forceReconnect: true,
+    );
   }
 
   Future<void> handleNetworkReachable() async {
-    await _queueRealtimeResume(reason: '网络已恢复，正在重建实时通道', refreshConfig: true);
+    await _queueRealtimeResume(
+      reason: '网络已恢复，正在重建实时通道',
+      refreshConfig: true,
+      forceReconnect: true,
+    );
   }
 
   void _handleRealtimeSignalingState(String status) {
@@ -17,7 +25,11 @@ extension AppControllerRuntimeActions on AppController {
       case 'connected':
         _historyRequestedPeerIds.clear();
         unawaited(
-          _queueRealtimeResume(reason: '实时信令已恢复连接', refreshConfig: false),
+          _queueRealtimeResume(
+            reason: '实时信令已恢复连接',
+            refreshConfig: false,
+            forceReconnect: false,
+          ),
         );
         return;
       case 'reconnecting':
@@ -39,6 +51,7 @@ extension AppControllerRuntimeActions on AppController {
   Future<void> _queueRealtimeResume({
     required String reason,
     required bool refreshConfig,
+    required bool forceReconnect,
   }) {
     _realtimeResumeTask = _realtimeResumeTask.then((_) async {
       if (!_initialized ||
@@ -55,7 +68,7 @@ extension AppControllerRuntimeActions on AppController {
             token: _token!,
           );
         }
-        await _connectRealtimeChat();
+        await _connectRealtimeChat(forceReconnect: forceReconnect);
         _historyRequestedPeerIds.clear();
         await _openRealtimePeersForHistorySync();
         _statusMessage = reason;

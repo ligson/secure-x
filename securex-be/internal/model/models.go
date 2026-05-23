@@ -85,3 +85,63 @@ type Friendship struct {
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
+
+type GroupRoom struct {
+	ID            string    `gorm:"primaryKey;size:64" json:"id"`
+	CreatorUserID string    `gorm:"index;size:36;not null" json:"creatorUserId"`
+	AdminUserID   string    `gorm:"index;size:36;not null" json:"adminUserId"`
+	Version       int       `gorm:"not null;default:1" json:"version"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+}
+
+type GroupMembership struct {
+	ID            string    `gorm:"primaryKey;size:36" json:"id"`
+	GroupID       string    `gorm:"uniqueIndex:idx_group_membership_pair;index;size:64;not null" json:"groupId"`
+	UserID        string    `gorm:"uniqueIndex:idx_group_membership_pair;index;size:36;not null" json:"userId"`
+	AddedByUserID string    `gorm:"size:36;not null" json:"addedByUserId"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+}
+
+type GroupSnapshot struct {
+	ID        string    `gorm:"primaryKey;size:36" json:"id"`
+	GroupID   string    `gorm:"uniqueIndex:idx_group_snapshot_pair;index;size:64;not null" json:"groupId"`
+	UserID    string    `gorm:"uniqueIndex:idx_group_snapshot_pair;index;size:36;not null" json:"userId"`
+	Payload   string    `gorm:"type:text;not null" json:"payload"`
+	Version   int       `gorm:"not null;default:1" json:"version"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type ChatArchive struct {
+	UserID    string    `gorm:"primaryKey;size:36" json:"userId"`
+	Payload   string    `gorm:"type:text;not null" json:"payload"`
+	Version   int       `gorm:"not null;default:1" json:"version"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type ChatDevice struct {
+	ID              string    `gorm:"primaryKey;size:64" json:"id"`
+	UserID          string    `gorm:"index;size:36;not null" json:"userId"`
+	Protocol        string    `gorm:"size:64;not null" json:"protocol"`
+	ProtocolVersion int       `gorm:"not null;default:1" json:"protocolVersion"`
+	PublicKey       string    `gorm:"type:text;not null" json:"publicKey"`
+	AppInstance     string    `gorm:"size:128" json:"appInstance"`
+	LastSeenAt      time.Time `json:"lastSeenAt"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+}
+
+type ChatQueuedEnvelope struct {
+	ID                string    `gorm:"primaryKey;size:36" json:"id"`
+	RecipientUserID   string    `gorm:"index;size:36;not null" json:"recipientUserId"`
+	RecipientDeviceID string    `gorm:"index;size:64;not null" json:"recipientDeviceId"`
+	SenderUserID      string    `gorm:"index;size:36;not null" json:"senderUserId"`
+	SenderDeviceID    string    `gorm:"size:64;not null" json:"senderDeviceId"`
+	Protocol          string    `gorm:"size:64;not null" json:"protocol"`
+	Payload           string    `gorm:"type:text;not null" json:"payload"`
+	CreatedAt         time.Time `json:"createdAt"`
+	ExpiresAt         time.Time `json:"expiresAt"`
+}

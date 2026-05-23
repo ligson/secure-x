@@ -254,6 +254,109 @@ class FriendRequestRecord {
   }
 }
 
+class GroupRecord {
+  GroupRecord({
+    required this.id,
+    required this.creatorUserId,
+    required this.adminUserId,
+    required this.version,
+    required this.snapshotPayload,
+    required this.snapshotVersion,
+    required this.members,
+  });
+
+  final String id;
+  final String creatorUserId;
+  final String adminUserId;
+  final int version;
+  final String snapshotPayload;
+  final int snapshotVersion;
+  final List<PublicUser> members;
+
+  factory GroupRecord.fromJson(Map<String, dynamic> json) {
+    return GroupRecord(
+      id: json['id'] as String? ?? '',
+      creatorUserId: json['creatorUserId'] as String? ?? '',
+      adminUserId: json['adminUserId'] as String? ?? '',
+      version: (json['version'] as num?)?.toInt() ?? 1,
+      snapshotPayload: json['snapshotPayload'] as String? ?? '',
+      snapshotVersion: (json['snapshotVersion'] as num?)?.toInt() ?? 0,
+      members: (json['members'] as List<dynamic>? ?? const [])
+          .map((entry) => PublicUser.fromJson(entry as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+}
+
+class ChatArchiveRecord {
+  ChatArchiveRecord({required this.payload, required this.version});
+
+  final String payload;
+  final int version;
+
+  factory ChatArchiveRecord.fromJson(Map<String, dynamic> json) {
+    return ChatArchiveRecord(
+      payload: json['payload'] as String? ?? '',
+      version: (json['version'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+class ChatDeviceRecord {
+  ChatDeviceRecord({
+    required this.id,
+    required this.userId,
+    required this.protocol,
+    required this.protocolVersion,
+    required this.publicKey,
+    required this.appInstance,
+  });
+
+  final String id;
+  final String userId;
+  final String protocol;
+  final int protocolVersion;
+  final String publicKey;
+  final String appInstance;
+
+  factory ChatDeviceRecord.fromJson(Map<String, dynamic> json) {
+    return ChatDeviceRecord(
+      id: json['id'] as String? ?? '',
+      userId: json['userId'] as String? ?? '',
+      protocol: json['protocol'] as String? ?? '',
+      protocolVersion: (json['protocolVersion'] as num?)?.toInt() ?? 1,
+      publicKey: json['publicKey'] as String? ?? '',
+      appInstance: json['appInstance'] as String? ?? '',
+    );
+  }
+}
+
+class QueuedChatEnvelopeRecord {
+  QueuedChatEnvelopeRecord({
+    required this.id,
+    required this.senderUserId,
+    required this.senderDeviceId,
+    required this.protocol,
+    required this.payload,
+  });
+
+  final String id;
+  final String senderUserId;
+  final String senderDeviceId;
+  final String protocol;
+  final String payload;
+
+  factory QueuedChatEnvelopeRecord.fromJson(Map<String, dynamic> json) {
+    return QueuedChatEnvelopeRecord(
+      id: json['id'] as String? ?? '',
+      senderUserId: json['senderUserId'] as String? ?? '',
+      senderDeviceId: json['senderDeviceId'] as String? ?? '',
+      protocol: json['protocol'] as String? ?? '',
+      payload: json['payload'] as String? ?? '',
+    );
+  }
+}
+
 class RealtimeConfig {
   RealtimeConfig({
     required this.transport,

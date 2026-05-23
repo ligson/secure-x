@@ -28,10 +28,8 @@ extension AppControllerFriendActions on AppController {
     try {
       await _loadFriendsSnapshot();
       if (status == 'accepted') {
-        final friend = _friendById(friendId);
-        if (friend != null) {
-          await _realtimeChatService.openPeer(friend);
-        }
+        await _connectRealtimeChat();
+        await _requestHistoryFromPeer(friendId);
         _statusMessage = '好友关系已更新。';
       } else if (status == 'deleted') {
         _chatFriendOnline.remove(friendId);

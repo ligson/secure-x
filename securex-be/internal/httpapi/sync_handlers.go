@@ -32,11 +32,17 @@ func (h *Handler) exportVault(c *gin.Context) {
 		RespondFailure(c, http.StatusInternalServerError, "failed to load files")
 		return
 	}
+	groups, err := h.groupResponsesForUser(userID)
+	if err != nil {
+		RespondFailure(c, http.StatusInternalServerError, "加载群聊列表失败")
+		return
+	}
 
 	RespondSuccess(c, http.StatusOK, "vault exported", gin.H{
 		"folders":     folders,
 		"fileFolders": fileFolders,
 		"items":       items,
 		"files":       files,
+		"groups":      groups,
 	})
 }

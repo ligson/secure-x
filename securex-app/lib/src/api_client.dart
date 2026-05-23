@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 
+import 'chat_protocol.dart';
 import 'models.dart';
 
 class ApiClient {
@@ -470,6 +471,245 @@ class ApiClient {
     await _dio.delete<Map<String, dynamic>>(
       '$baseUrl/api/v1/friends/$friendId',
       options: _authorized(token),
+    );
+  }
+
+  Future<ChatArchiveRecord> getChatArchive({
+    required String baseUrl,
+    required String token,
+  }) async {
+    final data = _unwrapMap(
+      await _dio.get<Map<String, dynamic>>(
+        '$baseUrl/api/v1/chat/archive',
+        options: _authorized(token),
+      ),
+    );
+    return ChatArchiveRecord.fromJson(data);
+  }
+
+  Future<void> upsertChatArchive({
+    required String baseUrl,
+    required String token,
+    required String payload,
+    required int version,
+  }) async {
+    await _dio.put<Map<String, dynamic>>(
+      '$baseUrl/api/v1/chat/archive',
+      data: {'payload': payload, 'version': version},
+      options: _authorized(token),
+    );
+  }
+
+  Future<ChatDeviceRecord?> getCurrentChatDevice({
+    required String baseUrl,
+    required String token,
+    required String deviceId,
+  }) async {
+    final data = _unwrapMap(
+      await _dio.get<Map<String, dynamic>>(
+        '$baseUrl/api/v1/chat/devices/current',
+        queryParameters: {'deviceId': deviceId},
+        options: _authorized(token),
+      ),
+    );
+    final device =
+        data['device'] as Map<String, dynamic>? ?? <String, dynamic>{};
+    if (device.isEmpty) {
+      return null;
+    }
+    return ChatDeviceRecord.fromJson(device);
+  }
+
+  Future<ChatDeviceRecord> upsertCurrentChatDevice({
+    required String baseUrl,
+    required String token,
+    required String deviceId,
+    required String protocol,
+    required int protocolVersion,
+    required String publicKey,
+    required String appInstance,
+  }) async {
+    final data = _unwrapMap(
+      await _dio.put<Map<String, dynamic>>(
+        '$baseUrl/api/v1/chat/devices/current',
+        data: {
+          'deviceId': deviceId,
+          'protocol': protocol,
+          'protocolVersion': protocolVersion,
+          'publicKey': publicKey,
+          'appInstance': appInstance,
+        },
+        options: _authorized(token),
+      ),
+    );
+    return ChatDeviceRecord.fromJson(
+      data['device'] as Map<String, dynamic>? ?? <String, dynamic>{},
+    );
+  }
+
+  Future<List<ChatDeviceRecord>> listUserChatDevices({
+    required String baseUrl,
+    required String token,
+    required String userId,
+  }) async {
+    final data = _unwrapMap(
+      await _dio.get<Map<String, dynamic>>(
+        '$baseUrl/api/v1/chat/users/$userId/devices',
+        options: _authorized(token),
+      ),
+    );
+    return (data['devices'] as List<dynamic>? ?? const [])
+        .map(
+          (entry) => ChatDeviceRecord.fromJson(entry as Map<String, dynamic>),
+        )
+        .toList();
+  }
+
+  Future<int> dispatchChatMessages({
+    required String baseUrl,
+    required String token,
+    required List<ChatOutgoingEnvelope> messages,
+  }) async {
+    final data = _unwrapMap(
+      await _dio.post<Map<String, dynamic>>(
+        '$baseUrl/api/v1/chat/messages',
+        data: {
+          'messages': messages.map((message) => message.toJson()).toList(),
+        },
+        options: _authorized(token),
+      ),
+    );
+    return (data['queuedCount'] as num?)?.toInt() ?? 0;
+  }
+
+  Future<List<QueuedChatEnvelopeRecord>> listPendingChatMessages({
+    required String baseUrl,
+    required String token,
+    required String deviceId,
+  }) async {
+    final data = _unwrapMap(
+      await _dio.get<Map<String, dynamic>>(
+        '$baseUrl/api/v1/chat/messages/pending',
+        queryParameters: {'deviceId': deviceId},
+        options: _authorized(token),
+      ),
+    );
+    return (data['messages'] as List<dynamic>? ?? const [])
+        .map(
+          (entry) =>
+              QueuedChatEnvelopeRecord.fromJson(entry as Map<String, dynamic>),
+        )
+        .toList();
+  }
+
+  Future<void> ackChatMessages({
+    required String baseUrl,
+    required String token,
+    required String deviceId,
+    required List<String> messageIds,
+  }) async {
+    await _dio.post<Map<String, dynamic>>(
+      '$baseUrl/api/v1/chat/messages/ack',
+      data: {'deviceId': deviceId, 'messageIds': messageIds},
+      options: _authorized(token),
+    );
+  }
+
+  Future<List<GroupRecord>> listGroups({
+    required String baseUrl,
+    required String token,
+  }) async {
+    final data = _unwrapMap(
+      await _dio.get<Map<String, dynamic>>(
+        '$baseUrl/api/v1/groups',
+        options: _authorized(token),
+      ),
+    );
+
+    return (data['groups'] as List<dynamic>? ?? [])
+        .map((entry) => GroupRecord.fromJson(entry as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<GroupRecord> createGroup({
+    required String baseUrl,
+    required String token,
+    required String groupId,
+    required String payload,
+    required int version,
+    required List<String> memberIds,
+  }) async {
+    final data = _unwrapMap(
+      await _dio.post<Map<String, dynamic>>(
+        '$baseUrl/api/v1/groups',
+        data: {
+          'groupId': groupId,
+          'payload': payload,
+          'version': version,
+          'memberIds': memberIds,
+        },
+        options: _authorized(token),
+      ),
+    );
+
+    return GroupRecord.fromJson(
+      data['group'] as Map<String, dynamic>? ?? <String, dynamic>{},
+    );
+  }
+
+  Future<GroupRecord> updateGroup({
+    required String baseUrl,
+    required String token,
+    required String groupId,
+    required String payload,
+    required int version,
+    required List<String> memberIds,
+    String? adminUserId,
+  }) async {
+    final data = _unwrapMap(
+      await _dio.put<Map<String, dynamic>>(
+        '$baseUrl/api/v1/groups/$groupId',
+        data: {
+          'payload': payload,
+          'version': version,
+          'memberIds': memberIds,
+          'adminUserId': adminUserId,
+        },
+        options: _authorized(token),
+      ),
+    );
+
+    return GroupRecord.fromJson(
+      data['group'] as Map<String, dynamic>? ?? <String, dynamic>{},
+    );
+  }
+
+  Future<void> upsertGroupSnapshot({
+    required String baseUrl,
+    required String token,
+    required String groupId,
+    required String payload,
+    required int version,
+  }) async {
+    await _dio.put<Map<String, dynamic>>(
+      '$baseUrl/api/v1/groups/$groupId/snapshot',
+      data: {'payload': payload, 'version': version},
+      options: _authorized(token),
+    );
+  }
+
+  Future<Map<String, dynamic>> leaveGroup({
+    required String baseUrl,
+    required String token,
+    required String groupId,
+    String? nextAdminUserId,
+  }) async {
+    return _unwrapMap(
+      await _dio.post<Map<String, dynamic>>(
+        '$baseUrl/api/v1/groups/$groupId/leave',
+        data: {'nextAdminUserId': nextAdminUserId},
+        options: _authorized(token),
+      ),
     );
   }
 

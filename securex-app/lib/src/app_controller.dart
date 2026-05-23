@@ -13,6 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_client.dart';
 import 'app_logger.dart';
+import 'chat_protocol.dart';
 import 'crypto_service.dart';
 import 'models.dart';
 import 'realtime_chat_service.dart';
@@ -73,6 +74,14 @@ class AppController extends ChangeNotifier {
       unawaited(_handleRealtimeHistoryResponse(response));
     };
     _realtimeChatService.onDelivered = _markRealtimeMessageDelivered;
+    _realtimeChatService.onPendingChat = (recipientDeviceId, senderUserId) {
+      unawaited(
+        _pullPendingChatMessages(
+          expectedDeviceId: recipientDeviceId,
+          senderUserId: senderUserId,
+        ),
+      );
+    };
     _realtimeChatService.onPeerStatus = _handleRealtimePeerStatus;
     _realtimeChatService.onFriendshipUpdated = _handleRealtimeFriendshipUpdated;
     _realtimeChatService.onSignalingState = _handleRealtimeSignalingState;
@@ -82,6 +91,9 @@ class AppController extends ChangeNotifier {
   static const _tokenKey = 'token';
   static const _debugTokenFallbackKey = 'debug.token';
   static const _themeIdKey = 'themeId';
+  static const _chatDeviceIdKey = 'chat.device.id';
+  static const _chatIdentitySeedKey = 'chat.identity.seed';
+  static const _debugSecretFallbackPrefix = 'debug.secret';
   static const _compileTimeDevInstance = String.fromEnvironment(
     'SECUREX_DEV_INSTANCE',
     defaultValue: 'default',
@@ -90,6 +102,7 @@ class AppController extends ChangeNotifier {
   final ApiClient _apiClient;
   final CryptoService _cryptoService;
   final FlutterSecureStorage _secureStorage;
+  final ChatProtocol _chatProtocol = SecureXChatProtocolV1();
   final RealtimeChatService _realtimeChatService = RealtimeChatService();
   final String _storageNamespace = _resolveStorageNamespace();
   final String _devDataDir = Platform.environment['SECUREX_DEV_DATA_DIR'] ?? '';
@@ -110,11 +123,17 @@ class AppController extends ChangeNotifier {
   List<FriendRequestRecord> _incomingFriendRequests = [];
   List<FriendRequestRecord> _outgoingFriendRequests = [];
   List<ChatConversation> _chatConversations = [];
+  ChatIdentityBundle? _chatIdentity;
   final Map<String, bool> _chatFriendOnline = {};
   final Set<String> _historyRequestedPeerIds = {};
   RealtimeConfig? _realtimeConfig;
   final List<FileUploadTask> _uploadTasks = [];
   Future<void> _realtimeResumeTask = Future.value();
+  Timer? _chatArchiveSyncTimer;
+  String? _pendingChatArchivePayload;
+  int _pendingChatArchiveVersion = 0;
+  Future<void> _chatArchiveSyncTask = Future.value();
+  Future<void> _pendingChatSyncTask = Future.value();
 
   bool get initialized => _initialized;
   bool get busy => _busy;

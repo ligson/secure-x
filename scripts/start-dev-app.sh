@@ -26,7 +26,11 @@ echo "Starting securex-app instance ${APP_INSTANCE_NAME} on device ${FLUTTER_DEV
 (
   cd "${ROOT_DIR}/securex-app"
   if [[ "${FLUTTER_DEVICE}" == "macos" ]]; then
+    acquire_lock "flutter-macos-build"
+    trap 'release_lock "flutter-macos-build"' EXIT
     flutter build macos --debug >"${APP_LOG_FILE}" 2>&1
+    release_lock "flutter-macos-build"
+    trap - EXIT
     before_pids="$(list_matching_pids "${APP_MACOS_BIN_FILE}" | sort -n || true)"
     open -n \
       --stdout "${APP_LOG_FILE}" \

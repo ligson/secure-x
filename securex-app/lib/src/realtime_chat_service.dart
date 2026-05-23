@@ -80,6 +80,7 @@ class RealtimeChatService {
   String _signalingUrl = '';
   String _token = '';
   String _userId = '';
+  String _deviceId = '';
   List<String> _iceServers = [];
   bool _manualDisconnect = true;
   int _reconnectAttempt = 0;
@@ -89,19 +90,26 @@ class RealtimeChatService {
   void Function(RealtimeHistoryRequest request)? onHistoryRequest;
   void Function(RealtimeHistoryResponse response)? onHistoryResponse;
   void Function(String friendId, String messageId)? onDelivered;
+  void Function(String recipientDeviceId, String senderUserId)? onPendingChat;
   void Function(String friendId, String status)? onPeerStatus;
   void Function(String friendId, String status)? onFriendshipUpdated;
   void Function(String status)? onSignalingState;
 
   bool get connected => _socket?.readyState == WebSocket.open;
+  bool get _preferWebRTC => _iceServers.isNotEmpty;
 
   Future<void> connect({
     required String signalingUrl,
     required String token,
     required String userId,
+    required String deviceId,
     required List<String> iceServers,
+    bool forceReconnect = false,
   }) async {
-    if (connected && _userId == userId) {
+    if (!forceReconnect &&
+        connected &&
+        _userId == userId &&
+        _deviceId == deviceId) {
       return;
     }
 
@@ -110,6 +118,7 @@ class RealtimeChatService {
     _signalingUrl = signalingUrl;
     _token = token;
     _userId = userId;
+    _deviceId = deviceId;
     _iceServers = iceServers;
     onSignalingState?.call('connecting');
     await _openSocket();
@@ -121,8 +130,15 @@ class RealtimeChatService {
     }
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    final signalingUri = Uri.parse(_signalingUrl);
+    final websocketUri = signalingUri.replace(
+      queryParameters: {
+        ...signalingUri.queryParameters,
+        if (_deviceId.isNotEmpty) 'deviceId': _deviceId,
+      },
+    );
     _socket = await WebSocket.connect(
-      _signalingUrl,
+      websocketUri.toString(),
       headers: {'Authorization': 'Bearer $_token'},
     );
     _reconnectAttempt = 0;
@@ -143,6 +159,20 @@ class RealtimeChatService {
     onSignalingState?.call('connected');
   }
 
+  Future<void> reconnect() async {
+    if (_signalingUrl.isEmpty || _token.isEmpty || _userId.isEmpty) {
+      return;
+    }
+    await connect(
+      signalingUrl: _signalingUrl,
+      token: _token,
+      userId: _userId,
+      deviceId: _deviceId,
+      iceServers: _iceServers,
+      forceReconnect: true,
+    );
+  }
+
   Future<void> disconnect() async {
     _manualDisconnect = true;
     _reconnectTimer?.cancel();
@@ -151,6 +181,7 @@ class RealtimeChatService {
     _signalingUrl = '';
     _token = '';
     _userId = '';
+    _deviceId = '';
     _iceServers = [];
     await _closeSocketAndPeers();
     onSignalingState?.call('disconnected');
@@ -207,11 +238,8 @@ class RealtimeChatService {
     if (!connected) {
       return;
     }
-    final initiator = _shouldInitiateOffer(friend.id);
-    await _ensurePeer(friend.id, initiator: initiator);
-    if (!initiator) {
-      _sendSignal(friend.id, 'connect-request', {});
-    }
+    await _ensurePeer(friend.id, initiator: _preferWebRTC);
+    _sendSignal(friend.id, 'connect-request', {});
   }
 
   Future<bool> sendMessage({
@@ -246,7 +274,7 @@ class RealtimeChatService {
           : '',
       'cipherText': cipherText,
     };
-    if (peer.ready) {
+    if (_preferWebRTC && peer.ready) {
       await peer.channel!.send(
         RTCDataChannelMessage(jsonEncode({'type': 'message', ...payload})),
       );
@@ -292,7 +320,7 @@ class RealtimeChatService {
       'groupId': conversation.id,
       'cipherText': cipherText,
     };
-    if (peer.ready) {
+    if (_preferWebRTC && peer.ready) {
       await peer.channel!.send(
         RTCDataChannelMessage(
           jsonEncode({'type': 'group-control', ...payload}),
@@ -350,7 +378,7 @@ class RealtimeChatService {
       'controlId': DateTime.now().microsecondsSinceEpoch.toString(),
       'cipherText': cipherText,
     };
-    if (peer.ready) {
+    if (_preferWebRTC && peer.ready) {
       await peer.channel!.send(
         RTCDataChannelMessage(jsonEncode({'type': type, ...payloadWithCipher})),
       );
@@ -388,8 +416,17 @@ class RealtimeChatService {
           payload['status'] as String? ?? '',
         );
         break;
+      case 'chat-pending':
+        onPendingChat?.call(
+          payload['recipientDeviceId'] as String? ?? '',
+          from,
+        );
+        break;
       case 'connect-request':
-        await _ensurePeer(from, initiator: _shouldInitiateOffer(from));
+        await _ensurePeer(
+          from,
+          initiator: _preferWebRTC && _shouldInitiateOffer(from),
+        );
         break;
       case 'key':
         final peer = await _ensurePeer(from, initiator: false);
@@ -406,6 +443,9 @@ class RealtimeChatService {
         }
         break;
       case 'offer':
+        if (!_preferWebRTC) {
+          return;
+        }
         if (_shouldInitiateOffer(from)) {
           return;
         }
@@ -430,6 +470,9 @@ class RealtimeChatService {
         });
         break;
       case 'answer':
+        if (!_preferWebRTC) {
+          return;
+        }
         final peer = _peers[from];
         if (peer == null || peer.connection == null) {
           return;
@@ -444,6 +487,9 @@ class RealtimeChatService {
         await _drainPendingCandidates(peer);
         break;
       case 'candidate':
+        if (!_preferWebRTC) {
+          return;
+        }
         final peer = await _ensurePeer(from, initiator: false);
         final candidate = payload['candidate'] as String? ?? '';
         final connection = peer.connection;
@@ -486,13 +532,16 @@ class RealtimeChatService {
     final existing = _peers[friendId];
     if (existing != null) {
       await existing.initializeKeyPair();
-      if (existing.connection == null) {
+      if (_preferWebRTC && existing.connection == null) {
         await _createPeerConnection(existing);
       }
       if (existing.sessionKey == null) {
         await _sendLocalKey(existing);
       }
-      if (initiator && existing.channel == null && !existing.offerStarted) {
+      if (_preferWebRTC &&
+          initiator &&
+          existing.channel == null &&
+          !existing.offerStarted) {
         await _startOffer(existing);
       }
       return existing;
@@ -505,10 +554,11 @@ class RealtimeChatService {
     );
     _peers[friendId] = peer;
     await peer.initializeKeyPair();
-    await _createPeerConnection(peer);
     await _sendLocalKey(peer);
-
-    if (initiator) {
+    if (_preferWebRTC) {
+      await _createPeerConnection(peer);
+    }
+    if (_preferWebRTC && initiator) {
       await _startOffer(peer);
     }
 

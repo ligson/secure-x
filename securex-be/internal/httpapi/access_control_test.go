@@ -179,6 +179,41 @@ func TestDownloadRejectsCrossUserFileAccess(t *testing.T) {
 	}
 }
 
+func TestChatMessageDispatchRejectsUnauthorizedTargetDevice(t *testing.T) {
+	router, tokens, db := newAccessControlRouter(t)
+	createTestUser(t, db, "user-a", "alice", "alice@example.com")
+	createTestUser(t, db, "user-b", "bob", "bob@example.com")
+	tokenB := issueTestToken(t, tokens, "user-b")
+
+	deviceA := model.ChatDevice{
+		ID:              "device-a-1",
+		UserID:          "user-a",
+		Protocol:        "securex-e2ee-v1",
+		ProtocolVersion: 1,
+		PublicKey:       "pub-a",
+		AppInstance:     "test-a",
+		LastSeenAt:      time.Now(),
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
+	}
+	if err := db.Create(&deviceA).Error; err != nil {
+		t.Fatalf("create chat device: %v", err)
+	}
+
+	assertJSONStatus(t, router, http.MethodPost, "/api/v1/chat/messages", tokenB, map[string]any{
+		"messages": []map[string]any{
+			{
+				"recipientUserId":   "user-a",
+				"recipientDeviceId": "device-a-1",
+				"senderDeviceId":    "device-b-1",
+				"protocol":          "securex-e2ee-v1",
+				"payload":           "{\"cipher\":\"opaque\"}",
+				"expiresInSeconds":  300,
+			},
+		},
+	}, http.StatusForbidden)
+}
+
 func newAccessControlRouter(t *testing.T) (http.Handler, *auth.TokenManager, *gorm.DB) {
 	t.Helper()
 
@@ -195,6 +230,12 @@ func newAccessControlRouter(t *testing.T) (http.Handler, *auth.TokenManager, *go
 		&model.FileUploadSession{},
 		&model.FriendRequest{},
 		&model.Friendship{},
+		&model.GroupRoom{},
+		&model.GroupMembership{},
+		&model.GroupSnapshot{},
+		&model.ChatArchive{},
+		&model.ChatDevice{},
+		&model.ChatQueuedEnvelope{},
 	); err != nil {
 		t.Fatalf("migrate sqlite: %v", err)
 	}

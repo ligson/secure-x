@@ -23,7 +23,6 @@ extension AppControllerChatActions on AppController {
   Future<void> openChatWith(PublicUser friend) async {
     _ensureConversation(friend);
     await _connectRealtimeChat();
-    await _realtimeChatService.openPeer(friend);
     notifyListeners();
   }
 
@@ -43,8 +42,16 @@ extension AppControllerChatActions on AppController {
     _chatConversations = [..._chatConversations, conversation];
     _sortChatConversations();
     notifyListeners();
+    try {
+      await _createGroupConversationOnServer(conversation);
+    } catch (_) {
+      _deleteGroupConversation(conversation.id);
+      notifyListeners();
+      rethrow;
+    }
     await _persistChatSnapshot();
     await openGroupChat(conversation.id);
+    _statusMessage = '群聊已创建，群元数据已加密同步到服务端。';
     return conversation;
   }
 
@@ -54,9 +61,6 @@ extension AppControllerChatActions on AppController {
       return;
     }
     await _connectRealtimeChat();
-    for (final member in conversation.members) {
-      await _realtimeChatService.openPeer(member);
-    }
     notifyListeners();
   }
 
@@ -65,8 +69,16 @@ extension AppControllerChatActions on AppController {
       return;
     }
     await _connectRealtimeChat();
-    for (final friend in _friends) {
-      await _realtimeChatService.openPeer(friend);
+    final peers = <String, PublicUser>{
+      for (final friend in _friends) friend.id: friend,
+    };
+    for (final conversation in _chatConversations) {
+      for (final member in conversation.members) {
+        peers.putIfAbsent(member.id, () => member);
+      }
+    }
+    for (final peer in peers.values) {
+      await _requestHistoryFromPeer(peer.id);
     }
   }
 
@@ -75,6 +87,7 @@ extension AppControllerChatActions on AppController {
     String? title,
     List<PublicUser>? members,
     String? adminUserId,
+    bool syncServer = true,
   }) async {
     final conversations = [..._chatConversations];
     final index = conversations.indexWhere(
@@ -89,9 +102,15 @@ extension AppControllerChatActions on AppController {
       members: members == null ? null : _uniqueFriends(members),
       adminUserId: adminUserId,
     );
+    final updatedConversation = conversations[index];
     _chatConversations = conversations;
     _sortChatConversations();
     notifyListeners();
+    if (syncServer) {
+      await _updateGroupConversationOnServer(updatedConversation);
+    } else {
+      await _syncGroupSnapshotForConversation(updatedConversation);
+    }
     await _persistChatSnapshot();
   }
 
@@ -107,6 +126,10 @@ extension AppControllerChatActions on AppController {
     final nextAdminUserId = leavingAdmin && remainingMembers.isNotEmpty
         ? remainingMembers.first.id
         : conversation.adminUserId;
+    await _leaveGroupOnServer(
+      conversationId: conversation.id,
+      nextAdminUserId: leavingAdmin ? nextAdminUserId : null,
+    );
     await _sendRealtimeGroupControl(
       conversation: conversation,
       recipients: remainingMembers,
@@ -346,8 +369,12 @@ extension AppControllerChatActions on AppController {
     return messages..sort((a, b) => a.createdAt.compareTo(b.createdAt));
   }
 
-  Future<void> _connectRealtimeChat() async {
+  Future<void> _connectRealtimeChat({bool forceReconnect = false}) async {
     if (_token == null || _user == null) {
+      return;
+    }
+    final identity = await _ensureChatIdentity(registerOnServer: true);
+    if (identity == null) {
       return;
     }
     _realtimeConfig ??= await _apiClient.realtimeConfig(
@@ -362,8 +389,12 @@ extension AppControllerChatActions on AppController {
       signalingUrl: _realtimeConfig!.signalingUrl,
       token: _token!,
       userId: _user!.id,
+      deviceId: identity.deviceId,
       iceServers: _realtimeConfig!.iceServers,
+      forceReconnect: forceReconnect,
     );
+    unawaited(_pullPendingChatMessages(expectedDeviceId: identity.deviceId));
+    unawaited(_flushAllPendingRealtimeMessages());
   }
 
   Future<bool> _sendRealtimeMessage(
@@ -374,8 +405,7 @@ extension AppControllerChatActions on AppController {
       return false;
     }
     try {
-      await _connectRealtimeChat();
-      return _realtimeChatService.sendMessage(friend: friend, message: message);
+      return _dispatchDirectMessage(friend: friend, message: message);
     } catch (error) {
       appLog('实时单聊发送失败', error);
       return false;
@@ -391,20 +421,12 @@ extension AppControllerChatActions on AppController {
     }
     final sentPeerIds = <String>[];
     try {
-      await _connectRealtimeChat();
-      for (final member in conversation.members) {
-        if (message.deliveredPeerIds.contains(member.id)) {
-          continue;
-        }
-        final delivered = await _realtimeChatService.sendMessage(
-          friend: member,
-          message: message,
+      sentPeerIds.addAll(
+        await _dispatchGroupMessage(
           conversation: conversation,
-        );
-        if (delivered) {
-          sentPeerIds.add(member.id);
-        }
-      }
+          message: message,
+        ),
+      );
     } catch (error) {
       appLog('实时群聊发送失败', error);
     }
@@ -423,19 +445,341 @@ extension AppControllerChatActions on AppController {
       return;
     }
     try {
-      await _connectRealtimeChat();
-      for (final member in _uniqueFriends(recipients)) {
-        await _realtimeChatService.sendGroupControl(
-          friend: member,
-          conversation: conversation,
-          controlType: controlType,
-          removedUserId: removedUserId,
-          memberIds: _uniqueIds(memberIds),
-          adminUserId: adminUserId,
-        );
-      }
+      await _dispatchGroupControl(
+        conversation: conversation,
+        recipients: recipients,
+        controlType: controlType,
+        removedUserId: removedUserId,
+        memberIds: memberIds,
+        adminUserId: adminUserId,
+      );
     } catch (error) {
       appLog('实时群聊控制消息发送失败', error);
+    }
+  }
+
+  Future<bool> _dispatchDirectMessage({
+    required PublicUser friend,
+    required ChatMessage message,
+  }) async {
+    final recipientMap = await _dispatchEncryptedPayloads(
+      recipientUserIds: [friend.id],
+      kind: 'direct-message',
+      body: {'messageId': message.id, 'text': message.text},
+    );
+    return (recipientMap[friend.id] ?? 0) > 0;
+  }
+
+  Future<List<String>> _dispatchGroupMessage({
+    required ChatConversation conversation,
+    required ChatMessage message,
+    List<String>? recipientUserIds,
+  }) async {
+    final memberIds =
+        (recipientUserIds ??
+                conversation.members.map((member) => member.id).toList())
+            .where((id) => id.isNotEmpty && id != _user?.id)
+            .toList();
+    if (memberIds.isEmpty) {
+      return const [];
+    }
+    final queuedByUser = await _dispatchEncryptedPayloads(
+      recipientUserIds: memberIds,
+      kind: 'group-message',
+      body: {
+        'messageId': message.id,
+        'text': message.text,
+        'groupId': conversation.id,
+        'groupName': conversation.title,
+        'memberIds': [_user?.id ?? '', ...memberIds],
+        'adminUserId': conversation.adminUserId,
+      },
+    );
+    return queuedByUser.entries
+        .where((entry) => entry.value > 0)
+        .map((entry) => entry.key)
+        .toList();
+  }
+
+  Future<void> _dispatchGroupControl({
+    required ChatConversation conversation,
+    required List<PublicUser> recipients,
+    required String controlType,
+    required String removedUserId,
+    required List<String> memberIds,
+    required String adminUserId,
+  }) async {
+    final targetIds = _uniqueFriends(recipients)
+        .map((member) => member.id)
+        .where((id) => id.isNotEmpty && id != _user?.id)
+        .toList();
+    if (targetIds.isEmpty) {
+      return;
+    }
+    await _dispatchEncryptedPayloads(
+      recipientUserIds: targetIds,
+      kind: 'group-control',
+      body: {
+        'controlId': DateTime.now().microsecondsSinceEpoch.toString(),
+        'controlType': controlType,
+        'groupId': conversation.id,
+        'groupName': conversation.title,
+        'memberIds': _uniqueIds(memberIds),
+        'adminUserId': adminUserId,
+        'removedUserId': removedUserId,
+      },
+    );
+  }
+
+  Future<bool> _dispatchHistoryRequest(PublicUser friend) async {
+    final queuedByUser = await _dispatchEncryptedPayloads(
+      recipientUserIds: [friend.id],
+      kind: 'history-request',
+      body: {'requestId': DateTime.now().microsecondsSinceEpoch.toString()},
+    );
+    return (queuedByUser[friend.id] ?? 0) > 0;
+  }
+
+  Future<void> _dispatchHistoryResponse({
+    required PublicUser friend,
+    required String requestId,
+    required List<Map<String, dynamic>> conversations,
+  }) async {
+    await _dispatchEncryptedPayloads(
+      recipientUserIds: [friend.id],
+      kind: 'history-response',
+      body: {'requestId': requestId, 'conversations': conversations},
+    );
+  }
+
+  Future<void> _dispatchDeliveryAck({
+    required String recipientUserId,
+    required String messageId,
+    String groupId = '',
+  }) async {
+    await _dispatchEncryptedPayloads(
+      recipientUserIds: [recipientUserId],
+      kind: 'delivery-ack',
+      body: {'messageId': messageId, 'groupId': groupId},
+    );
+  }
+
+  Future<Map<String, int>> _dispatchEncryptedPayloads({
+    required List<String> recipientUserIds,
+    required String kind,
+    required Map<String, dynamic> body,
+  }) async {
+    final token = _token;
+    final user = _user;
+    final identity = await _ensureChatIdentity(registerOnServer: true);
+    if (token == null || user == null || identity == null) {
+      return const {};
+    }
+
+    final cleanUserIds = _uniqueIds(
+      recipientUserIds,
+    ).where((id) => id.isNotEmpty && id != user.id).toList();
+    if (cleanUserIds.isEmpty) {
+      return const {};
+    }
+
+    final outgoing = <ChatOutgoingEnvelope>[];
+    final queuedByUser = <String, int>{};
+    for (final recipientUserId in cleanUserIds) {
+      final devices = await _apiClient.listUserChatDevices(
+        baseUrl: _baseUrl,
+        token: token,
+        userId: recipientUserId,
+      );
+      final supportedDevices = devices.where((device) {
+        return device.id.isNotEmpty &&
+            device.publicKey.isNotEmpty &&
+            device.protocol == _chatProtocol.protocolId;
+      }).toList();
+      for (final device in supportedDevices) {
+        outgoing.add(
+          await _chatProtocol.encryptForDevice(
+            senderIdentity: identity,
+            senderUserId: user.id,
+            recipientDevice: device,
+            kind: kind,
+            body: body,
+          ),
+        );
+      }
+      if (supportedDevices.isNotEmpty) {
+        queuedByUser[recipientUserId] = supportedDevices.length;
+      }
+    }
+
+    if (outgoing.isEmpty) {
+      return queuedByUser;
+    }
+
+    await _apiClient.dispatchChatMessages(
+      baseUrl: _baseUrl,
+      token: token,
+      messages: outgoing,
+    );
+    return queuedByUser;
+  }
+
+  Future<void> _pullPendingChatMessages({
+    String expectedDeviceId = '',
+    String senderUserId = '',
+  }) async {
+    final token = _token;
+    final identity = await _ensureChatIdentity(registerOnServer: true);
+    if (token == null || identity == null) {
+      return;
+    }
+    if (expectedDeviceId.isNotEmpty && expectedDeviceId != identity.deviceId) {
+      return;
+    }
+
+    _pendingChatSyncTask = _pendingChatSyncTask.then((_) async {
+      try {
+        final pending = await _apiClient.listPendingChatMessages(
+          baseUrl: _baseUrl,
+          token: token,
+          deviceId: identity.deviceId,
+        );
+        if (pending.isEmpty) {
+          return;
+        }
+        final ackIds = <String>[];
+        for (final envelope in pending) {
+          if (senderUserId.isNotEmpty &&
+              envelope.senderUserId.isNotEmpty &&
+              envelope.senderUserId != senderUserId) {
+            continue;
+          }
+          try {
+            final decrypted = await _chatProtocol.decryptEnvelope(
+              recipientIdentity: identity,
+              envelope: envelope,
+            );
+            await _handleDecryptedChatEnvelope(envelope, decrypted);
+            ackIds.add(envelope.id);
+          } catch (error) {
+            appLog('处理待同步聊天消息失败：messageId=${envelope.id}', error);
+          }
+        }
+        if (ackIds.isEmpty) {
+          return;
+        }
+        await _apiClient.ackChatMessages(
+          baseUrl: _baseUrl,
+          token: token,
+          deviceId: identity.deviceId,
+          messageIds: ackIds,
+        );
+      } catch (error) {
+        appLog('拉取待同步聊天消息失败', error);
+      }
+    });
+    await _pendingChatSyncTask;
+  }
+
+  Future<void> _handleDecryptedChatEnvelope(
+    QueuedChatEnvelopeRecord envelope,
+    ChatDecryptedEnvelope decrypted,
+  ) async {
+    switch (decrypted.kind) {
+      case 'direct-message':
+        final messageId = decrypted.body['messageId'] as String? ?? '';
+        final text = decrypted.body['text'] as String? ?? '';
+        if (messageId.isEmpty || text.isEmpty) {
+          return;
+        }
+        await _handleRealtimeIncomingMessage(
+          RealtimeIncomingMessage(
+            friendId: decrypted.senderUserId,
+            messageId: messageId,
+            text: text,
+          ),
+        );
+        await _dispatchDeliveryAck(
+          recipientUserId: decrypted.senderUserId,
+          messageId: messageId,
+        );
+        return;
+      case 'group-message':
+        final messageId = decrypted.body['messageId'] as String? ?? '';
+        final text = decrypted.body['text'] as String? ?? '';
+        final groupId = decrypted.body['groupId'] as String? ?? '';
+        if (messageId.isEmpty || text.isEmpty || groupId.isEmpty) {
+          return;
+        }
+        await _handleRealtimeIncomingMessage(
+          RealtimeIncomingMessage(
+            friendId: decrypted.senderUserId,
+            messageId: messageId,
+            text: text,
+            groupId: groupId,
+            groupName: decrypted.body['groupName'] as String? ?? '',
+            memberIds:
+                (decrypted.body['memberIds'] as List<dynamic>? ?? const [])
+                    .map((entry) => entry.toString())
+                    .where((entry) => entry.isNotEmpty)
+                    .toList(),
+            adminUserId: decrypted.body['adminUserId'] as String? ?? '',
+          ),
+        );
+        await _dispatchDeliveryAck(
+          recipientUserId: decrypted.senderUserId,
+          messageId: messageId,
+          groupId: groupId,
+        );
+        return;
+      case 'group-control':
+        await _handleRealtimeGroupControl(
+          RealtimeGroupControl(
+            friendId: decrypted.senderUserId,
+            controlId: decrypted.body['controlId'] as String? ?? envelope.id,
+            controlType: decrypted.body['controlType'] as String? ?? '',
+            groupId: decrypted.body['groupId'] as String? ?? '',
+            groupName: decrypted.body['groupName'] as String? ?? '',
+            memberIds:
+                (decrypted.body['memberIds'] as List<dynamic>? ?? const [])
+                    .map((entry) => entry.toString())
+                    .where((entry) => entry.isNotEmpty)
+                    .toList(),
+            adminUserId: decrypted.body['adminUserId'] as String? ?? '',
+            removedUserId: decrypted.body['removedUserId'] as String? ?? '',
+          ),
+        );
+        return;
+      case 'history-request':
+        await _handleRealtimeHistoryRequest(
+          RealtimeHistoryRequest(
+            friendId: decrypted.senderUserId,
+            requestId: decrypted.body['requestId'] as String? ?? '',
+          ),
+        );
+        return;
+      case 'history-response':
+        await _handleRealtimeHistoryResponse(
+          RealtimeHistoryResponse(
+            friendId: decrypted.senderUserId,
+            requestId: decrypted.body['requestId'] as String? ?? '',
+            conversations:
+                (decrypted.body['conversations'] as List<dynamic>? ?? const [])
+                    .map((entry) => entry as Map<String, dynamic>)
+                    .toList(),
+          ),
+        );
+        return;
+      case 'delivery-ack':
+        final messageId = decrypted.body['messageId'] as String? ?? '';
+        if (messageId.isEmpty) {
+          return;
+        }
+        await _markRealtimeMessageDelivered(decrypted.senderUserId, messageId);
+        return;
+      default:
+        appLog('收到未知聊天消息类型：${decrypted.kind}');
+        return;
     }
   }
 
@@ -447,10 +791,10 @@ extension AppControllerChatActions on AppController {
       return;
     }
 
-    var friend = _friendById(incoming.friendId);
+    var friend = _knownChatPeerById(incoming.friendId);
     if (friend == null) {
       await _loadFriendsSnapshot();
-      friend = _friendById(incoming.friendId);
+      friend = _knownChatPeerById(incoming.friendId);
     }
     if (friend == null) {
       return;
@@ -494,16 +838,24 @@ extension AppControllerChatActions on AppController {
       return;
     }
 
-    var sender = _friendById(incoming.friendId);
+    var sender = _knownChatPeerById(incoming.friendId);
     if (sender == null) {
       await _loadFriendsSnapshot();
-      sender = _friendById(incoming.friendId);
+      await _mergeServerGroupsIntoChatConversations();
+      sender = _knownChatPeerById(incoming.friendId);
     }
     if (sender == null) {
       return;
     }
     final messageSender = sender;
-    final memberById = {for (final friend in _friends) friend.id: friend};
+    final memberById = <String, PublicUser>{
+      for (final friend in _friends) friend.id: friend,
+    };
+    for (final conversation in _chatConversations) {
+      for (final member in conversation.members) {
+        memberById[member.id] = member;
+      }
+    }
     final members = <PublicUser>[];
     for (final memberId in incoming.memberIds) {
       final member = memberById[memberId];
@@ -554,12 +906,27 @@ extension AppControllerChatActions on AppController {
       return;
     }
 
-    var memberById = {for (final friend in _friends) friend.id: friend};
+    var memberById = <String, PublicUser>{
+      for (final friend in _friends) friend.id: friend,
+    };
+    for (final existing in _chatConversations) {
+      for (final member in existing.members) {
+        memberById[member.id] = member;
+      }
+    }
     if (!control.memberIds.every(
       (memberId) => memberId == _user!.id || memberById.containsKey(memberId),
     )) {
       await _loadFriendsSnapshot();
-      memberById = {for (final friend in _friends) friend.id: friend};
+      await _mergeServerGroupsIntoChatConversations();
+      memberById = <String, PublicUser>{
+        for (final friend in _friends) friend.id: friend,
+      };
+      for (final existing in _chatConversations) {
+        for (final member in existing.members) {
+          memberById[member.id] = member;
+        }
+      }
     }
     final members = control.memberIds
         .where((memberId) => memberId != _user!.id)
@@ -577,6 +944,7 @@ extension AppControllerChatActions on AppController {
       title: control.groupName,
       members: members,
       adminUserId: control.adminUserId,
+      syncServer: false,
     );
     _statusMessage = '群聊成员已更新。';
     notifyListeners();
@@ -586,11 +954,8 @@ extension AppControllerChatActions on AppController {
     String friendId,
     String messageId,
   ) async {
-    final friend = _friendById(friendId);
-    if (friend == null) {
-      return;
-    }
-    if (_findMessage(friend.id, messageId) != null) {
+    final friend = _knownChatPeerById(friendId);
+    if (friend != null && _findMessage(friend.id, messageId) != null) {
       _replaceMessage(
         friend,
         messageId,
@@ -631,9 +996,7 @@ extension AppControllerChatActions on AppController {
       return;
     }
     try {
-      final requested = await _realtimeChatService.requestHistory(
-        friend: friend,
-      );
+      final requested = await _dispatchHistoryRequest(friend);
       if (requested) {
         _historyRequestedPeerIds.add(friendId);
       }
@@ -645,13 +1008,13 @@ extension AppControllerChatActions on AppController {
   Future<void> _handleRealtimeHistoryRequest(
     RealtimeHistoryRequest request,
   ) async {
-    final friend = _friendById(request.friendId);
+    final friend = _knownChatPeerById(request.friendId);
     if (friend == null || request.requestId.isEmpty) {
       return;
     }
     final conversations = _historyConversationsForPeer(friend.id);
     try {
-      await _realtimeChatService.sendHistoryResponse(
+      await _dispatchHistoryResponse(
         friend: friend,
         requestId: request.requestId,
         conversations: conversations,
@@ -664,7 +1027,7 @@ extension AppControllerChatActions on AppController {
   Future<void> _handleRealtimeHistoryResponse(
     RealtimeHistoryResponse response,
   ) async {
-    final friend = _friendById(response.friendId);
+    final friend = _knownChatPeerById(response.friendId);
     if (friend == null) {
       return;
     }
@@ -682,6 +1045,7 @@ extension AppControllerChatActions on AppController {
     }
     _statusMessage = '聊天历史已从在线好友同步。';
     await _persistChatSnapshot();
+    await _syncKnownGroupSnapshotsSilently();
     notifyListeners();
   }
 
@@ -848,6 +1212,128 @@ extension AppControllerChatActions on AppController {
     return result;
   }
 
+  Future<String> _buildGroupSnapshotPayload(ChatConversation conversation) {
+    return _cryptoService.encryptJson({
+      'id': conversation.id,
+      'title': conversation.title,
+      'memberIds': conversation.members.map((member) => member.id).toList(),
+      'adminUserId': conversation.adminUserId,
+    }, _vaultKey!);
+  }
+
+  int _nextGroupSnapshotVersion() => DateTime.now().millisecondsSinceEpoch;
+
+  Future<void> _createGroupConversationOnServer(
+    ChatConversation conversation,
+  ) async {
+    if (_token == null || !_canSyncGroupConversation(conversation)) {
+      return;
+    }
+    final payload = await _buildGroupSnapshotPayload(conversation);
+    final group = await _apiClient.createGroup(
+      baseUrl: _baseUrl,
+      token: _token!,
+      groupId: conversation.id,
+      payload: payload,
+      version: _nextGroupSnapshotVersion(),
+      memberIds: conversation.members.map((member) => member.id).toList(),
+    );
+    await _mergeServerGroupRecord(group);
+  }
+
+  Future<void> _updateGroupConversationOnServer(
+    ChatConversation conversation,
+  ) async {
+    if (_token == null || !_canSyncGroupConversation(conversation)) {
+      return;
+    }
+    final payload = await _buildGroupSnapshotPayload(conversation);
+    final group = await _apiClient.updateGroup(
+      baseUrl: _baseUrl,
+      token: _token!,
+      groupId: conversation.id,
+      payload: payload,
+      version: _nextGroupSnapshotVersion(),
+      memberIds: conversation.members.map((member) => member.id).toList(),
+      adminUserId: conversation.adminUserId,
+    );
+    await _mergeServerGroupRecord(group);
+  }
+
+  Future<void> _syncGroupSnapshotForConversation(
+    ChatConversation conversation,
+  ) async {
+    if (_token == null || !_canSyncGroupConversation(conversation)) {
+      return;
+    }
+    try {
+      await _apiClient.upsertGroupSnapshot(
+        baseUrl: _baseUrl,
+        token: _token!,
+        groupId: conversation.id,
+        payload: await _buildGroupSnapshotPayload(conversation),
+        version: _nextGroupSnapshotVersion(),
+      );
+    } catch (error) {
+      appLog('群聊快照同步失败：groupId=${conversation.id}', error);
+    }
+  }
+
+  Future<void> _leaveGroupOnServer({
+    required String conversationId,
+    String? nextAdminUserId,
+  }) async {
+    if (_token == null) {
+      return;
+    }
+    await _apiClient.leaveGroup(
+      baseUrl: _baseUrl,
+      token: _token!,
+      groupId: conversationId,
+      nextAdminUserId: nextAdminUserId,
+    );
+  }
+
+  Future<void> _mergeServerGroupRecord(GroupRecord group) async {
+    if (_user == null || _vaultKey == null || group.id.isEmpty) {
+      return;
+    }
+    var title = '未命名群聊';
+    if (group.snapshotPayload.isNotEmpty) {
+      try {
+        final data = await _cryptoService.decryptJson(
+          group.snapshotPayload,
+          _vaultKey!,
+        );
+        final value = (data['title'] as String? ?? '').trim();
+        if (value.isNotEmpty) {
+          title = value;
+        }
+      } catch (error) {
+        appLog('群聊快照解密失败：groupId=${group.id}', error);
+      }
+    }
+    _ensureGroupConversation(
+      id: group.id,
+      title: title,
+      members: group.members.where((member) => member.id != _user!.id).toList(),
+      adminUserId: group.adminUserId,
+    );
+  }
+
+  Future<void> _syncKnownGroupSnapshotsSilently() async {
+    for (final conversation in _chatConversations) {
+      if (!conversation.isGroup) {
+        continue;
+      }
+      await _syncGroupSnapshotForConversation(conversation);
+    }
+  }
+
+  bool _canSyncGroupConversation(ChatConversation conversation) {
+    return conversation.isGroup && _token != null && _vaultKey != null;
+  }
+
   String _groupMessageStatus(
     ChatConversation conversation,
     ChatMessage message,
@@ -1005,8 +1491,44 @@ extension AppControllerChatActions on AppController {
     return null;
   }
 
+  PublicUser? _knownChatPeerById(String friendId) {
+    final direct = _friendById(friendId);
+    if (direct != null) {
+      return direct;
+    }
+    for (final conversation in _chatConversations) {
+      for (final member in conversation.members) {
+        if (member.id == friendId) {
+          return member;
+        }
+      }
+    }
+    return null;
+  }
+
+  Future<void> _flushAllPendingRealtimeMessages() async {
+    final peerIds = <String>{};
+    for (final conversation in _chatConversations) {
+      if (conversation.isGroup) {
+        for (final member in conversation.members) {
+          if (member.id.isNotEmpty && member.id != _user?.id) {
+            peerIds.add(member.id);
+          }
+        }
+        continue;
+      }
+      final friendId = conversation.friend?.id ?? '';
+      if (friendId.isNotEmpty) {
+        peerIds.add(friendId);
+      }
+    }
+    for (final peerId in peerIds) {
+      await _flushPendingRealtimeMessages(peerId);
+    }
+  }
+
   Future<void> _flushPendingRealtimeMessages(String friendId) async {
-    final friend = _friendById(friendId);
+    final friend = _knownChatPeerById(friendId);
     if (friend == null) {
       return;
     }
@@ -1033,6 +1555,7 @@ extension AppControllerChatActions on AppController {
           (message) =>
               message.sentByMe &&
               !message.deliveredPeerIds.contains(friendId) &&
+              !message.sentPeerIds.contains(friendId) &&
               (message.status == 'pending' ||
                   message.status == 'localOnly' ||
                   message.status == 'sent'),
@@ -1042,11 +1565,11 @@ extension AppControllerChatActions on AppController {
     for (final message in pending) {
       final conversation = _conversationById(message.friendId);
       final deliveredToChannel = conversation?.isGroup == true
-          ? await _realtimeChatService.sendMessage(
-              friend: friend,
+          ? (await _dispatchGroupMessage(
+              conversation: conversation!,
               message: message,
-              conversation: conversation,
-            )
+              recipientUserIds: [friend.id],
+            )).contains(friend.id)
           : await _sendRealtimeMessage(friend, message);
       if (!deliveredToChannel) {
         continue;

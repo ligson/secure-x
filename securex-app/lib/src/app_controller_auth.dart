@@ -60,6 +60,7 @@ extension AppControllerAuthActions on AppController {
       _user = UserProfile.fromJson(response['user'] as Map<String, dynamic>);
       _vaultKey = bundle.vaultKeyBytes;
       final tokenPersisted = await _persistToken(_token!);
+      await _ensureChatIdentity(registerOnServer: true);
       await _loadVaultSnapshot();
       await _loadFriendsSnapshot();
       await _loadChatSnapshot();
@@ -102,6 +103,7 @@ extension AppControllerAuthActions on AppController {
         saltBase64: _user!.masterKeySalt,
         iterations: _user!.masterKeyIterations,
       );
+      await _ensureChatIdentity(registerOnServer: true);
       await _loadVaultSnapshot();
       await _loadFriendsSnapshot();
       await _loadChatSnapshot();
