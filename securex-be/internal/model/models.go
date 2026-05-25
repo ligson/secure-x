@@ -122,6 +122,16 @@ type ChatArchive struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+type ChatArchiveConversation struct {
+	UserID         string    `gorm:"primaryKey;size:36" json:"userId"`
+	ConversationID string    `gorm:"primaryKey;size:128" json:"conversationId"`
+	SummaryPayload string    `gorm:"type:text;not null" json:"summaryPayload"`
+	Payload        string    `gorm:"type:text;not null" json:"payload"`
+	Version        int       `gorm:"not null;default:1" json:"version"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+}
+
 type ChatDevice struct {
 	ID              string    `gorm:"primaryKey;size:64" json:"id"`
 	UserID          string    `gorm:"index;size:36;not null" json:"userId"`

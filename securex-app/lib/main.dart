@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -107,6 +108,7 @@ class _SecureXAppState extends State<SecureXApp> with WidgetsBindingObserver {
         return MaterialApp(
           title: 'secure-x',
           debugShowCheckedModeBanner: false,
+          scrollBehavior: const SecureXScrollBehavior(),
           theme: theme.toThemeData(),
           home: _buildHome(),
         );
@@ -126,6 +128,20 @@ class _SecureXAppState extends State<SecureXApp> with WidgetsBindingObserver {
     }
     return VaultScreen(controller: widget.controller);
   }
+}
+
+class SecureXScrollBehavior extends MaterialScrollBehavior {
+  const SecureXScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+    PointerDeviceKind.touch,
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.trackpad,
+    PointerDeviceKind.stylus,
+    PointerDeviceKind.invertedStylus,
+    PointerDeviceKind.unknown,
+  };
 }
 
 class SplashScreen extends StatelessWidget {

@@ -166,8 +166,21 @@ extension AppControllerInternalHelpers on AppController {
     await _ensureRealtimeChatConnected();
     _chatConversations = [];
     final friendById = {for (final friend in _friends) friend.id: friend};
-    await _mergeLocalChatSnapshot(friendById);
-    await _mergeRemoteChatArchive(friendById);
+    final incrementalLoaded = await _loadIncrementalChatArchive(friendById);
+    if (!incrementalLoaded) {
+      final remoteLoaded = await _mergeRemoteChatArchive(friendById);
+      final localMerged = await _mergeLocalChatSnapshot(
+        friendById,
+        mergeAsFallback: !remoteLoaded,
+      );
+      if (localMerged && remoteLoaded) {
+        await _persistChatSnapshot();
+      }
+      if (remoteLoaded || localMerged) {
+        _queueAllChatConversationsForArchiveMigration();
+        _scheduleChatArchiveSync(await _encryptedChatSnapshotPayload());
+      }
+    }
     await _mergeServerGroupsIntoChatConversations();
     _sortChatConversations();
     _markChatChanged();
@@ -214,27 +227,48 @@ extension AppControllerInternalHelpers on AppController {
     });
   }
 
-  Future<void> _mergeLocalChatSnapshot(
-    Map<String, PublicUser> friendByID,
-  ) async {
+  Future<void> _writeLocalChatSnapshotCache(String encrypted) async {
+    final file = await _chatStoreFile();
+    await file.parent.create(recursive: true);
+    await file.writeAsString(encrypted);
+  }
+
+  Future<bool> _mergeLocalChatSnapshot(
+    Map<String, PublicUser> friendByID, {
+    required bool mergeAsFallback,
+  }) async {
     final file = await _chatStoreFile();
     if (!await file.exists()) {
-      return;
+      return false;
     }
     try {
       final encrypted = await file.readAsString();
       final data = await _cryptoService.decryptJson(encrypted, _vaultKey!);
+      if (!mergeAsFallback &&
+          (data['conversations'] as List<dynamic>? ?? const []).isEmpty) {
+        return false;
+      }
+      final before = _chatConversations.fold<int>(
+        0,
+        (total, conversation) => total + conversation.messages.length,
+      );
       _mergeChatSnapshotData(data, friendByID);
+      final after = _chatConversations.fold<int>(
+        0,
+        (total, conversation) => total + conversation.messages.length,
+      );
+      return after > before;
     } catch (error) {
       appLog('本机聊天密文快照解密失败', error);
+      return false;
     }
   }
 
-  Future<void> _mergeRemoteChatArchive(
+  Future<bool> _mergeRemoteChatArchive(
     Map<String, PublicUser> friendByID,
   ) async {
     if (_token == null) {
-      return;
+      return false;
     }
     try {
       final archive = await _apiClient.getChatArchive(
@@ -242,15 +276,26 @@ extension AppControllerInternalHelpers on AppController {
         token: _token!,
       );
       if (archive.payload.isEmpty) {
-        return;
+        return false;
       }
       final data = await _cryptoService.decryptJson(
         archive.payload,
         _vaultKey!,
       );
+      final before = _chatConversations.fold<int>(
+        0,
+        (total, conversation) => total + conversation.messages.length,
+      );
       _mergeChatSnapshotData(data, friendByID);
+      await _writeLocalChatSnapshotCache(archive.payload);
+      final after = _chatConversations.fold<int>(
+        0,
+        (total, conversation) => total + conversation.messages.length,
+      );
+      return after > before || _chatConversations.isNotEmpty;
     } catch (error) {
       appLog('服务端聊天归档解密失败', error);
+      return false;
     }
   }
 
@@ -281,16 +326,17 @@ extension AppControllerInternalHelpers on AppController {
       if (friend == null) {
         continue;
       }
-      _replaceConversationMessages(friend, (current) {
-        return _mergeMessages(current, entry.value);
-      });
+      _upsertSnapshotConversation(
+        ChatConversation(friend: friend, messages: _sortMessages(entry.value)),
+      );
     }
   }
 
   void _mergeConversationSnapshot(
     Map<String, dynamic> entry,
-    Map<String, PublicUser> friendByID,
-  ) {
+    Map<String, PublicUser> friendByID, {
+    int archiveVersion = 0,
+  }) {
     final isGroup = entry['isGroup'] as bool? ?? false;
     final messages =
         (entry['messages'] as List<dynamic>? ?? const [])
@@ -300,21 +346,26 @@ extension AppControllerInternalHelpers on AppController {
             )
             .toList()
           ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final snapshotArchiveVersion = archiveVersion > 0
+        ? archiveVersion
+        : (entry['archiveVersion'] as num?)?.toInt() ?? 0;
     if (isGroup) {
       final members = (entry['members'] as List<dynamic>? ?? const [])
           .map((member) => PublicUser.fromJson(member as Map<String, dynamic>))
           .where((member) => member.id.isNotEmpty)
           .map((member) => friendByID[member.id] ?? member)
           .toList();
-      final conversation = _ensureGroupConversation(
-        id: entry['id'] as String? ?? '',
-        title: entry['title'] as String? ?? '未命名群聊',
-        members: members,
-        adminUserId: entry['adminUserId'] as String? ?? '',
+      _upsertSnapshotConversation(
+        ChatConversation(
+          id: entry['id'] as String? ?? '',
+          title: entry['title'] as String? ?? '未命名群聊',
+          members: members,
+          adminUserId: entry['adminUserId'] as String? ?? '',
+          isGroup: true,
+          messages: messages,
+          archiveVersion: snapshotArchiveVersion,
+        ),
       );
-      _replaceConversationMessagesById(conversation.id, (current) {
-        return _mergeMessages(current, messages);
-      });
       return;
     }
 
@@ -328,9 +379,17 @@ extension AppControllerInternalHelpers on AppController {
     if (friend == null) {
       return;
     }
-    _replaceConversationMessages(friend, (current) {
-      return _mergeMessages(current, messages);
-    });
+    _upsertSnapshotConversation(
+      ChatConversation(
+        friend: friend,
+        id: entry['id'] as String? ?? '',
+        title: snapshotFriend.username.isNotEmpty
+            ? snapshotFriend.username
+            : null,
+        messages: messages,
+        archiveVersion: snapshotArchiveVersion,
+      ),
+    );
   }
 
   Future<String> _encryptedChatSnapshotPayload() async {
@@ -345,13 +404,14 @@ extension AppControllerInternalHelpers on AppController {
         'members': conversation.members
             .map((member) => member.toJson())
             .toList(),
+        'archiveVersion': conversation.archiveVersion,
         'messages': conversation.messages
             .map((message) => message.toJson())
             .toList(),
       };
     }).toList();
     return _cryptoService.encryptJson({
-      'version': 3,
+      'version': 4,
       'conversations': conversations,
     }, _vaultKey!);
   }
@@ -374,21 +434,59 @@ extension AppControllerInternalHelpers on AppController {
     _chatArchiveSyncTimer = null;
     final payload = _pendingChatArchivePayload;
     final version = _pendingChatArchiveVersion;
-    if (_token == null || payload == null || payload.isEmpty) {
+    final conversationVersions = Map<String, int>.from(
+      _pendingChatConversationVersions,
+    );
+    final deletedConversationIds = _pendingDeletedChatConversationIds.toList();
+    final hasLegacyPayload = payload != null && payload.isNotEmpty;
+    if (_token == null ||
+        (!hasLegacyPayload &&
+            conversationVersions.isEmpty &&
+            deletedConversationIds.isEmpty)) {
       return;
     }
-    _pendingChatArchivePayload = null;
-    _pendingChatArchiveVersion = 0;
     _chatArchiveSyncTask = _chatArchiveSyncTask.then((_) async {
-      try {
-        await _apiClient.upsertChatArchive(
-          baseUrl: _baseUrl,
-          token: _token!,
-          payload: payload,
-          version: version,
-        );
-      } catch (error) {
-        appLog('聊天归档同步失败', error);
+      if (conversationVersions.isNotEmpty ||
+          deletedConversationIds.isNotEmpty) {
+        try {
+          final upserts = await _buildChatArchiveConversationUpserts(
+            conversationVersions,
+          );
+          await _apiClient.upsertChatArchiveConversations(
+            baseUrl: _baseUrl,
+            token: _token!,
+            conversations: upserts,
+            deletedConversationIds: deletedConversationIds,
+          );
+          for (final entry in conversationVersions.entries) {
+            if (_pendingChatConversationVersions[entry.key] == entry.value) {
+              _pendingChatConversationVersions.remove(entry.key);
+            }
+          }
+          for (final conversationId in deletedConversationIds) {
+            _pendingDeletedChatConversationIds.remove(conversationId);
+          }
+        } catch (error) {
+          appLog('会话归档增量同步失败', error);
+        }
+      }
+
+      if (hasLegacyPayload) {
+        try {
+          await _apiClient.upsertChatArchive(
+            baseUrl: _baseUrl,
+            token: _token!,
+            payload: payload,
+            version: version,
+          );
+          if (_pendingChatArchivePayload == payload &&
+              _pendingChatArchiveVersion == version) {
+            _pendingChatArchivePayload = null;
+            _pendingChatArchiveVersion = 0;
+          }
+        } catch (error) {
+          appLog('聊天归档整包同步失败', error);
+        }
       }
     });
     await _chatArchiveSyncTask;
@@ -399,6 +497,210 @@ extension AppControllerInternalHelpers on AppController {
     _chatArchiveSyncTimer = null;
     _pendingChatArchivePayload = null;
     _pendingChatArchiveVersion = 0;
+    _pendingChatConversationVersions.clear();
+    _pendingDeletedChatConversationIds.clear();
+  }
+
+  Future<bool> _loadIncrementalChatArchive(
+    Map<String, PublicUser> friendByID,
+  ) async {
+    if (_token == null || _vaultKey == null) {
+      return false;
+    }
+    try {
+      final manifest = await _apiClient.getChatArchiveManifest(
+        baseUrl: _baseUrl,
+        token: _token!,
+      );
+      if (manifest.conversations.isEmpty) {
+        return false;
+      }
+      await _mergeLocalChatSnapshot(friendByID, mergeAsFallback: true);
+      final localVersions = {
+        for (final conversation in _chatConversations)
+          if (conversation.id.isNotEmpty)
+            conversation.id: conversation.archiveVersion,
+      };
+      final staleConversationIds = manifest.conversations
+          .where(
+            (conversation) =>
+                (localVersions[conversation.conversationId] ?? 0) <
+                conversation.version,
+          )
+          .map((conversation) => conversation.conversationId)
+          .where((conversationId) => conversationId.isNotEmpty)
+          .toList();
+      if (staleConversationIds.isNotEmpty) {
+        final conversations = await _apiClient.listChatArchiveConversations(
+          baseUrl: _baseUrl,
+          token: _token!,
+          conversationIds: staleConversationIds,
+        );
+        for (final conversation in conversations) {
+          if (conversation.payload.isEmpty) {
+            continue;
+          }
+          final data = await _cryptoService.decryptJson(
+            conversation.payload,
+            _vaultKey!,
+          );
+          _mergeConversationSnapshot(
+            data,
+            friendByID,
+            archiveVersion: conversation.version,
+          );
+        }
+      }
+      final remoteConversationIds = manifest.conversations
+          .map((conversation) => conversation.conversationId)
+          .where((conversationId) => conversationId.isNotEmpty)
+          .toSet();
+      for (final conversation in _chatConversations) {
+        if (remoteConversationIds.contains(conversation.id)) {
+          continue;
+        }
+        _markConversationForArchiveSync(
+          conversation.id,
+          forceNewVersion: conversation.archiveVersion <= 0,
+        );
+      }
+      final encrypted = await _encryptedChatSnapshotPayload();
+      await _writeLocalChatSnapshotCache(encrypted);
+      if (_pendingChatConversationVersions.isNotEmpty ||
+          _pendingDeletedChatConversationIds.isNotEmpty) {
+        _scheduleChatArchiveSync(encrypted);
+      }
+      return true;
+    } catch (error) {
+      appLog('加载增量聊天归档失败，回退到整包归档', error);
+      _chatConversations = [];
+      return false;
+    }
+  }
+
+  void _upsertSnapshotConversation(ChatConversation incoming) {
+    if (incoming.id.isEmpty) {
+      return;
+    }
+    final conversations = [..._chatConversations];
+    final index = conversations.indexWhere(
+      (conversation) => conversation.id == incoming.id,
+    );
+    if (index < 0) {
+      conversations.add(incoming);
+      _chatConversations = conversations;
+      return;
+    }
+    final existing = conversations[index];
+    conversations[index] = existing.copyWith(
+      title: incoming.title.isEmpty ? existing.title : incoming.title,
+      friend: incoming.friend ?? existing.friend,
+      members: incoming.isGroup
+          ? _uniqueFriends([...existing.members, ...incoming.members])
+          : incoming.members,
+      adminUserId: incoming.adminUserId.isEmpty
+          ? existing.adminUserId
+          : incoming.adminUserId,
+      isGroup: incoming.isGroup,
+      messages: _mergeMessagesReplacingCurrent(
+        existing.messages,
+        incoming.messages,
+      ),
+      archiveVersion: incoming.archiveVersion > 0
+          ? incoming.archiveVersion
+          : existing.archiveVersion,
+    );
+    _chatConversations = conversations;
+  }
+
+  List<ChatMessage> _mergeMessagesReplacingCurrent(
+    List<ChatMessage> current,
+    List<ChatMessage> incoming,
+  ) {
+    final byId = {for (final message in current) message.id: message};
+    for (final message in incoming) {
+      byId[message.id] = message;
+    }
+    return _sortMessages(byId.values.toList());
+  }
+
+  void _queueAllChatConversationsForArchiveMigration() {
+    for (final conversation in _chatConversations) {
+      _markConversationForArchiveSync(
+        conversation.id,
+        forceNewVersion: conversation.archiveVersion <= 0,
+      );
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _buildChatArchiveConversationUpserts(
+    Map<String, int> conversationVersions,
+  ) async {
+    final upserts = <Map<String, dynamic>>[];
+    for (final entry in conversationVersions.entries) {
+      final conversation = _conversationById(entry.key);
+      if (conversation == null) {
+        continue;
+      }
+      final version = entry.value > 0
+          ? entry.value
+          : (conversation.archiveVersion > 0
+                ? conversation.archiveVersion
+                : _nextChatArchiveVersion());
+      final summaryPayload = await _cryptoService.encryptJson(
+        _chatConversationSummaryJson(conversation, version),
+        _vaultKey!,
+      );
+      final payload = await _cryptoService.encryptJson(
+        _chatConversationSnapshotJson(conversation, version),
+        _vaultKey!,
+      );
+      upserts.add({
+        'conversationId': conversation.id,
+        'summaryPayload': summaryPayload,
+        'payload': payload,
+        'version': version,
+      });
+    }
+    return upserts;
+  }
+
+  Map<String, dynamic> _chatConversationSummaryJson(
+    ChatConversation conversation,
+    int archiveVersion,
+  ) {
+    return {
+      'id': conversation.id,
+      'title': conversation.title,
+      'isGroup': conversation.isGroup,
+      'friendId': conversation.friend?.id ?? '',
+      'friend': conversation.friend?.toJson() ?? <String, dynamic>{},
+      'adminUserId': conversation.adminUserId,
+      'members': conversation.members.map((member) => member.toJson()).toList(),
+      'archiveVersion': archiveVersion,
+      'messages': conversation.lastMessage == null
+          ? const []
+          : [conversation.lastMessage!.toJson()],
+    };
+  }
+
+  Map<String, dynamic> _chatConversationSnapshotJson(
+    ChatConversation conversation,
+    int archiveVersion,
+  ) {
+    return {
+      'id': conversation.id,
+      'title': conversation.title,
+      'isGroup': conversation.isGroup,
+      'friendId': conversation.friend?.id ?? '',
+      'friend': conversation.friend?.toJson() ?? <String, dynamic>{},
+      'adminUserId': conversation.adminUserId,
+      'members': conversation.members.map((member) => member.toJson()).toList(),
+      'archiveVersion': archiveVersion,
+      'messages': conversation.messages
+          .map((message) => message.toJson())
+          .toList(),
+    };
   }
 
   Future<void> _mergeServerGroupsIntoChatConversations() async {
@@ -441,6 +743,7 @@ extension AppControllerInternalHelpers on AppController {
             .where((member) => member.id != _user!.id)
             .toList(),
         adminUserId: group.adminUserId,
+        markDirty: false,
       );
     }
     _sortChatConversations();

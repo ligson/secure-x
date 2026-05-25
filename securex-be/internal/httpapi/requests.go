@@ -89,6 +89,18 @@ type chatArchiveUpsertRequest struct {
 	Version int    `json:"version"`
 }
 
+type chatArchiveConversationUpsertRequest struct {
+	ConversationID string `json:"conversationId" binding:"required"`
+	SummaryPayload string `json:"summaryPayload" binding:"required"`
+	Payload        string `json:"payload" binding:"required"`
+	Version        int    `json:"version"`
+}
+
+type chatArchiveBatchUpsertRequest struct {
+	Conversations         []chatArchiveConversationUpsertRequest `json:"conversations"`
+	DeletedConversationID []string                               `json:"deletedConversationIds"`
+}
+
 type chatDeviceUpsertRequest struct {
 	DeviceID        string `json:"deviceId" binding:"required"`
 	Protocol        string `json:"protocol" binding:"required"`
@@ -159,6 +171,8 @@ func validationErrorMessage(fieldErr validator.FieldError) string {
 		return "缺少封装后的保险库密钥"
 	case "Payload":
 		return "缺少加密负载内容"
+	case "ConversationID":
+		return "缺少会话标识"
 	case "Kind":
 		return "缺少条目类型"
 	case "MemberIDs":

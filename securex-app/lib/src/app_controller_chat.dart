@@ -16,7 +16,7 @@ extension AppControllerChatActions on AppController {
       await _ensureRealtimeChatConnected();
       _statusMessage = _realtimeConfig!.signalingEnabled
           ? '实时聊天配置已加载。'
-          : '实时聊天信令暂未启用，消息会先加密保存在本机。';
+          : '实时聊天信令暂未启用，消息会先加密缓存在当前设备，并在联网后同步到当前账号的加密归档。';
     });
   }
 
@@ -33,9 +33,16 @@ extension AppControllerChatActions on AppController {
           token: _token!,
         );
         await _ensureRealtimeChatConnected(forceReconnect: true);
-        await _mergeServerGroupsIntoChatConversations();
         final friendById = {for (final friend in _friends) friend.id: friend};
-        await _mergeRemoteChatArchive(friendById);
+        final remoteLoaded = await _mergeRemoteChatArchive(friendById);
+        final localMerged = await _mergeLocalChatSnapshot(
+          friendById,
+          mergeAsFallback: !remoteLoaded,
+        );
+        if (localMerged && remoteLoaded) {
+          await _persistChatSnapshot();
+        }
+        await _mergeServerGroupsIntoChatConversations();
         final identity = _chatIdentity;
         if (identity != null) {
           await _pullPendingChatMessages(expectedDeviceId: identity.deviceId);
@@ -44,7 +51,7 @@ extension AppControllerChatActions on AppController {
         await _openRealtimePeersForHistorySync();
         _sortChatConversations();
         _markChatChanged();
-        _statusMessage = '聊天会话已刷新。';
+        _statusMessage = '聊天会话已刷新，已优先同步服务端加密归档。';
       } catch (error) {
         _statusMessage = _friendlyError(error);
       }
@@ -67,6 +74,7 @@ extension AppControllerChatActions on AppController {
     required List<PublicUser> members,
   }) async {
     final cleanMembers = _uniqueFriends(members);
+    final archiveVersion = _nextChatArchiveVersion();
     final conversation = ChatConversation(
       id: 'group-${DateTime.now().microsecondsSinceEpoch}',
       title: title.trim().isEmpty ? '未命名群聊' : title.trim(),
@@ -74,7 +82,9 @@ extension AppControllerChatActions on AppController {
       adminUserId: _user?.id ?? '',
       isGroup: true,
       messages: [],
+      archiveVersion: archiveVersion,
     );
+    _queueChatConversationSync(conversation.id, archiveVersion);
     _chatConversations = [..._chatConversations, conversation];
     _sortChatConversations();
     notifyListeners();
@@ -132,12 +142,15 @@ extension AppControllerChatActions on AppController {
       return;
     }
 
+    final archiveVersion = _nextChatArchiveVersion();
     conversations[index] = conversations[index].copyWith(
       title: title,
       members: members == null ? null : _uniqueFriends(members),
       adminUserId: adminUserId,
+      archiveVersion: archiveVersion,
     );
     final updatedConversation = conversations[index];
+    _queueChatConversationSync(conversationId, archiveVersion);
     _chatConversations = conversations;
     _sortChatConversations();
     notifyListeners();
@@ -174,7 +187,7 @@ extension AppControllerChatActions on AppController {
       adminUserId: nextAdminUserId,
     );
     _deleteGroupConversation(conversation.id);
-    _statusMessage = '已退出群聊，本机群消息记录已删除。';
+    _statusMessage = '已退出群聊，当前账号的群消息记录已从缓存和归档中删除。';
     notifyListeners();
     await _persistChatSnapshot();
   }
@@ -211,7 +224,7 @@ extension AppControllerChatActions on AppController {
     );
     _statusMessage = deliveredToChannel
         ? '消息已通过端到端加密通道发送，等待对方确认。'
-        : '好友未在线或实时通道未建立，消息已加密保存在本机。';
+        : '好友当前暂无可用设备，消息已加密缓存在本机，并等待同步到服务端归档。';
     notifyListeners();
 
     await _persistChatSnapshot();
@@ -255,7 +268,7 @@ extension AppControllerChatActions on AppController {
     });
     _statusMessage = sentPeerIds.isNotEmpty
         ? '群消息已通过端到端加密通道发送给 ${sentPeerIds.length} 个在线成员。'
-        : '群成员暂未建立实时通道，消息已加密保存在本机。';
+        : '群成员当前暂无可用设备，消息已加密缓存在本机，并等待同步到服务端归档。';
     notifyListeners();
 
     await _persistChatSnapshot();
@@ -295,7 +308,7 @@ extension AppControllerChatActions on AppController {
     );
     _statusMessage = deliveredToChannel
         ? '消息已重新通过端到端加密通道发送，等待对方确认。'
-        : '实时通道仍未建立，消息继续加密保存在本机。';
+        : '实时通道仍未建立，消息继续保存在本机缓存，并等待后续同步。';
     notifyListeners();
 
     await _persistChatSnapshot();
@@ -339,7 +352,7 @@ extension AppControllerChatActions on AppController {
     });
     _statusMessage = sentPeerIds.isNotEmpty
         ? '群消息已重新发送给 ${sentPeerIds.length} 个在线成员。'
-        : '群实时通道仍未建立，消息继续加密保存在本机。';
+        : '群实时通道仍未建立，消息继续保存在本机缓存，并等待后续同步。';
     notifyListeners();
 
     await _persistChatSnapshot();
@@ -362,21 +375,38 @@ extension AppControllerChatActions on AppController {
 
   void _replaceConversationMessages(
     PublicUser friend,
-    List<ChatMessage> Function(List<ChatMessage> messages) update,
-  ) {
+    List<ChatMessage> Function(List<ChatMessage> messages) update, {
+    bool markDirty = true,
+    int? archiveVersion,
+  }) {
     final conversations = [..._chatConversations];
     final index = conversations.indexWhere(
       (conversation) => conversation.friend?.id == friend.id,
     );
+    final nextArchiveVersion =
+        archiveVersion ?? (markDirty ? _nextChatArchiveVersion() : 0);
     if (index < 0) {
       conversations.add(
-        ChatConversation(friend: friend, messages: _sortMessages(update([]))),
+        ChatConversation(
+          friend: friend,
+          messages: _sortMessages(update([])),
+          archiveVersion: nextArchiveVersion,
+        ),
       );
+      if (markDirty) {
+        _queueChatConversationSync(friend.id, nextArchiveVersion);
+      }
     } else {
       final conversation = conversations[index];
       conversations[index] = conversation.copyWith(
         messages: _sortMessages(update([...conversation.messages])),
+        archiveVersion: nextArchiveVersion > 0
+            ? nextArchiveVersion
+            : conversation.archiveVersion,
       );
+      if (markDirty) {
+        _queueChatConversationSync(conversations[index].id, nextArchiveVersion);
+      }
     }
     _chatConversations = conversations;
     _sortChatConversations();
@@ -385,8 +415,10 @@ extension AppControllerChatActions on AppController {
 
   void _replaceConversationMessagesById(
     String conversationId,
-    List<ChatMessage> Function(List<ChatMessage> messages) update,
-  ) {
+    List<ChatMessage> Function(List<ChatMessage> messages) update, {
+    bool markDirty = true,
+    int? archiveVersion,
+  }) {
     final conversations = [..._chatConversations];
     final index = conversations.indexWhere(
       (conversation) => conversation.id == conversationId,
@@ -395,9 +427,17 @@ extension AppControllerChatActions on AppController {
       return;
     }
     final conversation = conversations[index];
+    final nextArchiveVersion =
+        archiveVersion ?? (markDirty ? _nextChatArchiveVersion() : 0);
     conversations[index] = conversation.copyWith(
       messages: _sortMessages(update([...conversation.messages])),
+      archiveVersion: nextArchiveVersion > 0
+          ? nextArchiveVersion
+          : conversation.archiveVersion,
     );
+    if (markDirty) {
+      _queueChatConversationSync(conversationId, nextArchiveVersion);
+    }
     _chatConversations = conversations;
     _sortChatConversations();
     _markChatChanged();
@@ -407,9 +447,7 @@ extension AppControllerChatActions on AppController {
     return messages..sort((a, b) => a.createdAt.compareTo(b.createdAt));
   }
 
-  Future<void> _ensureRealtimeChatConnected({
-    bool forceReconnect = false,
-  }) {
+  Future<void> _ensureRealtimeChatConnected({bool forceReconnect = false}) {
     _realtimeConnectTask = _realtimeConnectTask.then((_) async {
       try {
         await _connectRealtimeChat(forceReconnect: forceReconnect);
@@ -951,7 +989,7 @@ extension AppControllerChatActions on AppController {
     if (control.removedUserId == _user!.id ||
         !control.memberIds.contains(_user!.id)) {
       _deleteGroupConversation(control.groupId);
-      _statusMessage = '已退出群聊，本机群消息记录已删除。';
+      _statusMessage = '已退出群聊，当前账号的群消息记录已从缓存和归档中删除。';
       notifyListeners();
       await _persistChatSnapshot();
       return;
@@ -1202,6 +1240,7 @@ extension AppControllerChatActions on AppController {
               conversation.id != conversationId || !conversation.isGroup,
         )
         .toList();
+    _queueChatConversationDeletion(conversationId);
     _sortChatConversations();
     _markChatChanged();
   }
@@ -1211,18 +1250,28 @@ extension AppControllerChatActions on AppController {
     required String title,
     required List<PublicUser> members,
     required String adminUserId,
+    bool markDirty = true,
+    int? archiveVersion,
   }) {
     final conversations = [..._chatConversations];
     final index = conversations.indexWhere(
       (conversation) => conversation.id == id,
     );
+    final nextArchiveVersion =
+        archiveVersion ?? (markDirty ? _nextChatArchiveVersion() : 0);
     if (index >= 0) {
       final existing = conversations[index];
       conversations[index] = existing.copyWith(
         title: title.isEmpty ? existing.title : title,
         members: _uniqueFriends([...existing.members, ...members]),
         adminUserId: adminUserId.isEmpty ? existing.adminUserId : adminUserId,
+        archiveVersion: nextArchiveVersion > 0
+            ? nextArchiveVersion
+            : existing.archiveVersion,
       );
+      if (markDirty) {
+        _queueChatConversationSync(id, nextArchiveVersion);
+      }
       _chatConversations = conversations;
       _sortChatConversations();
       _markChatChanged();
@@ -1236,7 +1285,11 @@ extension AppControllerChatActions on AppController {
       adminUserId: adminUserId,
       isGroup: true,
       messages: [],
+      archiveVersion: nextArchiveVersion,
     );
+    if (markDirty) {
+      _queueChatConversationSync(id, nextArchiveVersion);
+    }
     _chatConversations = [..._chatConversations, conversation];
     _sortChatConversations();
     _markChatChanged();
@@ -1265,6 +1318,50 @@ extension AppControllerChatActions on AppController {
       result.add(id);
     }
     return result;
+  }
+
+  int _nextChatArchiveVersion() => DateTime.now().millisecondsSinceEpoch;
+
+  void _queueChatConversationSync(String conversationId, int archiveVersion) {
+    if (conversationId.isEmpty || archiveVersion <= 0) {
+      return;
+    }
+    _pendingDeletedChatConversationIds.remove(conversationId);
+    final current = _pendingChatConversationVersions[conversationId] ?? 0;
+    if (archiveVersion > current) {
+      _pendingChatConversationVersions[conversationId] = archiveVersion;
+    }
+  }
+
+  void _queueChatConversationDeletion(String conversationId) {
+    if (conversationId.isEmpty) {
+      return;
+    }
+    _pendingChatConversationVersions.remove(conversationId);
+    _pendingDeletedChatConversationIds.add(conversationId);
+  }
+
+  void _markConversationForArchiveSync(
+    String conversationId, {
+    bool forceNewVersion = false,
+  }) {
+    if (conversationId.isEmpty) {
+      return;
+    }
+    final conversations = [..._chatConversations];
+    final index = conversations.indexWhere(
+      (conversation) => conversation.id == conversationId,
+    );
+    if (index < 0) {
+      return;
+    }
+    final conversation = conversations[index];
+    final nextVersion = forceNewVersion || conversation.archiveVersion <= 0
+        ? _nextChatArchiveVersion()
+        : conversation.archiveVersion;
+    conversations[index] = conversation.copyWith(archiveVersion: nextVersion);
+    _chatConversations = conversations;
+    _queueChatConversationSync(conversationId, nextVersion);
   }
 
   Future<String> _buildGroupSnapshotPayload(ChatConversation conversation) {
@@ -1373,6 +1470,7 @@ extension AppControllerChatActions on AppController {
       title: title,
       members: group.members.where((member) => member.id != _user!.id).toList(),
       adminUserId: group.adminUserId,
+      markDirty: false,
     );
   }
 

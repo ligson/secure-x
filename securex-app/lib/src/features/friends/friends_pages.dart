@@ -86,11 +86,8 @@ extension _FriendsTab on _VaultScreenState {
                               _friendSearchController.text.trim().isEmpty
                                   ? '还没有好友'
                                   : '没有匹配的好友',
-                              style: Theme.of(
-                                context,
-                              ).textTheme.bodyMedium?.copyWith(
-                                color: context.sx.mutedText,
-                              ),
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(color: context.sx.mutedText),
                             ),
                           ),
                         )
@@ -437,7 +434,7 @@ class _FriendGroupTile extends StatelessWidget {
       ),
       subtitle: Text(
         lastMessage == null
-            ? '${conversation.members.length + 1} 人 · 本机加密群聊'
+            ? '${conversation.members.length + 1} 人 · 端到端加密群聊'
             : '${_conversationStatusPrefix(lastMessage)}${lastMessage.text}',
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
@@ -693,48 +690,93 @@ class _FriendRequestsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: controller.friendsListenable,
-      builder: (context, _) {
-        return Scaffold(
-          appBar: AppBar(title: const Text('新的朋友')),
-          body: SafeArea(
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 820),
-                child: RefreshIndicator(
-                  onRefresh: controller.refreshFriendsSilently,
-                  child: ListView(
-                    padding: const EdgeInsets.all(16),
+    return DefaultTabController(
+      length: 2,
+      child: AnimatedBuilder(
+        animation: controller.friendsListenable,
+        builder: (context, _) {
+          final incomingRequests = controller.incomingFriendRequests;
+          final outgoingRequests = controller.outgoingFriendRequests;
+          return Scaffold(
+            appBar: AppBar(
+              title: const Text('新的朋友'),
+              bottom: TabBar(
+                tabs: [
+                  Tab(text: '收到的申请 (${incomingRequests.length})'),
+                  Tab(text: '发出的申请 (${outgoingRequests.length})'),
+                ],
+              ),
+            ),
+            body: SafeArea(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 820),
+                  child: TabBarView(
                     children: [
-                      const _SettingsDetailHeader(
-                        icon: Icons.person_add_alt_1_outlined,
-                        title: '好友申请',
-                      ),
-                      const SizedBox(height: 12),
-                      _RequestSection(
+                      _FriendRequestList(
+                        controller: controller,
                         title: '收到的申请',
                         emptyText: '暂无待处理申请',
-                        requests: controller.incomingFriendRequests,
+                        requests: incomingRequests,
                         incoming: true,
-                        controller: controller,
                       ),
-                      const SizedBox(height: 12),
-                      _RequestSection(
+                      _FriendRequestList(
+                        controller: controller,
                         title: '发出的申请',
                         emptyText: '暂无发出的申请',
-                        requests: controller.outgoingFriendRequests,
+                        requests: outgoingRequests,
                         incoming: false,
-                        controller: controller,
                       ),
                     ],
                   ),
                 ),
               ),
             ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _FriendRequestList extends StatelessWidget {
+  const _FriendRequestList({
+    required this.controller,
+    required this.title,
+    required this.emptyText,
+    required this.requests,
+    required this.incoming,
+  });
+
+  final AppController controller;
+  final String title;
+  final String emptyText;
+  final List<FriendRequestRecord> requests;
+  final bool incoming;
+
+  @override
+  Widget build(BuildContext context) {
+    return RefreshIndicator(
+      onRefresh: controller.refreshFriendsSilently,
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          _SettingsDetailHeader(
+            icon: incoming
+                ? Icons.mark_email_unread_outlined
+                : Icons.send_outlined,
+            title: title,
           ),
-        );
-      },
+          const SizedBox(height: 12),
+          _RequestSection(
+            title: title,
+            emptyText: emptyText,
+            requests: requests,
+            incoming: incoming,
+            controller: controller,
+          ),
+        ],
+      ),
     );
   }
 }

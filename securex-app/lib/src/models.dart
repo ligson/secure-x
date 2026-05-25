@@ -302,6 +302,80 @@ class ChatArchiveRecord {
   }
 }
 
+class ChatArchiveManifestRecord {
+  ChatArchiveManifestRecord({
+    required this.formatVersion,
+    required this.conversations,
+  });
+
+  final int formatVersion;
+  final List<ChatArchiveConversationSummaryRecord> conversations;
+
+  factory ChatArchiveManifestRecord.fromJson(Map<String, dynamic> json) {
+    return ChatArchiveManifestRecord(
+      formatVersion: (json['formatVersion'] as num?)?.toInt() ?? 0,
+      conversations: (json['conversations'] as List<dynamic>? ?? const [])
+          .map(
+            (entry) => ChatArchiveConversationSummaryRecord.fromJson(
+              entry as Map<String, dynamic>,
+            ),
+          )
+          .toList(),
+    );
+  }
+}
+
+class ChatArchiveConversationSummaryRecord {
+  ChatArchiveConversationSummaryRecord({
+    required this.conversationId,
+    required this.summaryPayload,
+    required this.version,
+    required this.updatedAt,
+  });
+
+  final String conversationId;
+  final String summaryPayload;
+  final int version;
+  final DateTime? updatedAt;
+
+  factory ChatArchiveConversationSummaryRecord.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    return ChatArchiveConversationSummaryRecord(
+      conversationId: json['conversationId'] as String? ?? '',
+      summaryPayload: json['summaryPayload'] as String? ?? '',
+      version: (json['version'] as num?)?.toInt() ?? 0,
+      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? ''),
+    );
+  }
+}
+
+class ChatArchiveConversationRecord {
+  ChatArchiveConversationRecord({
+    required this.conversationId,
+    required this.summaryPayload,
+    required this.payload,
+    required this.version,
+    required this.updatedAt,
+  });
+
+  final String conversationId;
+  final String summaryPayload;
+  final String payload;
+  final int version;
+  final DateTime? updatedAt;
+
+  factory ChatArchiveConversationRecord.fromJson(Map<String, dynamic> json) {
+    return ChatArchiveConversationRecord(
+      conversationId: json['conversationId'] as String? ?? '',
+      summaryPayload: json['summaryPayload'] as String? ?? '',
+      payload: json['payload'] as String? ?? '',
+      version: (json['version'] as num?)?.toInt() ?? 0,
+      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? ''),
+    );
+  }
+}
+
 class ChatDeviceRecord {
   ChatDeviceRecord({
     required this.id,
@@ -481,6 +555,7 @@ class ChatConversation {
     List<PublicUser>? members,
     this.adminUserId = '',
     this.isGroup = false,
+    this.archiveVersion = 0,
   }) : id = id ?? friend?.id ?? '',
        title = title ?? _chatUserDisplayName(friend),
        members = List.unmodifiable(
@@ -494,6 +569,7 @@ class ChatConversation {
   final String adminUserId;
   final bool isGroup;
   final List<ChatMessage> messages;
+  final int archiveVersion;
 
   ChatMessage? get lastMessage => messages.isEmpty ? null : messages.last;
 
@@ -515,6 +591,7 @@ class ChatConversation {
     String? adminUserId,
     bool? isGroup,
     List<ChatMessage>? messages,
+    int? archiveVersion,
   }) {
     return ChatConversation(
       id: id ?? this.id,
@@ -524,6 +601,7 @@ class ChatConversation {
       adminUserId: adminUserId ?? this.adminUserId,
       isGroup: isGroup ?? this.isGroup,
       messages: messages ?? this.messages,
+      archiveVersion: archiveVersion ?? this.archiveVersion,
     );
   }
 }

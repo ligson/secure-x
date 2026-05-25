@@ -11,8 +11,8 @@ extension _ChatTab on _VaultScreenState {
         final realtimeConfig = widget.controller.realtimeConfig;
         final realtimeReady = realtimeConfig?.signalingEnabled == true;
         final realtimeNotice = realtimeReady
-            ? '实时信令已就绪，消息会在端到端加密通道中发送。'
-            : '实时通道暂未建立，聊天内容只会加密保存在本机，不会上传服务器保存。';
+            ? '实时信令已就绪，消息会通过端到端加密通道发送，并同步到当前账号的加密归档。'
+            : '实时通道暂未建立，消息会先加密缓存在当前设备，并在联网后同步到服务端密文归档。';
         final statusNotice = widget.controller.busy
             ? '处理中...'
             : widget.controller.statusMessage;
@@ -73,11 +73,8 @@ extension _ChatTab on _VaultScreenState {
                           child: Center(
                             child: Text(
                               '还没有会话，可以从好友详情发起聊天',
-                              style: Theme.of(
-                                context,
-                              ).textTheme.bodyMedium?.copyWith(
-                                color: context.sx.mutedText,
-                              ),
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(color: context.sx.mutedText),
                             ),
                           ),
                         )
@@ -97,7 +94,10 @@ extension _ChatTab on _VaultScreenState {
                                         _showConversation(conversations[index]),
                                   ),
                                   if (index != conversations.length - 1)
-                                    Divider(height: 1, color: context.sx.border),
+                                    Divider(
+                                      height: 1,
+                                      color: context.sx.border,
+                                    ),
                                 ],
                               ],
                             ),
@@ -121,12 +121,12 @@ extension _ChatTab on _VaultScreenState {
           child: _buildModuleHeader(
             icon: Icons.chat_bubble_outline,
             title: '聊天',
-            tag: realtimeReady ? '实时加密' : '本机队列',
+            tag: realtimeReady ? '实时加密' : '归档同步',
           ),
         ),
         const SizedBox(width: 12),
         Text(
-          realtimeReady ? '自动连接中' : '离线队列',
+          realtimeReady ? '自动同步' : '等待联网',
           style: Theme.of(context).textTheme.labelMedium?.copyWith(
             color: realtimeReady ? context.sx.success : context.sx.mutedText,
             fontWeight: FontWeight.w900,
@@ -421,8 +421,10 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
                 const SizedBox(height: 3),
                 Text(
                   isGroup
-                      ? '$groupOnlineCount 个成员在线 · 群消息本机加密保存'
-                      : (friendOnline ? '在线 · 可建立端到端加密通道' : '离线 · 消息将本机加密暂存'),
+                      ? '$groupOnlineCount 个成员在线 · 群消息端到端加密并同步归档'
+                      : (friendOnline
+                            ? '在线 · 端到端加密发送'
+                            : '离线 · 消息会先进入加密归档并等待同步'),
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
                     color: context.sx.mutedText,
                     fontWeight: FontWeight.w700,
@@ -1033,7 +1035,7 @@ class _GroupChatDetailPageState extends State<_GroupChatDetailPage> {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          '${conversation.members.length + 1} 人 · 服务端不保存群消息',
+                          '${conversation.members.length + 1} 人 · 服务端只保存不可解密的群聊密文归档',
                           style: Theme.of(context).textTheme.bodyMedium
                               ?.copyWith(color: context.sx.mutedText),
                         ),
@@ -1164,7 +1166,7 @@ class _GroupChatDetailPageState extends State<_GroupChatDetailPage> {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              '退出后会删除本机该群聊的成员信息和全部聊天记录。服务端不会保存群消息，也不会保留可恢复副本。',
+                              '退出后会删除当前账号在本机缓存和加密归档中的该群成员信息与聊天记录，后续将无法再恢复。',
                               style: Theme.of(context).textTheme.bodyMedium
                                   ?.copyWith(color: context.sx.mutedText),
                             ),
@@ -1233,7 +1235,9 @@ class _GroupChatDetailPageState extends State<_GroupChatDetailPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('退出群聊'),
-        content: Text('确定退出“${conversation.displayTitle}”吗？退出后本机该群聊的聊天记录会被删除。'),
+        content: Text(
+          '确定退出“${conversation.displayTitle}”吗？退出后当前账号的该群聊记录会从本机缓存和加密归档中删除。',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -1515,10 +1519,10 @@ class _ChatToolButton extends StatelessWidget {
 String _messageStatusText(ChatMessage message) {
   final time = _formatChatTime(message.createdAt);
   if (message.status == 'localOnly') {
-    return '$time · 未送达，本机加密保存';
+    return '$time · 未送达，等待同步到服务端归档';
   }
   if (message.status == 'pending') {
-    return '$time · 待发送，等待好友在线';
+    return '$time · 待发送，等待目标设备拉取';
   }
   if (message.status == 'sent') {
     return '$time · 已发送，等待确认';

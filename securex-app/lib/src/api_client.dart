@@ -500,6 +500,63 @@ class ApiClient {
     );
   }
 
+  Future<ChatArchiveManifestRecord> getChatArchiveManifest({
+    required String baseUrl,
+    required String token,
+  }) async {
+    final data = _unwrapMap(
+      await _dio.get<Map<String, dynamic>>(
+        '$baseUrl/api/v1/chat/archive/manifest',
+        options: _authorized(token),
+      ),
+    );
+    return ChatArchiveManifestRecord.fromJson(data);
+  }
+
+  Future<List<ChatArchiveConversationRecord>> listChatArchiveConversations({
+    required String baseUrl,
+    required String token,
+    required List<String> conversationIds,
+  }) async {
+    final ids = conversationIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toList();
+    if (ids.isEmpty) {
+      return const [];
+    }
+    final data = _unwrapMap(
+      await _dio.get<Map<String, dynamic>>(
+        '$baseUrl/api/v1/chat/archive/conversations',
+        queryParameters: {'ids': ids.join(',')},
+        options: _authorized(token),
+      ),
+    );
+    return (data['conversations'] as List<dynamic>? ?? const [])
+        .map(
+          (entry) => ChatArchiveConversationRecord.fromJson(
+            entry as Map<String, dynamic>,
+          ),
+        )
+        .toList();
+  }
+
+  Future<void> upsertChatArchiveConversations({
+    required String baseUrl,
+    required String token,
+    required List<Map<String, dynamic>> conversations,
+    required List<String> deletedConversationIds,
+  }) async {
+    await _dio.put<Map<String, dynamic>>(
+      '$baseUrl/api/v1/chat/archive/conversations',
+      data: {
+        'conversations': conversations,
+        'deletedConversationIds': deletedConversationIds,
+      },
+      options: _authorized(token),
+    );
+  }
+
   Future<ChatDeviceRecord?> getCurrentChatDevice({
     required String baseUrl,
     required String token,

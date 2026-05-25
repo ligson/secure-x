@@ -139,6 +139,8 @@ class AppController extends ChangeNotifier {
   Timer? _chatArchiveSyncTimer;
   String? _pendingChatArchivePayload;
   int _pendingChatArchiveVersion = 0;
+  final Map<String, int> _pendingChatConversationVersions = {};
+  final Set<String> _pendingDeletedChatConversationIds = {};
   Future<void> _chatArchiveSyncTask = Future.value();
   Future<void> _pendingChatSyncTask = Future.value();
 
