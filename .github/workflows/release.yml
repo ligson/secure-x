@@ -21,6 +21,7 @@ concurrency:
 env:
   FLUTTER_VERSION: 3.41.7
   RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  RELEASE_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
 
 jobs:
   build-backend:
@@ -46,6 +47,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -93,6 +96,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -139,6 +144,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -183,6 +190,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -233,6 +242,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -285,6 +296,24 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ env.RELEASE_REF }}
+
+      - name: Validate release tag matches checked out commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$RELEASE_TAG"
+          if ! git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "Release tag ${tag} does not exist in the checked out repository." >&2
+            exit 1
+          fi
+          checked_out_commit="$(git rev-parse HEAD)"
+          tag_commit="$(git rev-list -n 1 "$tag")"
+          if [ "$checked_out_commit" != "$tag_commit" ]; then
+            echo "Checked out commit ${checked_out_commit} does not match tag ${tag} -> ${tag_commit}." >&2
+            echo "Please rerun the workflow against the exact release tag commit." >&2
+            exit 1
+          fi
 
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -330,8 +359,9 @@ jobs:
               --notes-file release_notes.md
             gh release upload "$tag" "${assets[@]}" --clobber
           else
+            target_commit="$(git rev-list -n 1 "$tag")"
             gh release create "$tag" "${assets[@]}" \
-              --target "$GITHUB_SHA" \
+              --target "$target_commit" \
               --title "Secure X ${tag}" \
               --notes-file release_notes.md
           fi

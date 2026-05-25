@@ -28,26 +28,13 @@ extension AppControllerChatActions on AppController {
     _chatRefreshTask = _chatRefreshTask.then((_) async {
       try {
         await _loadFriendsSnapshot();
-        _realtimeConfig = await _apiClient.realtimeConfig(
-          baseUrl: _baseUrl,
-          token: _token!,
-        );
+        _historyRequestedPeerIds.clear();
+        await _loadChatSnapshot();
         await _ensureRealtimeChatConnected(forceReconnect: true);
-        final friendById = {for (final friend in _friends) friend.id: friend};
-        final remoteLoaded = await _mergeRemoteChatArchive(friendById);
-        final localMerged = await _mergeLocalChatSnapshot(
-          friendById,
-          mergeAsFallback: !remoteLoaded,
-        );
-        if (localMerged && remoteLoaded) {
-          await _persistChatSnapshot();
-        }
-        await _mergeServerGroupsIntoChatConversations();
         final identity = _chatIdentity;
         if (identity != null) {
           await _pullPendingChatMessages(expectedDeviceId: identity.deviceId);
         }
-        _historyRequestedPeerIds.clear();
         await _openRealtimePeersForHistorySync();
         _sortChatConversations();
         _markChatChanged();
@@ -109,6 +96,18 @@ extension AppControllerChatActions on AppController {
     unawaited(_ensureRealtimeChatConnected());
   }
 
+  List<ChatMessage> chatMessagesForConversation(String conversationId) {
+    final conversation = _conversationById(conversationId);
+    if (conversation == null) {
+      return const [];
+    }
+    return List.unmodifiable(conversation.messages);
+  }
+
+  Future<void> ensureChatConversationDetails(String conversationId) async {
+    await _ensureChatConversationLoaded(conversationId);
+  }
+
   Future<void> _openRealtimePeersForHistorySync() async {
     if (_token == null || _user == null || _vaultKey == null) {
       return;
@@ -134,6 +133,7 @@ extension AppControllerChatActions on AppController {
     String? adminUserId,
     bool syncServer = true,
   }) async {
+    await _ensureChatConversationLoaded(conversationId);
     final conversations = [..._chatConversations];
     final index = conversations.indexWhere(
       (conversation) => conversation.id == conversationId,
@@ -200,6 +200,7 @@ extension AppControllerChatActions on AppController {
     if (content.isEmpty) {
       return;
     }
+    await _ensureChatConversationLoaded(friend.id);
 
     final message = ChatMessage(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
@@ -239,6 +240,7 @@ extension AppControllerChatActions on AppController {
     if (content.isEmpty || !conversation.isGroup) {
       return;
     }
+    await _ensureChatConversationLoaded(conversation.id);
 
     final latest = _conversationById(conversation.id) ?? conversation;
     final message = ChatMessage(
@@ -279,6 +281,7 @@ extension AppControllerChatActions on AppController {
     required PublicUser friend,
     required ChatMessage message,
   }) async {
+    await _ensureChatConversationLoaded(friend.id);
     final retryStatus = _realtimeConfig?.signalingEnabled == true
         ? 'pending'
         : 'localOnly';
@@ -322,6 +325,7 @@ extension AppControllerChatActions on AppController {
     if (!conversation.isGroup) {
       return;
     }
+    await _ensureChatConversationLoaded(conversation.id);
     final retryStatus = _realtimeConfig?.signalingEnabled == true
         ? 'pending'
         : 'localOnly';
@@ -409,6 +413,7 @@ extension AppControllerChatActions on AppController {
       }
     }
     _chatConversations = conversations;
+    _loadedChatConversationIds.add(friend.id);
     _sortChatConversations();
     _markChatChanged();
   }
@@ -439,6 +444,7 @@ extension AppControllerChatActions on AppController {
       _queueChatConversationSync(conversationId, nextArchiveVersion);
     }
     _chatConversations = conversations;
+    _loadedChatConversationIds.add(conversationId);
     _sortChatConversations();
     _markChatChanged();
   }
@@ -889,6 +895,7 @@ extension AppControllerChatActions on AppController {
       return;
     }
     final messageFriend = friend;
+    await _ensureChatConversationLoaded(messageFriend.id);
     if (_findMessage(messageFriend.id, incoming.messageId) != null) {
       return;
     }
@@ -922,6 +929,7 @@ extension AppControllerChatActions on AppController {
         !incoming.memberIds.contains(_user!.id)) {
       return;
     }
+    await _ensureChatConversationLoaded(incoming.groupId);
     if (_findMessageInConversation(incoming.groupId, incoming.messageId) !=
         null) {
       return;
@@ -995,6 +1003,8 @@ extension AppControllerChatActions on AppController {
       return;
     }
 
+    await _ensureChatConversationLoaded(control.groupId);
+
     var memberById = <String, PublicUser>{
       for (final friend in _friends) friend.id: friend,
     };
@@ -1043,6 +1053,21 @@ extension AppControllerChatActions on AppController {
     String friendId,
     String messageId,
   ) async {
+    final directConversation = _findDirectConversation(friendId);
+    if (directConversation != null) {
+      await _ensureChatConversationLoaded(directConversation.id);
+    }
+    final groupConversationIds = _chatConversations
+        .where(
+          (conversation) =>
+              conversation.isGroup &&
+              conversation.members.any((member) => member.id == friendId),
+        )
+        .map((conversation) => conversation.id)
+        .toList();
+    for (final conversationId in groupConversationIds) {
+      await _ensureChatConversationLoaded(conversationId);
+    }
     final friend = _knownChatPeerById(friendId);
     if (friend != null && _findMessage(friend.id, messageId) != null) {
       _replaceMessage(
@@ -1102,7 +1127,7 @@ extension AppControllerChatActions on AppController {
     if (friend == null || request.requestId.isEmpty) {
       return;
     }
-    final conversations = _historyConversationsForPeer(friend.id);
+    final conversations = await _historyConversationsForPeer(friend.id);
     try {
       await _dispatchHistoryResponse(
         friend: friend,
@@ -1125,9 +1150,9 @@ extension AppControllerChatActions on AppController {
     for (final entry in response.conversations) {
       final isGroup = entry['isGroup'] as bool? ?? false;
       if (isGroup) {
-        changed = _mergeGroupHistory(friend, entry) || changed;
+        changed = await _mergeGroupHistory(friend, entry) || changed;
       } else {
-        changed = _mergeDirectHistory(friend, entry) || changed;
+        changed = await _mergeDirectHistory(friend, entry) || changed;
       }
     }
     if (!changed) {
@@ -1240,7 +1265,11 @@ extension AppControllerChatActions on AppController {
               conversation.id != conversationId || !conversation.isGroup,
         )
         .toList();
+    _loadedChatConversationIds.remove(conversationId);
+    _loadingChatConversationIds.remove(conversationId);
+    _chatConversationLoadTasks.remove(conversationId);
     _queueChatConversationDeletion(conversationId);
+    unawaited(_deleteLocalChatDetailCache(conversationId));
     _sortChatConversations();
     _markChatChanged();
   }
@@ -1504,9 +1533,13 @@ extension AppControllerChatActions on AppController {
     return _realtimeConfig?.signalingEnabled == true ? 'pending' : 'localOnly';
   }
 
-  List<Map<String, dynamic>> _historyConversationsForPeer(String peerId) {
+  Future<List<Map<String, dynamic>>> _historyConversationsForPeer(
+    String peerId,
+  ) async {
     final result = <Map<String, dynamic>>[];
-    for (final conversation in _chatConversations) {
+    for (final conversation in List<ChatConversation>.from(
+      _chatConversations,
+    )) {
       if (conversation.isGroup) {
         final peerInGroup = conversation.members.any(
           (member) => member.id == peerId,
@@ -1514,11 +1547,21 @@ extension AppControllerChatActions on AppController {
         if (!peerInGroup) {
           continue;
         }
-        result.add(_conversationToHistoryJson(conversation));
+        await _ensureChatConversationLoaded(conversation.id);
+        final latest = _conversationById(conversation.id);
+        if (latest == null) {
+          continue;
+        }
+        result.add(_conversationToHistoryJson(latest));
         continue;
       }
       if (conversation.friend?.id == peerId) {
-        result.add(_conversationToHistoryJson(conversation));
+        await _ensureChatConversationLoaded(conversation.id);
+        final latest = _conversationById(conversation.id);
+        if (latest == null) {
+          continue;
+        }
+        result.add(_conversationToHistoryJson(latest));
       }
     }
     return result;
@@ -1551,10 +1594,16 @@ extension AppControllerChatActions on AppController {
     return data;
   }
 
-  bool _mergeDirectHistory(PublicUser peer, Map<String, dynamic> entry) {
+  Future<bool> _mergeDirectHistory(
+    PublicUser peer,
+    Map<String, dynamic> entry,
+  ) async {
     final messages = _historyMessagesFromEntry(entry, peer.id);
     if (messages.isEmpty) {
       return false;
+    }
+    if (_findDirectConversation(peer.id) != null) {
+      await _ensureChatConversationLoaded(peer.id);
     }
     final before = _findDirectConversation(peer.id)?.messages.length ?? 0;
     _replaceConversationMessages(peer, (current) {
@@ -1564,10 +1613,16 @@ extension AppControllerChatActions on AppController {
     return after > before;
   }
 
-  bool _mergeGroupHistory(PublicUser peer, Map<String, dynamic> entry) {
+  Future<bool> _mergeGroupHistory(
+    PublicUser peer,
+    Map<String, dynamic> entry,
+  ) async {
     final groupId = entry['id'] as String? ?? '';
     if (groupId.isEmpty) {
       return false;
+    }
+    if (_conversationById(groupId) != null) {
+      await _ensureChatConversationLoaded(groupId);
     }
     final rawMembers = (entry['members'] as List<dynamic>? ?? const [])
         .map((member) => PublicUser.fromJson(member as Map<String, dynamic>))
@@ -1684,6 +1739,18 @@ extension AppControllerChatActions on AppController {
     final friend = _knownChatPeerById(friendId);
     if (friend == null) {
       return;
+    }
+    final relatedConversationIds = _chatConversations
+        .where(
+          (conversation) =>
+              conversation.friend?.id == friendId ||
+              (conversation.isGroup &&
+                  conversation.members.any((member) => member.id == friendId)),
+        )
+        .map((conversation) => conversation.id)
+        .toList();
+    for (final conversationId in relatedConversationIds) {
+      await _ensureChatConversationLoaded(conversationId);
     }
     final pending = <ChatMessage>[];
     for (final conversation in _chatConversations) {

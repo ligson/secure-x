@@ -184,6 +184,10 @@
 - `CHANGELOG.md` 发布章节必须同时包含版本与日期，格式为 `## [vX.Y.Z] - YYYY-MM-DD`；未发布变更可先放在 `## [Unreleased]`
 - 用户说“发版”时，默认从当前最新 `v*` tag 自动递增 patch 版本；例如当前最新为 `v1.0.0`，下一次就是 `v1.0.1`，除非用户明确指定其他版本
 - 发版前必须先整理代码和文档，更新对应版本的 `CHANGELOG.md` 内容，然后提交、打 tag、推送 `main` 与 tag；不要跳过文档和 changelog
+- 发版时必须先确保 release commit 已提交到当前 `HEAD`，再打对应版本 tag；禁止先 push tag 再补 release commit，也禁止把已存在 tag 改指向新提交
+- 发版前默认先运行 `./scripts/release-preflight.sh <tag>` 或 `./scripts/release-preflight.sh --next` 做校验，确认工作区干净、`CHANGELOG.md` 章节存在、目标 tag 未占用且当前 `HEAD` 已包含该版本 changelog
+- 推送发版时优先显式分两步执行：先 `git push origin main`，再 `git push origin <tag>`；不要把未来 tag 提前推到旧提交上
+- GitHub Actions 页面手工运行 `Release` workflow 时，只能针对已经存在且指向正确提交的 tag 补跑，不能拿尚未创建或指向错误提交的版本号直接手工发版
 - 发版前必须更新 `CHANGELOG.md`；生产证书、签名文件、后端真实配置和密钥材料禁止提交到仓库，后续正式签名应使用 GitHub Secrets 或私有签名服务
 - 后端 release 包内可执行文件固定命名为 `secure-x`，前端各平台应用显示名也统一为 `secure-x`
 - 后端生产包应包含 `start.sh`、`stop.sh`、`status.sh` 与 `secure-x.service` 参考文件，生产日志默认支持应用日志与访问日志输出目录配置

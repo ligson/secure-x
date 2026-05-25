@@ -129,6 +129,8 @@ class AppController extends ChangeNotifier {
   List<ChatConversation> _chatConversations = [];
   ChatIdentityBundle? _chatIdentity;
   final Map<String, bool> _chatFriendOnline = {};
+  final Set<String> _loadedChatConversationIds = {};
+  final Set<String> _loadingChatConversationIds = {};
   final Set<String> _historyRequestedPeerIds = {};
   RealtimeConfig? _realtimeConfig;
   final List<FileUploadTask> _uploadTasks = [];
@@ -143,6 +145,7 @@ class AppController extends ChangeNotifier {
   final Set<String> _pendingDeletedChatConversationIds = {};
   Future<void> _chatArchiveSyncTask = Future.value();
   Future<void> _pendingChatSyncTask = Future.value();
+  final Map<String, Future<void>> _chatConversationLoadTasks = {};
 
   bool get initialized => _initialized;
   bool get busy => _busy;
@@ -175,6 +178,9 @@ class AppController extends ChangeNotifier {
 
   bool isChatFriendOnline(String friendId) =>
       _chatFriendOnline[friendId] == true;
+
+  bool isChatConversationLoading(String conversationId) =>
+      _loadingChatConversationIds.contains(conversationId);
 
   void dismissUploadTask(String id) {
     _uploadTasks.removeWhere(

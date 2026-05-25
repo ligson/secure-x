@@ -360,6 +360,9 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
   void initState() {
     super.initState();
     _inputController.clear();
+    unawaited(
+      widget.controller.ensureChatConversationDetails(widget.conversationId),
+    );
   }
 
   @override
@@ -374,7 +377,12 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
       listenable: widget.controller.chatListenable,
       builder: (context, _) {
         final conversation = _conversation();
-        final messages = conversation?.messages ?? [];
+        final messages = widget.controller.chatMessagesForConversation(
+          widget.conversationId,
+        );
+        final loadingDetails = widget.controller.isChatConversationLoading(
+          widget.conversationId,
+        );
         final isGroup = conversation?.isGroup == true;
         final friend = widget.friend ?? conversation?.friend;
         final friendOnline =
@@ -484,9 +492,14 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
                     child: ListView.builder(
                       reverse: true,
                       padding: const EdgeInsets.fromLTRB(22, 18, 22, 24),
-                      itemCount: messageCount == 0 ? 1 : messageCount,
+                      itemCount: messageCount == 0
+                          ? (loadingDetails ? 2 : 1)
+                          : messageCount,
                       itemBuilder: (context, index) {
                         if (messageCount == 0) {
+                          if (loadingDetails && index == 0) {
+                            return const _ChatLoadingState();
+                          }
                           return const _ChatEmptyState();
                         }
                         final message = messages[messageCount - 1 - index];
@@ -600,6 +613,51 @@ class _ChatEmptyState extends StatelessWidget {
                     color: context.sx.mutedText,
                     fontWeight: FontWeight.w700,
                     height: 1.35,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ChatLoadingState extends StatelessWidget {
+  const _ChatLoadingState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 120, bottom: 18),
+      child: Center(
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 280),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+          decoration: BoxDecoration(
+            color: context.sx.card,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: context.sx.border),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.2,
+                  color: context.sx.primary,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Flexible(
+                child: Text(
+                  '正在按需加载聊天记录...',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: context.sx.mutedText,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),

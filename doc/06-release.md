@@ -6,6 +6,7 @@
 
 - 推送 `v*` 标签时自动发布，例如 `v1.0.0`
 - 也可以在 GitHub Actions 页面手动运行 `Release` workflow，并填写目标 tag
+- 手工运行时只能选择“已经存在且已指向正确 release commit”的 tag，不能拿未来版本号直接空跑
 
 ## 发布内容
 
@@ -37,6 +38,30 @@
 - 每次准备发版前必须先更新 `CHANGELOG.md`
 - 用户说“发版”时，默认基于当前最新 `v*` tag 自动递增 patch 版本；例如当前最新为 `v1.0.0`，下一次发版就是 `v1.0.1`
 - 发版流程默认顺序为：整理代码与文档、更新对应版本 changelog、提交、打 tag、推送 main 与 tag
+- 发版前默认先执行 `./scripts/release-preflight.sh <tag>`，或者用 `./scripts/release-preflight.sh --next` 让脚本给出下一个 patch 版本并校验当前状态
+- 预检通过后再执行 `git tag <tag>`、`git push origin main`、`git push origin <tag>`；不要先 push tag 再补 release commit，也不要移动已有 tag
+- workflow 已增加校验：手工或自动触发时，GitHub Actions 会检查当前检出的提交是否与目标 tag 指向完全一致，避免错误提交冒充某个版本发布
+
+## 本地预检
+
+发版前建议固定执行：
+
+```bash
+./scripts/release-preflight.sh --next
+```
+
+或显式检查目标版本：
+
+```bash
+./scripts/release-preflight.sh v1.0.7
+```
+
+脚本会检查：
+
+- 当前工作区是否干净
+- `CHANGELOG.md` 是否已经存在目标版本章节
+- 当前 `HEAD` 是否已经包含该版本 changelog
+- 目标 tag 是否已存在于本地或远程
 
 ## iOS 签名边界
 

@@ -29,6 +29,9 @@ extension AppControllerSessionActions on AppController {
     _incomingFriendRequests = [];
     _outgoingFriendRequests = [];
     _chatConversations = [];
+    _loadedChatConversationIds.clear();
+    _loadingChatConversationIds.clear();
+    _chatConversationLoadTasks.clear();
     _chatIdentity = null;
     _chatFriendOnline.clear();
     _historyRequestedPeerIds.clear();
@@ -52,6 +55,9 @@ extension AppControllerSessionActions on AppController {
     _incomingFriendRequests = [];
     _outgoingFriendRequests = [];
     _chatConversations = [];
+    _loadedChatConversationIds.clear();
+    _loadingChatConversationIds.clear();
+    _chatConversationLoadTasks.clear();
     _chatIdentity = null;
     _chatFriendOnline.clear();
     _historyRequestedPeerIds.clear();

@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.7] - 2026-05-25
+
+### Updated
+
+- 优化聊天页加载性能：客户端进入聊天窗口时改为“会话摘要先显示、会话详情按需解密加载”，减少手机端打开长会话时的首屏等待
+- 重构本地聊天缓存结构：本地聊天缓存拆成“摘要清单 + 单会话详情”两层密文文件，并继续兼容旧版整包密文快照自动迁移，降低内存占用同时确保升级不丢消息
+- 收紧聊天归档同步一致性：消息接收、历史同步、送达回执、待发补发和群聊退出等路径统一先补齐会话详情，避免把摘要态消息误回写成完整归档或遗留脏缓存
+- 补强发版防呆：新增 `scripts/release-preflight.sh` 本地预检脚本，并更新 release workflow 在手工触发时按目标 tag 检出源码、校验 tag 与当前提交一致，降低误把新版本 tag 推到旧提交上的风险
+
+### Verified
+
+- `securex-be`: `go test ./...`
+- `securex-app`: `flutter analyze`
+- `scripts/release-preflight.sh`: `bash -n`
+
 ## [v1.0.6] - 2026-05-25
 
 ### Updated
