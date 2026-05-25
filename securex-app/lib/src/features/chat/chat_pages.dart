@@ -1577,13 +1577,13 @@ class _ChatToolButton extends StatelessWidget {
 String _messageStatusText(ChatMessage message) {
   final time = _formatChatTime(message.createdAt);
   if (message.status == 'localOnly') {
-    return '$time · 未送达，等待同步到服务端归档';
+    return '$time · 待发送，等待同步到服务端归档';
   }
   if (message.status == 'pending') {
     return '$time · 待发送，等待目标设备拉取';
   }
   if (message.status == 'sent') {
-    return '$time · 已发送，等待确认';
+    return '$time · 已发送';
   }
   return '$time · 已送达';
 }
@@ -1593,7 +1593,7 @@ String _conversationStatusPrefix(ChatMessage message) {
     return '';
   }
   if (message.status == 'localOnly') {
-    return '[未送达] ';
+    return '[待发送] ';
   }
   if (message.status == 'pending') {
     return '[待发送] ';

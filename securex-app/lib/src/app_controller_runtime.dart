@@ -3,6 +3,29 @@
 part of 'app_controller.dart';
 
 extension AppControllerRuntimeActions on AppController {
+  void _stopPendingChatPolling() {
+    _pendingChatPollTimer?.cancel();
+    _pendingChatPollTimer = null;
+  }
+
+  void _ensurePendingChatPolling() {
+    if (_pendingChatPollTimer != null ||
+        _token == null ||
+        _user == null ||
+        _vaultKey == null) {
+      return;
+    }
+
+    // 实时通知偶发丢失时，前台定时补拉待处理密文，避免必须手动下拉刷新。
+    _pendingChatPollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (_token == null || _user == null || _vaultKey == null) {
+        _stopPendingChatPolling();
+        return;
+      }
+      unawaited(_pullPendingChatMessages());
+    });
+  }
+
   Future<void> handleAppResumed() async {
     await _queueRealtimeResume(
       reason: '应用已回到前台，正在恢复实时加密通道',
@@ -23,6 +46,7 @@ extension AppControllerRuntimeActions on AppController {
     appLog('实时信令状态变化：$status');
     switch (status) {
       case 'connected':
+        _ensurePendingChatPolling();
         _historyRequestedPeerIds.clear();
         unawaited(
           _queueRealtimeResume(
@@ -38,6 +62,7 @@ extension AppControllerRuntimeActions on AppController {
         notifyListeners();
         return;
       case 'disconnected':
+        _stopPendingChatPolling();
         if (_chatFriendOnline.isNotEmpty) {
           _chatFriendOnline.updateAll((key, value) => false);
         }

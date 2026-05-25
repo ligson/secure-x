@@ -364,35 +364,42 @@ class _FriendGroupList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (groups.isEmpty) {
-      return Center(
-        child: Text(
-          emptyText,
-          style: Theme.of(
-            context,
-          ).textTheme.bodyMedium?.copyWith(color: context.sx.mutedText),
-        ),
-      );
-    }
-
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Card(
-          child: Column(
-            children: [
-              for (var index = 0; index < groups.length; index++) ...[
-                _FriendGroupTile(
-                  controller: controller,
-                  conversation: groups[index],
+    return RefreshIndicator(
+      onRefresh: controller.refreshFriendsSilently,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        children: groups.isEmpty
+            ? [
+                SizedBox(
+                  height: 320,
+                  child: Center(
+                    child: Text(
+                      emptyText,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: context.sx.mutedText,
+                      ),
+                    ),
+                  ),
                 ),
-                if (index != groups.length - 1)
-                  Divider(height: 1, color: context.sx.border),
+              ]
+            : [
+                Card(
+                  child: Column(
+                    children: [
+                      for (var index = 0; index < groups.length; index++) ...[
+                        _FriendGroupTile(
+                          controller: controller,
+                          conversation: groups[index],
+                        ),
+                        if (index != groups.length - 1)
+                          Divider(height: 1, color: context.sx.border),
+                      ],
+                    ],
+                  ),
+                ),
               ],
-            ],
-          ),
-        ),
-      ],
+      ),
     );
   }
 }

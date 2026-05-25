@@ -224,7 +224,7 @@ extension AppControllerChatActions on AppController {
       ),
     );
     _statusMessage = deliveredToChannel
-        ? '消息已通过端到端加密通道发送，等待对方确认。'
+        ? '消息已通过端到端加密通道发送。'
         : '好友当前暂无可用设备，消息已加密缓存在本机，并等待同步到服务端归档。';
     notifyListeners();
 
@@ -310,7 +310,7 @@ extension AppControllerChatActions on AppController {
       ),
     );
     _statusMessage = deliveredToChannel
-        ? '消息已重新通过端到端加密通道发送，等待对方确认。'
+        ? '消息已重新通过端到端加密通道发送。'
         : '实时通道仍未建立，消息继续保存在本机缓存，并等待后续同步。';
     notifyListeners();
 
@@ -488,6 +488,7 @@ extension AppControllerChatActions on AppController {
       iceServers: _realtimeConfig!.iceServers,
       forceReconnect: forceReconnect,
     );
+    _ensurePendingChatPolling();
     unawaited(_pullPendingChatMessages(expectedDeviceId: identity.deviceId));
     unawaited(_flushAllPendingRealtimeMessages());
   }

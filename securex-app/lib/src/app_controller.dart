@@ -138,6 +138,7 @@ class AppController extends ChangeNotifier {
   Future<void> _realtimeConnectTask = Future.value();
   Future<void> _chatRefreshTask = Future.value();
   Future<void> _friendsRefreshTask = Future.value();
+  Timer? _pendingChatPollTimer;
   Timer? _chatArchiveSyncTimer;
   String? _pendingChatArchivePayload;
   int _pendingChatArchiveVersion = 0;

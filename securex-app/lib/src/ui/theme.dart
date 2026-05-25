@@ -219,6 +219,15 @@ class SecureXThemeSpec {
         surfaceTintColor: Colors.transparent,
         textStyle: TextStyle(color: palette.text),
       ),
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: _SecureXSlidePageTransitionsBuilder(),
+          TargetPlatform.iOS: _SecureXSlidePageTransitionsBuilder(),
+          TargetPlatform.macOS: _SecureXSlidePageTransitionsBuilder(),
+          TargetPlatform.windows: _SecureXSlidePageTransitionsBuilder(),
+          TargetPlatform.linux: _SecureXSlidePageTransitionsBuilder(),
+        },
+      ),
     );
   }
 
@@ -323,6 +332,36 @@ class SecureXThemeSpec {
 
   static SecureXThemeSpec byId(String id) {
     return all.firstWhere((theme) => theme.id == id, orElse: () => all.first);
+  }
+}
+
+class _SecureXSlidePageTransitionsBuilder extends PageTransitionsBuilder {
+  const _SecureXSlidePageTransitionsBuilder();
+
+  static final Animatable<Offset> _forwardTween = Tween<Offset>(
+    begin: const Offset(1, 0),
+    end: Offset.zero,
+  ).chain(CurveTween(curve: Curves.easeOutCubic));
+  static final Animatable<Offset> _secondaryTween = Tween<Offset>(
+    begin: Offset.zero,
+    end: const Offset(-0.08, 0),
+  ).chain(CurveTween(curve: Curves.easeOutCubic));
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    return SlideTransition(
+      position: secondaryAnimation.drive(_secondaryTween),
+      child: SlideTransition(
+        position: animation.drive(_forwardTween),
+        child: child,
+      ),
+    );
   }
 }
 

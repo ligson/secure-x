@@ -19,6 +19,7 @@ extension AppControllerSessionActions on AppController {
 
   Future<void> lock() async {
     await _flushPendingChatArchiveSync();
+    _stopPendingChatPolling();
     await _realtimeChatService.disconnect();
     _vaultKey = null;
     _folders = [];
@@ -43,6 +44,7 @@ extension AppControllerSessionActions on AppController {
 
   Future<void> logout() async {
     await _flushPendingChatArchiveSync();
+    _stopPendingChatPolling();
     await _realtimeChatService.disconnect();
     _token = null;
     _user = null;
