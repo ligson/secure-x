@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.10] - 2026-05-26
+
+### Fixed
+
+- 修复 GitHub Actions Windows 发版任务误失败：`Flutter Windows x64` 的 `Build Windows`、打包和产物上传本身都已成功，失败点实际在 `subosito/flutter-action` 的 `Post Set up Flutter` 缓存回写；release workflow 现已关闭 Flutter action 缓存，避免发布流程被后置缓存步骤误判为失败
+
 ## [v1.0.9] - 2026-05-26
 
 ### Fixed

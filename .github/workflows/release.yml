@@ -104,7 +104,6 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
-          cache: true
 
       - name: Get dependencies
         working-directory: securex-app
@@ -160,7 +159,6 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
-          cache: true
 
       - name: Get dependencies
         working-directory: securex-app
@@ -218,7 +216,6 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
-          cache: true
 
       - name: Get dependencies
         working-directory: securex-app
@@ -269,7 +266,6 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
-          cache: true
 
       - name: Get dependencies
         working-directory: securex-app
