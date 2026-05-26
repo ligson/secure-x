@@ -181,6 +181,7 @@
 - 用户侧统一称呼为 `解锁密码`，不要再在界面和面向用户的文档里使用“主密码”；登录时只输入账号登录密码，登录成功后再进入解锁页输入解锁密码
 - 设置页中的密码相关入口统一放到 `安全设置` 下，包含 `登录密码` 和 `解锁密码`；修改解锁密码只能在客户端校验并重新封装保险库密钥，服务端只保存新的密文封装配置
 - GitHub Release 打包由 `.github/workflows/release.yml` 维护，推送 `v*` tag 后构建前端 Windows/macOS/Android/iOS 与后端 Linux/macOS 产物，并从 `CHANGELOG.md` 中与当前 tag 匹配的版本章节生成 Release 内容
+- Flutter 发版构建时必须把目标 tag 的语义版本注入应用内部版本：`build-name` 必须与当前 `v*` tag 对齐，`build-number` 必须保持单调递增；不能只改安装包文件名而让应用内显示版本停留在旧值
 - `CHANGELOG.md` 发布章节必须同时包含版本与日期，格式为 `## [vX.Y.Z] - YYYY-MM-DD`；未发布变更可先放在 `## [Unreleased]`
 - 用户说“发版”时，默认从当前最新 `v*` tag 自动递增 patch 版本；例如当前最新为 `v1.0.0`，下一次就是 `v1.0.1`，除非用户明确指定其他版本
 - 发版前必须先整理代码和文档，更新对应版本的 `CHANGELOG.md` 内容，然后提交、打 tag、推送 `main` 与 tag；不要跳过文档和 changelog

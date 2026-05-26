@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.9] - 2026-05-26
+
+### Fixed
+
+- 修复前端发版版本号不同步：Flutter release workflow 现在会把 `v*` tag 注入各平台构建的应用内部版本，避免安装包文件名已经升级但应用内仍显示旧版本号
+- 调整版本更新页显示：用户侧“当前版本”优先展示语义版本号，不再把内部构建号作为主版本文案
+- 收紧聊天实时重连条件：前端网络监听改为只在“离线恢复到在线”时主动重建实时通道，避免桌面端频繁 connectivity 事件触发重复重连，导致好友在线状态抖动、`chat-pending` 通知窗口丢失和消息送达体验异常
+- 调整好友在线状态判定：聊天页红绿点只以服务端 `presence-online / presence-offline` 为准，不再混入通道内部 `ready` 状态，减少“明明在线却显示离线”或频繁跳变的问题
+- 新增聊天会话页下拉刷新：单聊和群聊窗口现在支持直接下拉刷新，会同步聊天归档、待处理消息与当前会话历史详情
+- 优化聊天会话页刷新体验：下拉刷新完成后会在后台继续补载当前会话详情，不阻塞当前页面交互与滚动
+
+### Verified
+
+- `securex-app`: `flutter analyze`
+
+
 ## [v1.0.8] - 2026-05-25
 
 ### Updated

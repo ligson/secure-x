@@ -55,6 +55,8 @@ class SecureXApp extends StatefulWidget {
 
 class _SecureXAppState extends State<SecureXApp> with WidgetsBindingObserver {
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  bool _hadReachableNetwork = false;
+  bool _connectivityInitialized = false;
 
   @override
   void initState() {
@@ -69,16 +71,36 @@ class _SecureXAppState extends State<SecureXApp> with WidgetsBindingObserver {
 
   Future<void> _initializeConnectivitySnapshot() async {
     final results = await Connectivity().checkConnectivity();
-    await _handleConnectivityChanged(results);
+    _updateConnectivityBaseline(results);
   }
 
   Future<void> _handleConnectivityChanged(
     List<ConnectivityResult> results,
   ) async {
-    if (results.contains(ConnectivityResult.none)) {
+    final reachable = _updateConnectivityBaseline(results);
+    if (!reachable) {
       return;
     }
+    if (_hadReachableNetwork) {
+      return;
+    }
+    _hadReachableNetwork = true;
     await widget.controller.handleNetworkReachable();
+  }
+
+  bool _updateConnectivityBaseline(List<ConnectivityResult> results) {
+    final reachable = results.any(
+      (result) => result != ConnectivityResult.none,
+    );
+    if (!_connectivityInitialized) {
+      _connectivityInitialized = true;
+      _hadReachableNetwork = reachable;
+      return reachable;
+    }
+    if (!reachable) {
+      _hadReachableNetwork = false;
+    }
+    return reachable;
   }
 
   @override

@@ -230,11 +230,8 @@ class _VersionUpdatePageState extends State<_VersionUpdatePage> {
       final current = await _updateService.currentVersion();
       final latest = await _updateService.fetchLatestRelease();
       final asset = await _updateService.pickAssetForCurrentPlatform(latest);
-      final hasNewVersion = UpdateService.compareVersions(
-            latest.tagName,
-            current.version,
-          ) >
-          0;
+      final hasNewVersion =
+          UpdateService.compareVersions(latest.tagName, current.version) > 0;
       if (!mounted) {
         return;
       }
@@ -242,9 +239,7 @@ class _VersionUpdatePageState extends State<_VersionUpdatePage> {
         _current = current;
         _latest = latest;
         _asset = asset;
-        _message = hasNewVersion
-            ? '发现新版本 ${latest.tagName}。'
-            : '当前已经是最新版本。';
+        _message = hasNewVersion ? '发现新版本 ${latest.tagName}。' : '当前已经是最新版本。';
       });
     } catch (error) {
       if (!mounted) {
@@ -271,7 +266,8 @@ class _VersionUpdatePageState extends State<_VersionUpdatePage> {
 
     if (Platform.isIOS) {
       setState(() {
-        _message = 'iOS 不允许普通应用在应用内自安装，请通过 TestFlight、App Store 或 Release 页面安装。';
+        _message =
+            'iOS 不允许普通应用在应用内自安装，请通过 TestFlight、App Store 或 Release 页面安装。';
       });
       await _updateService.openReleasePage(latest.htmlUrl);
       return;
@@ -308,9 +304,7 @@ class _VersionUpdatePageState extends State<_VersionUpdatePage> {
         return;
       }
       setState(() {
-        _message = Platform.isAndroid
-            ? '下载完成，正在打开系统安装器。'
-            : '下载完成，正在打开安装文件。';
+        _message = Platform.isAndroid ? '下载完成，正在打开系统安装器。' : '下载完成，正在打开安装文件。';
       });
       await _updateService.openDownloadedFile(file);
     } catch (error) {
@@ -355,7 +349,7 @@ class _VersionUpdatePageState extends State<_VersionUpdatePage> {
                       children: [
                         _SettingsRow(
                           label: '当前版本',
-                          value: _current?.display ?? '读取中',
+                          value: _current?.version ?? '读取中',
                         ),
                         const SizedBox(height: 10),
                         _SettingsRow(
@@ -376,7 +370,8 @@ class _VersionUpdatePageState extends State<_VersionUpdatePage> {
                             borderRadius: BorderRadius.circular(999),
                           ),
                         ],
-                        if (latest != null && latest.body.trim().isNotEmpty) ...[
+                        if (latest != null &&
+                            latest.body.trim().isNotEmpty) ...[
                           const SizedBox(height: 18),
                           Text(
                             '发布说明',
@@ -386,8 +381,9 @@ class _VersionUpdatePageState extends State<_VersionUpdatePage> {
                           const SizedBox(height: 8),
                           SelectableText(
                             latest.body.trim(),
-                            style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(height: 1.55),
+                            style: Theme.of(
+                              context,
+                            ).textTheme.bodyMedium?.copyWith(height: 1.55),
                           ),
                         ],
                         const SizedBox(height: 18),

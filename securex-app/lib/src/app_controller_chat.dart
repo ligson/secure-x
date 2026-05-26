@@ -1085,10 +1085,7 @@ extension AppControllerChatActions on AppController {
   void _handleRealtimePeerStatus(String friendId, String status) {
     appLog('实时聊天好友状态变化：friendId=$friendId, status=$status');
     final normalizedStatus = status.toLowerCase();
-    final online =
-        normalizedStatus == 'presence-online' ||
-        normalizedStatus == 'ready' ||
-        normalizedStatus == 'relay-ready';
+    final online = normalizedStatus == 'presence-online';
     final offline = normalizedStatus == 'presence-offline';
 
     if (online || offline) {
@@ -1097,7 +1094,9 @@ extension AppControllerChatActions on AppController {
       notifyListeners();
     }
 
-    if (online) {
+    if (online ||
+        normalizedStatus == 'ready' ||
+        normalizedStatus == 'relay-ready') {
       unawaited(_flushPendingRealtimeMessages(friendId));
       unawaited(_requestHistoryFromPeer(friendId));
     }

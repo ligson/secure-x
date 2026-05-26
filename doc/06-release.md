@@ -34,6 +34,7 @@
 
 - Release 标题使用 tag，例如 `Secure X v1.0.0`
 - Release 内容从 `CHANGELOG.md` 中与当前 tag 对应的章节自动提取
+- Flutter Release 构建时必须把 tag 中的语义版本注入 `--build-name`，并生成单调递增的 `--build-number`，避免安装包文件名已经升级、应用内部版本号却仍停留在旧值
 - 发布章节必须使用 `## [vX.Y.Z] - YYYY-MM-DD` 格式，例如 `## [v1.0.1] - 2026-05-22`
 - 每次准备发版前必须先更新 `CHANGELOG.md`
 - 用户说“发版”时，默认基于当前最新 `v*` tag 自动递增 patch 版本；例如当前最新为 `v1.0.0`，下一次发版就是 `v1.0.1`

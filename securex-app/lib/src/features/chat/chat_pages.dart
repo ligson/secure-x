@@ -489,27 +489,32 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
               child: Column(
                 children: [
                   Expanded(
-                    child: ListView.builder(
-                      reverse: true,
-                      padding: const EdgeInsets.fromLTRB(22, 18, 22, 24),
-                      itemCount: messageCount == 0
-                          ? (loadingDetails ? 2 : 1)
-                          : messageCount,
-                      itemBuilder: (context, index) {
-                        if (messageCount == 0) {
-                          if (loadingDetails && index == 0) {
-                            return const _ChatLoadingState();
+                    child: RefreshIndicator(
+                      onRefresh: _refreshConversation,
+                      triggerMode: RefreshIndicatorTriggerMode.anywhere,
+                      child: ListView.builder(
+                        reverse: true,
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.fromLTRB(22, 18, 22, 24),
+                        itemCount: messageCount == 0
+                            ? (loadingDetails ? 2 : 1)
+                            : messageCount,
+                        itemBuilder: (context, index) {
+                          if (messageCount == 0) {
+                            if (loadingDetails && index == 0) {
+                              return const _ChatLoadingState();
+                            }
+                            return const _ChatEmptyState();
                           }
-                          return const _ChatEmptyState();
-                        }
-                        final message = messages[messageCount - 1 - index];
-                        return _ChatMessageBubble(
-                          controller: widget.controller,
-                          conversation: conversation,
-                          friend: friend,
-                          message: message,
-                        );
-                      },
+                          final message = messages[messageCount - 1 - index];
+                          return _ChatMessageBubble(
+                            controller: widget.controller,
+                            conversation: conversation,
+                            friend: friend,
+                            message: message,
+                          );
+                        },
+                      ),
                     ),
                   ),
                   _ChatComposer(
@@ -540,6 +545,13 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
       }
     }
     return null;
+  }
+
+  Future<void> _refreshConversation() async {
+    await widget.controller.refreshChatOverview();
+    unawaited(
+      widget.controller.ensureChatConversationDetails(widget.conversationId),
+    );
   }
 }
 

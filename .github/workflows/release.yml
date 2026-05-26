@@ -112,7 +112,15 @@ jobs:
 
       - name: Build Windows
         working-directory: securex-app
-        run: flutter build windows --release
+        shell: pwsh
+        run: |
+          $version = $env:RELEASE_TAG -replace '^v', ''
+          $parts = $version.Split('.')
+          if ($parts.Length -ne 3) {
+            throw "Invalid release tag version: $version"
+          }
+          $buildNumber = ([int]$parts[0] * 10000 + [int]$parts[1] * 100 + [int]$parts[2])
+          flutter build windows --release --build-name "$version" --build-number "$buildNumber"
 
       - name: Package Windows
         working-directory: securex-app
@@ -160,7 +168,13 @@ jobs:
 
       - name: Build macOS
         working-directory: securex-app
-        run: flutter build macos --release
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          IFS='.' read -r major minor patch <<<"$version"
+          build_number=$((major * 10000 + minor * 100 + patch))
+          flutter build macos --release --build-name "$version" --build-number "$build_number"
 
       - name: Package macOS
         working-directory: securex-app
@@ -212,9 +226,14 @@ jobs:
 
       - name: Build Android APK and App Bundle
         working-directory: securex-app
+        shell: bash
         run: |
-          flutter build apk --release
-          flutter build appbundle --release
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          IFS='.' read -r major minor patch <<<"$version"
+          build_number=$((major * 10000 + minor * 100 + patch))
+          flutter build apk --release --build-name "$version" --build-number "$build_number"
+          flutter build appbundle --release --build-name "$version" --build-number "$build_number"
 
       - name: Package Android
         working-directory: securex-app
@@ -258,7 +277,13 @@ jobs:
 
       - name: Build iOS without code signing
         working-directory: securex-app
-        run: flutter build ios --release --no-codesign
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          IFS='.' read -r major minor patch <<<"$version"
+          build_number=$((major * 10000 + minor * 100 + patch))
+          flutter build ios --release --no-codesign --build-name "$version" --build-number "$build_number"
 
       - name: Package iOS app bundle
         working-directory: securex-app
