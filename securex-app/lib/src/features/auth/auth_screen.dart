@@ -50,126 +50,131 @@ class _AuthScreenState extends State<AuthScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Stack(
-        children: [
-          const _AuthBackdrop(),
-          SafeArea(
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 520),
-                  child: Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(26),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Container(
-                                width: 44,
-                                height: 44,
-                                decoration: BoxDecoration(
-                                  color: context.sx.button,
-                                  borderRadius: BorderRadius.circular(14),
+    return AnimatedBuilder(
+      animation: widget.controller,
+      builder: (context, _) => Scaffold(
+        body: Stack(
+          children: [
+            const _AuthBackdrop(),
+            SafeArea(
+              child: Center(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(24),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 520),
+                    child: Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(26),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  width: 44,
+                                  height: 44,
+                                  decoration: BoxDecoration(
+                                    color: context.sx.button,
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                  child: Icon(
+                                    Icons.lock_outline_rounded,
+                                    color: context.sx.onButton,
+                                    size: 20,
+                                  ),
                                 ),
-                                child: Icon(
-                                  Icons.lock_outline_rounded,
-                                  color: context.sx.onButton,
-                                  size: 20,
+                                const SizedBox(width: 14),
+                                Text(
+                                  'secure-x',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .headlineSmall
+                                      ?.copyWith(fontWeight: FontWeight.w800),
                                 ),
-                              ),
-                              const SizedBox(width: 14),
-                              Text(
-                                'secure-x',
-                                style: Theme.of(context).textTheme.headlineSmall
-                                    ?.copyWith(fontWeight: FontWeight.w800),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            '客户端加密，服务端只存密文。',
-                            style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(color: context.sx.mutedText),
-                          ),
-                          const SizedBox(height: 20),
-                          _EndpointBanner(
-                            controller: _baseUrlController,
-                            busy: widget.controller.busy,
-                            onSave: () async {
-                              final validationMessage = _validateBaseUrl(
-                                _baseUrlController.text,
-                              );
-                              if (validationMessage != null) {
-                                _setLocalStatusMessage(validationMessage);
-                                return;
-                              }
-
-                              _clearLocalStatusMessage();
-                              await widget.controller.saveBaseUrl(
-                                _baseUrlController.text,
-                              );
-                              if (!context.mounted) {
-                                return;
-                              }
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('后端地址已保存')),
-                              );
-                            },
-                          ),
-                          const SizedBox(height: 20),
-                          Container(
-                            decoration: BoxDecoration(
-                              color: context.sx.subtle,
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(color: context.sx.border),
-                            ),
-                            padding: const EdgeInsets.all(4),
-                            child: TabBar(
-                              controller: _tabController,
-                              dividerColor: Colors.transparent,
-                              indicator: BoxDecoration(
-                                color: context.sx.card,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              labelColor: context.sx.text,
-                              unselectedLabelColor: context.sx.mutedText,
-                              labelStyle: const TextStyle(
-                                fontWeight: FontWeight.w800,
-                              ),
-                              tabs: const [
-                                Tab(text: '登录'),
-                                Tab(text: '注册'),
                               ],
                             ),
-                          ),
-                          const SizedBox(height: 16),
-                          SizedBox(
-                            height: 400,
-                            child: TabBarView(
-                              controller: _tabController,
-                              children: [_buildLogin(), _buildRegister()],
+                            const SizedBox(height: 12),
+                            Text(
+                              '客户端加密，服务端只存密文。',
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(color: context.sx.mutedText),
                             ),
-                          ),
-                          const SizedBox(height: 12),
-                          _StatusLine(
-                            message:
-                                _localStatusMessage ??
-                                widget.controller.statusMessage,
-                            busy: widget.controller.busy,
-                          ),
-                        ],
+                            const SizedBox(height: 20),
+                            _EndpointBanner(
+                              controller: _baseUrlController,
+                              busy: widget.controller.busy,
+                              onSave: () async {
+                                final validationMessage = _validateBaseUrl(
+                                  _baseUrlController.text,
+                                );
+                                if (validationMessage != null) {
+                                  _setLocalStatusMessage(validationMessage);
+                                  return;
+                                }
+
+                                _clearLocalStatusMessage();
+                                await widget.controller.saveBaseUrl(
+                                  _baseUrlController.text,
+                                );
+                                if (!context.mounted) {
+                                  return;
+                                }
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('后端地址已保存')),
+                                );
+                              },
+                            ),
+                            const SizedBox(height: 20),
+                            Container(
+                              decoration: BoxDecoration(
+                                color: context.sx.subtle,
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(color: context.sx.border),
+                              ),
+                              padding: const EdgeInsets.all(4),
+                              child: TabBar(
+                                controller: _tabController,
+                                dividerColor: Colors.transparent,
+                                indicator: BoxDecoration(
+                                  color: context.sx.card,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                labelColor: context.sx.text,
+                                unselectedLabelColor: context.sx.mutedText,
+                                labelStyle: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                ),
+                                tabs: const [
+                                  Tab(text: '登录'),
+                                  Tab(text: '注册'),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            SizedBox(
+                              height: 400,
+                              child: TabBarView(
+                                controller: _tabController,
+                                children: [_buildLogin(), _buildRegister()],
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            _StatusLine(
+                              message:
+                                  _localStatusMessage ??
+                                  widget.controller.statusMessage,
+                              busy: widget.controller.busy,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

@@ -755,6 +755,19 @@ class ApiClient {
     );
   }
 
+  Future<Map<String, dynamic>> dissolveGroup({
+    required String baseUrl,
+    required String token,
+    required String groupId,
+  }) async {
+    return _unwrapMap(
+      await _dio.post<Map<String, dynamic>>(
+        '$baseUrl/api/v1/groups/$groupId/dissolve',
+        options: _authorized(token),
+      ),
+    );
+  }
+
   Future<Map<String, dynamic>> leaveGroup({
     required String baseUrl,
     required String token,

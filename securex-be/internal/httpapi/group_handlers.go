@@ -4,12 +4,18 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/ligson/secure-x/securex-be/internal/middleware"
 	"github.com/ligson/secure-x/securex-be/internal/model"
 	"gorm.io/gorm"
+)
+
+const (
+	groupStatusActive    = "active"
+	groupStatusDissolved = "dissolved"
 )
 
 func (h *Handler) listGroups(c *gin.Context) {
@@ -60,6 +66,7 @@ func (h *Handler) createGroup(c *gin.Context) {
 		ID:            groupID,
 		CreatorUserID: userID,
 		AdminUserID:   userID,
+		Status:        groupStatusActive,
 		Version:       normalizeVersion(req.Version),
 	}
 
@@ -100,6 +107,10 @@ func (h *Handler) updateGroup(c *gin.Context) {
 			return
 		}
 		RespondFailure(c, http.StatusInternalServerError, "加载群聊失败")
+		return
+	}
+	if h.groupRoomDissolved(room) {
+		RespondFailure(c, http.StatusConflict, "群聊已解散，无法继续修改成员")
 		return
 	}
 
@@ -189,6 +200,10 @@ func (h *Handler) upsertGroupSnapshot(c *gin.Context) {
 		RespondFailure(c, http.StatusInternalServerError, "加载群聊失败")
 		return
 	}
+	if h.groupRoomDissolved(room) {
+		RespondFailure(c, http.StatusConflict, "群聊已解散，无法继续保存群快照")
+		return
+	}
 
 	if err := h.upsertGroupSnapshotRecord(h.db, room.ID, userID, req.Payload, req.Version); err != nil {
 		RespondFailure(c, http.StatusInternalServerError, "保存群聊快照失败")
@@ -196,6 +211,68 @@ func (h *Handler) upsertGroupSnapshot(c *gin.Context) {
 	}
 
 	RespondSuccess(c, http.StatusOK, "群聊快照已保存", gin.H{})
+}
+
+func (h *Handler) dissolveGroup(c *gin.Context) {
+	var req groupDissolveRequest
+	_ = c.ShouldBindJSON(&req)
+
+	userID := middleware.CurrentUserID(c)
+	room, memberIDs, err := h.groupRoomWithMemberIDs(c.Param("id"), userID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			RespondFailure(c, http.StatusNotFound, "群聊不存在")
+			return
+		}
+		RespondFailure(c, http.StatusInternalServerError, "加载群聊失败")
+		return
+	}
+	if room.AdminUserID != userID {
+		RespondFailure(c, http.StatusForbidden, "只有群管理可以解散群聊")
+		return
+	}
+	if h.groupRoomDissolved(room) {
+		RespondSuccess(c, http.StatusOK, "群聊已处于解散状态", gin.H{
+			"groupId":   room.ID,
+			"memberIds": uniqueWithout(memberIDs, userID),
+		})
+		return
+	}
+
+	now := time.Now()
+	dissolvedByUserID := userID
+	remainingMemberIDs := uniqueWithout(memberIDs, userID)
+	err = h.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("group_id = ? AND user_id = ?", room.ID, userID).Delete(&model.GroupMembership{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("group_id = ? AND user_id = ?", room.ID, userID).Delete(&model.GroupSnapshot{}).Error; err != nil {
+			return err
+		}
+		if len(remainingMemberIDs) == 0 {
+			if err := tx.Where("group_id = ?", room.ID).Delete(&model.GroupMembership{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("group_id = ?", room.ID).Delete(&model.GroupSnapshot{}).Error; err != nil {
+				return err
+			}
+			return tx.Delete(&room).Error
+		}
+		room.Status = groupStatusDissolved
+		room.DissolvedAt = &now
+		room.DissolvedByUserID = &dissolvedByUserID
+		room.Version++
+		return tx.Save(&room).Error
+	})
+	if err != nil {
+		RespondFailure(c, http.StatusInternalServerError, "解散群聊失败")
+		return
+	}
+
+	RespondSuccess(c, http.StatusOK, "群聊已解散", gin.H{
+		"groupId":   room.ID,
+		"memberIds": remainingMemberIDs,
+	})
 }
 
 func (h *Handler) leaveGroup(c *gin.Context) {
@@ -221,7 +298,7 @@ func (h *Handler) leaveGroup(c *gin.Context) {
 	}
 
 	nextAdminUserID := room.AdminUserID
-	if room.AdminUserID == userID {
+	if !h.groupRoomDissolved(room) && room.AdminUserID == userID {
 		nextAdminUserID = strings.TrimSpace(req.NextAdminUserID)
 		if nextAdminUserID == "" || !containsID(remaining, nextAdminUserID) {
 			nextAdminUserID = h.nextGroupAdminID(room.ID, remaining)
@@ -244,6 +321,9 @@ func (h *Handler) leaveGroup(c *gin.Context) {
 			}
 			return tx.Delete(&room).Error
 		}
+		if h.groupRoomDissolved(room) {
+			return nil
+		}
 
 		if nextAdminUserID == "" || !containsID(remaining, nextAdminUserID) {
 			nextAdminUserID = remaining[0]
@@ -253,14 +333,23 @@ func (h *Handler) leaveGroup(c *gin.Context) {
 		return tx.Save(&room).Error
 	})
 	if err != nil {
+		if h.groupRoomDissolved(room) {
+			RespondFailure(c, http.StatusInternalServerError, "删除已解散群聊会话失败")
+			return
+		}
 		RespondFailure(c, http.StatusInternalServerError, "退出群聊失败")
 		return
 	}
 
-	RespondSuccess(c, http.StatusOK, "已退出群聊", gin.H{
+	successMessage := "已退出群聊"
+	if h.groupRoomDissolved(room) {
+		successMessage = "已删除已解散群聊会话"
+	}
+	RespondSuccess(c, http.StatusOK, successMessage, gin.H{
 		"groupId":         room.ID,
 		"memberIds":       remaining,
 		"nextAdminUserId": nextAdminUserID,
+		"isDissolved":     h.groupRoomDissolved(room),
 	})
 }
 
@@ -306,13 +395,17 @@ func (h *Handler) groupResponseForUser(groupID, userID string) (gin.H, error) {
 	}
 
 	response := gin.H{
-		"id":              room.ID,
-		"creatorUserId":   room.CreatorUserID,
-		"adminUserId":     room.AdminUserID,
-		"version":         room.Version,
-		"snapshotPayload": "",
-		"snapshotVersion": 0,
-		"members":         users,
+		"id":                room.ID,
+		"creatorUserId":     room.CreatorUserID,
+		"adminUserId":       room.AdminUserID,
+		"status":            h.normalizedGroupStatus(room.Status),
+		"isDissolved":       h.groupRoomDissolved(room),
+		"dissolvedAt":       room.DissolvedAt,
+		"dissolvedByUserId": room.DissolvedByUserID,
+		"version":           room.Version,
+		"snapshotPayload":   "",
+		"snapshotVersion":   0,
+		"members":           users,
 	}
 	if snapshotErr == nil {
 		response["snapshotPayload"] = snapshot.Payload
@@ -439,4 +532,15 @@ func (h *Handler) nextGroupAdminID(groupID string, remaining []string) string {
 		}
 	}
 	return remaining[0]
+}
+
+func (h *Handler) normalizedGroupStatus(status string) string {
+	if strings.EqualFold(strings.TrimSpace(status), groupStatusDissolved) {
+		return groupStatusDissolved
+	}
+	return groupStatusActive
+}
+
+func (h *Handler) groupRoomDissolved(room model.GroupRoom) bool {
+	return h.normalizedGroupStatus(room.Status) == groupStatusDissolved
 }

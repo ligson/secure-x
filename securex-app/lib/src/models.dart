@@ -259,15 +259,23 @@ class GroupRecord {
     required this.id,
     required this.creatorUserId,
     required this.adminUserId,
+    required this.status,
+    required this.isDissolved,
     required this.version,
     required this.snapshotPayload,
     required this.snapshotVersion,
     required this.members,
+    this.dissolvedAt,
+    this.dissolvedByUserId,
   });
 
   final String id;
   final String creatorUserId;
   final String adminUserId;
+  final String status;
+  final bool isDissolved;
+  final DateTime? dissolvedAt;
+  final String? dissolvedByUserId;
   final int version;
   final String snapshotPayload;
   final int snapshotVersion;
@@ -278,6 +286,10 @@ class GroupRecord {
       id: json['id'] as String? ?? '',
       creatorUserId: json['creatorUserId'] as String? ?? '',
       adminUserId: json['adminUserId'] as String? ?? '',
+      status: json['status'] as String? ?? 'active',
+      isDissolved: json['isDissolved'] as bool? ?? false,
+      dissolvedAt: DateTime.tryParse(json['dissolvedAt'] as String? ?? ''),
+      dissolvedByUserId: json['dissolvedByUserId'] as String?,
       version: (json['version'] as num?)?.toInt() ?? 1,
       snapshotPayload: json['snapshotPayload'] as String? ?? '',
       snapshotVersion: (json['snapshotVersion'] as num?)?.toInt() ?? 0,
@@ -555,6 +567,10 @@ class ChatConversation {
     List<PublicUser>? members,
     this.adminUserId = '',
     this.isGroup = false,
+    this.groupStatus = 'active',
+    this.isDissolved = false,
+    this.dissolvedByUserId,
+    this.dissolvedAt,
     this.archiveVersion = 0,
   }) : id = id ?? friend?.id ?? '',
        title = title ?? _chatUserDisplayName(friend),
@@ -568,6 +584,10 @@ class ChatConversation {
   final List<PublicUser> members;
   final String adminUserId;
   final bool isGroup;
+  final String groupStatus;
+  final bool isDissolved;
+  final String? dissolvedByUserId;
+  final DateTime? dissolvedAt;
   final List<ChatMessage> messages;
   final int archiveVersion;
 
@@ -590,6 +610,10 @@ class ChatConversation {
     List<PublicUser>? members,
     String? adminUserId,
     bool? isGroup,
+    String? groupStatus,
+    bool? isDissolved,
+    String? dissolvedByUserId,
+    DateTime? dissolvedAt,
     List<ChatMessage>? messages,
     int? archiveVersion,
   }) {
@@ -600,6 +624,10 @@ class ChatConversation {
       members: members ?? this.members,
       adminUserId: adminUserId ?? this.adminUserId,
       isGroup: isGroup ?? this.isGroup,
+      groupStatus: groupStatus ?? this.groupStatus,
+      isDissolved: isDissolved ?? this.isDissolved,
+      dissolvedByUserId: dissolvedByUserId ?? this.dissolvedByUserId,
+      dissolvedAt: dissolvedAt ?? this.dissolvedAt,
       messages: messages ?? this.messages,
       archiveVersion: archiveVersion ?? this.archiveVersion,
     );

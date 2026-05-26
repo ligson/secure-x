@@ -2,6 +2,12 @@
 
 part of '../../../main.dart';
 
+class _ChatRouteResult {
+  static const leftGroup = 'left-group';
+  static const dissolvedGroup = 'dissolved-group';
+  static const deletedConversation = 'deleted-conversation';
+}
+
 extension _ChatTab on _VaultScreenState {
   Widget _buildChatTab(BuildContext context) {
     return ListenableBuilder(
@@ -39,7 +45,7 @@ extension _ChatTab on _VaultScreenState {
                         SliverToBoxAdapter(
                           child: _PageNotice(
                             message: statusNotice,
-                            tone: _PageNoticeTone.neutral,
+                            tone: _statusNoticeTone(statusNotice),
                             onClose: () {
                               setState(() {
                                 _dismissedPageStatusMessage = statusNotice;
@@ -174,7 +180,7 @@ extension _ChatTab on _VaultScreenState {
       if (!mounted) {
         return;
       }
-      await Navigator.of(context).push<void>(
+      final result = await Navigator.of(context).push<String>(
         MaterialPageRoute(
           builder: (context) => _ChatRoomPage(
             controller: widget.controller,
@@ -182,6 +188,7 @@ extension _ChatTab on _VaultScreenState {
           ),
         ),
       );
+      _handleChatRouteResult(result);
       return;
     }
 
@@ -197,7 +204,7 @@ extension _ChatTab on _VaultScreenState {
     if (!mounted) {
       return;
     }
-    await Navigator.of(context).push<void>(
+    final result = await Navigator.of(context).push<String>(
       MaterialPageRoute(
         builder: (context) => _ChatRoomPage(
           controller: widget.controller,
@@ -206,6 +213,7 @@ extension _ChatTab on _VaultScreenState {
         ),
       ),
     );
+    _handleChatRouteResult(result);
   }
 
   Future<void> _showStartGroupChatPage() async {
@@ -215,6 +223,47 @@ extension _ChatTab on _VaultScreenState {
             _StartGroupChatPage(controller: widget.controller),
       ),
     );
+  }
+
+  void _handleChatRouteResult(String? result) {
+    if (!mounted || result == null) {
+      return;
+    }
+    final message = widget.controller.statusMessage;
+    if (message == null || message.isEmpty) {
+      return;
+    }
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(content: Text(message)));
+    setState(() {
+      _dismissedPageStatusMessage = null;
+    });
+  }
+
+  _PageNoticeTone _statusNoticeTone(String? message) {
+    final text = (message ?? '').trim();
+    if (text.isEmpty) {
+      return _PageNoticeTone.neutral;
+    }
+    if (text.contains('失败') ||
+        text.contains('无法') ||
+        text.contains('错误') ||
+        text.contains('断开')) {
+      return _PageNoticeTone.warn;
+    }
+    if (text.contains('已删除') ||
+        text.contains('已解散') ||
+        text.contains('已退出') ||
+        text.contains('已同步') ||
+        text.contains('已刷新') ||
+        text.contains('已创建') ||
+        text.contains('已更新') ||
+        text.contains('已保存') ||
+        text.contains('已恢复')) {
+      return _PageNoticeTone.success;
+    }
+    return _PageNoticeTone.neutral;
   }
 }
 
@@ -228,9 +277,7 @@ class _ConversationTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final lastMessage = conversation.lastMessage;
     final title = conversation.displayTitle;
-    final subtitle = conversation.isGroup
-        ? '${conversation.members.length + 1} 人 · 端到端加密群聊'
-        : '端到端加密会话';
+    final subtitle = _conversationSubtitle(conversation, lastMessage);
     return ListTile(
       onTap: onTap,
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -248,19 +295,27 @@ class _ConversationTile extends StatelessWidget {
             ),
         ],
       ),
-      title: Text(
-        title,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontWeight: FontWeight.w800),
+      title: Row(
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+          if (conversation.isGroup && conversation.isDissolved) ...[
+            const SizedBox(width: 8),
+            _ConversationStatePill(
+              label: '已解散',
+              icon: Icons.info_outline,
+              tone: _PageNoticeTone.warn,
+            ),
+          ],
+        ],
       ),
-      subtitle: Text(
-        lastMessage == null
-            ? subtitle
-            : '${_conversationStatusPrefix(lastMessage)}${lastMessage.text}',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
+      subtitle: Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
       trailing: lastMessage == null
           ? const Icon(Icons.chevron_right_rounded)
           : Text(
@@ -274,6 +329,25 @@ class _ConversationTile extends StatelessWidget {
   }
 }
 
+String _conversationSubtitle(
+  ChatConversation conversation,
+  ChatMessage? lastMessage,
+) {
+  if (conversation.isGroup && conversation.isDissolved) {
+    if (lastMessage == null) {
+      return '群聊已解散 · 当前仅保留历史记录';
+    }
+    return '已解散 · ${lastMessage.text}';
+  }
+  if (lastMessage != null) {
+    return '${_conversationStatusPrefix(lastMessage)}${lastMessage.text}';
+  }
+  if (conversation.isGroup) {
+    return '${conversation.members.length + 1} 人 · 端到端加密群聊';
+  }
+  return '端到端加密会话';
+}
+
 enum _PageNoticeTone { neutral, success, warn }
 
 class _PageNotice extends StatelessWidget {
@@ -281,11 +355,13 @@ class _PageNotice extends StatelessWidget {
     required this.message,
     required this.tone,
     required this.onClose,
+    this.dismissible = true,
   });
 
   final String message;
   final _PageNoticeTone tone;
   final VoidCallback onClose;
+  final bool dismissible;
 
   @override
   Widget build(BuildContext context) {
@@ -322,13 +398,63 @@ class _PageNotice extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: 8),
-          InkWell(
-            borderRadius: BorderRadius.circular(999),
-            onTap: onClose,
-            child: Padding(
-              padding: const EdgeInsets.all(6),
-              child: Icon(Icons.close, size: 18, color: context.sx.mutedText),
+          if (dismissible) ...[
+            const SizedBox(width: 8),
+            InkWell(
+              borderRadius: BorderRadius.circular(999),
+              onTap: onClose,
+              child: Padding(
+                padding: const EdgeInsets.all(6),
+                child: Icon(Icons.close, size: 18, color: context.sx.mutedText),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ConversationStatePill extends StatelessWidget {
+  const _ConversationStatePill({
+    required this.label,
+    required this.icon,
+    required this.tone,
+  });
+
+  final String label;
+  final IconData icon;
+  final _PageNoticeTone tone;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (tone) {
+      _PageNoticeTone.success => context.sx.success,
+      _PageNoticeTone.warn => context.sx.danger,
+      _PageNoticeTone.neutral => context.sx.mutedText,
+    };
+    final background = switch (tone) {
+      _PageNoticeTone.success => context.sx.success.withAlpha(24),
+      _PageNoticeTone.warn => context.sx.danger.withAlpha(24),
+      _PageNoticeTone.neutral => context.sx.subtle,
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withAlpha(64)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: color,
+              fontWeight: FontWeight.w900,
             ),
           ),
         ],
@@ -394,6 +520,8 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
                 )
                 .length ??
             0;
+        final groupDissolved =
+            conversation?.isGroup == true && conversation?.isDissolved == true;
         final title =
             conversation?.displayTitle ??
             (friend == null
@@ -421,14 +549,22 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    _OnlineStatusDot(
-                      online: isGroup ? groupOnlineCount > 0 : friendOnline,
-                    ),
+                    if (groupDissolved)
+                      const _OnlineStatusDot.custom(
+                        colorKey: _OnlineStateColor.warn,
+                        tooltip: '群已解散',
+                      )
+                    else
+                      _OnlineStatusDot(
+                        online: isGroup ? groupOnlineCount > 0 : friendOnline,
+                      ),
                   ],
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  isGroup
+                  groupDissolved
+                      ? '已解散 · 仅支持查看历史记录和删除会话'
+                      : isGroup
                       ? '$groupOnlineCount 个成员在线 · 群消息端到端加密并同步归档'
                       : (friendOnline
                             ? '在线 · 端到端加密发送'
@@ -444,8 +580,9 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
               if (isGroup && conversation != null)
                 IconButton(
                   tooltip: '群聊信息',
-                  onPressed: () {
-                    Navigator.of(context).push<void>(
+                  onPressed: () async {
+                    final navigator = Navigator.of(context);
+                    final result = await navigator.push<String>(
                       MaterialPageRoute(
                         builder: (context) => _GroupChatDetailPage(
                           controller: widget.controller,
@@ -453,6 +590,10 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
                         ),
                       ),
                     );
+                    if (!mounted || result == null) {
+                      return;
+                    }
+                    navigator.pop(result);
                   },
                   icon: const Icon(Icons.more_horiz),
                 )
@@ -488,6 +629,16 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
               ),
               child: Column(
                 children: [
+                  if (groupDissolved)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                      child: _PageNotice(
+                        message: '该群已被群管理解散。你仍可查看历史记录，但不能再发送消息或修改群信息。',
+                        tone: _PageNoticeTone.warn,
+                        onClose: () {},
+                        dismissible: false,
+                      ),
+                    ),
                   Expanded(
                     child: RefreshIndicator(
                       onRefresh: _refreshConversation,
@@ -504,7 +655,17 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
                             if (loadingDetails && index == 0) {
                               return const _ChatLoadingState();
                             }
-                            return const _ChatEmptyState();
+                            return _ChatEmptyState(
+                              message: groupDissolved
+                                  ? '该群已经解散。当前账号仍可查看此前同步下来的历史记录；如不再需要，可在群信息页删除会话。'
+                                  : '好友在线后会自动建立端到端加密通道。',
+                              icon: groupDissolved
+                                  ? Icons.info_outline
+                                  : Icons.lock_outline,
+                              tone: groupDissolved
+                                  ? _PageNoticeTone.warn
+                                  : _PageNoticeTone.success,
+                            );
                           }
                           final message = messages[messageCount - 1 - index];
                           return _ChatMessageBubble(
@@ -556,15 +717,32 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
 }
 
 class _OnlineStatusDot extends StatelessWidget {
-  const _OnlineStatusDot({required this.online});
+  const _OnlineStatusDot({required this.online})
+    : customColorKey = null,
+      customTooltip = null;
+
+  const _OnlineStatusDot.custom({
+    required _OnlineStateColor colorKey,
+    required String tooltip,
+  }) : online = false,
+       customColorKey = colorKey,
+       customTooltip = tooltip;
 
   final bool online;
+  final _OnlineStateColor? customColorKey;
+  final String? customTooltip;
 
   @override
   Widget build(BuildContext context) {
-    final color = online ? context.sx.success : context.sx.danger;
+    final color = switch (customColorKey) {
+      _OnlineStateColor.success => context.sx.success,
+      _OnlineStateColor.warn => context.sx.danger,
+      _OnlineStateColor.neutral => context.sx.mutedText,
+      null => online ? context.sx.success : context.sx.danger,
+    };
+    final tooltip = customTooltip ?? (online ? '好友在线' : '好友离线');
     return Tooltip(
-      message: online ? '好友在线' : '好友离线',
+      message: tooltip,
       child: Container(
         width: 12,
         height: 12,
@@ -585,11 +763,31 @@ class _OnlineStatusDot extends StatelessWidget {
   }
 }
 
+enum _OnlineStateColor { success, warn, neutral }
+
 class _ChatEmptyState extends StatelessWidget {
-  const _ChatEmptyState();
+  const _ChatEmptyState({
+    required this.message,
+    required this.icon,
+    required this.tone,
+  });
+
+  final String message;
+  final IconData icon;
+  final _PageNoticeTone tone;
 
   @override
   Widget build(BuildContext context) {
+    final accentColor = switch (tone) {
+      _PageNoticeTone.success => context.sx.primary,
+      _PageNoticeTone.warn => context.sx.danger,
+      _PageNoticeTone.neutral => context.sx.mutedText,
+    };
+    final softBackground = switch (tone) {
+      _PageNoticeTone.success => context.sx.accentSoft,
+      _PageNoticeTone.warn => context.sx.danger.withAlpha(18),
+      _PageNoticeTone.neutral => context.sx.subtle,
+    };
     return Padding(
       padding: const EdgeInsets.only(top: 140),
       child: Center(
@@ -608,19 +806,15 @@ class _ChatEmptyState extends StatelessWidget {
                 width: 42,
                 height: 42,
                 decoration: BoxDecoration(
-                  color: context.sx.accentSoft,
+                  color: softBackground,
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: Icon(
-                  Icons.lock_outline,
-                  color: context.sx.primary,
-                  size: 22,
-                ),
+                child: Icon(icon, color: accentColor, size: 22),
               ),
               const SizedBox(width: 12),
               Flexible(
                 child: Text(
-                  '好友在线后会自动建立端到端加密通道。',
+                  message,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: context.sx.mutedText,
                     fontWeight: FontWeight.w700,
@@ -1081,6 +1275,7 @@ class _GroupChatDetailPageState extends State<_GroupChatDetailPage> {
         }
         final isAdmin =
             conversation.adminUserId == (widget.controller.user?.id ?? '');
+        final isDissolved = conversation.isDissolved;
         final inviteCandidates = widget.controller.friends
             .where(
               (friend) =>
@@ -1104,14 +1299,46 @@ class _GroupChatDetailPageState extends State<_GroupChatDetailPage> {
                           title: conversation.displayTitle,
                         ),
                         const SizedBox(height: 6),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            _ConversationStatePill(
+                              label: isDissolved ? '已解散' : '正常群聊',
+                              icon: isDissolved
+                                  ? Icons.info_outline
+                                  : Icons.verified_user_outlined,
+                              tone: isDissolved
+                                  ? _PageNoticeTone.warn
+                                  : _PageNoticeTone.success,
+                            ),
+                            if (!isDissolved)
+                              _ConversationStatePill(
+                                label: isAdmin ? '你是群管理' : '成员身份',
+                                icon: isAdmin
+                                    ? Icons.shield_outlined
+                                    : Icons.person_outline,
+                                tone: _PageNoticeTone.neutral,
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
                         Text(
-                          '${conversation.members.length + 1} 人 · 服务端只保存不可解密的群聊密文归档',
+                          isDissolved
+                              ? '群聊已解散，当前只保留只读历史记录，后续可删除当前账号自己的会话数据。'
+                              : '${conversation.members.length + 1} 人 · 服务端只保存不可解密的群聊密文归档',
                           style: Theme.of(context).textTheme.bodyMedium
                               ?.copyWith(color: context.sx.mutedText),
                         ),
                       ],
                     ),
                     const SizedBox(height: 12),
+                    if (isDissolved) ...[
+                      _InlineNotice(
+                        message: '已解散群不能继续邀请成员、发送消息、清空历史或退出群聊。当前账号只允许删除自己的群会话。',
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                     Card(
                       child: Column(
                         children: [
@@ -1136,7 +1363,7 @@ class _GroupChatDetailPageState extends State<_GroupChatDetailPage> {
                               admin:
                                   conversation.members[index].id ==
                                   conversation.adminUserId,
-                              trailing: isAdmin
+                              trailing: isAdmin && !isDissolved
                                   ? TextButton(
                                       onPressed: () => _removeMember(
                                         conversation,
@@ -1152,76 +1379,78 @@ class _GroupChatDetailPageState extends State<_GroupChatDetailPage> {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    Card(
-                      child: Column(
-                        children: [
-                          const _ListCardHeader(title: '邀请好友'),
-                          if (inviteCandidates.isEmpty)
-                            Padding(
-                              padding: const EdgeInsets.all(22),
-                              child: Text(
-                                '暂无可邀请的好友。',
-                                style: Theme.of(context).textTheme.bodyMedium
-                                    ?.copyWith(color: context.sx.mutedText),
-                              ),
-                            )
-                          else ...[
-                            for (
-                              var index = 0;
-                              index < inviteCandidates.length;
-                              index++
-                            ) ...[
-                              CheckboxListTile(
-                                value: _inviteFriendIds.contains(
-                                  inviteCandidates[index].id,
+                    if (!isDissolved) ...[
+                      const SizedBox(height: 12),
+                      Card(
+                        child: Column(
+                          children: [
+                            const _ListCardHeader(title: '邀请好友'),
+                            if (inviteCandidates.isEmpty)
+                              Padding(
+                                padding: const EdgeInsets.all(22),
+                                child: Text(
+                                  '暂无可邀请的好友。',
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(color: context.sx.mutedText),
                                 ),
-                                onChanged: (checked) {
-                                  setState(() {
-                                    if (checked == true) {
-                                      _inviteFriendIds.add(
-                                        inviteCandidates[index].id,
-                                      );
-                                    } else {
-                                      _inviteFriendIds.remove(
-                                        inviteCandidates[index].id,
-                                      );
-                                    }
-                                  });
-                                },
-                                secondary: _ChatAvatar(
-                                  user: inviteCandidates[index],
+                              )
+                            else ...[
+                              for (
+                                var index = 0;
+                                index < inviteCandidates.length;
+                                index++
+                              ) ...[
+                                CheckboxListTile(
+                                  value: _inviteFriendIds.contains(
+                                    inviteCandidates[index].id,
+                                  ),
+                                  onChanged: (checked) {
+                                    setState(() {
+                                      if (checked == true) {
+                                        _inviteFriendIds.add(
+                                          inviteCandidates[index].id,
+                                        );
+                                      } else {
+                                        _inviteFriendIds.remove(
+                                          inviteCandidates[index].id,
+                                        );
+                                      }
+                                    });
+                                  },
+                                  secondary: _ChatAvatar(
+                                    user: inviteCandidates[index],
+                                  ),
+                                  title: Text(
+                                    inviteCandidates[index].username.isEmpty
+                                        ? '(未命名用户)'
+                                        : inviteCandidates[index].username,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  subtitle: Text(inviteCandidates[index].email),
                                 ),
-                                title: Text(
-                                  inviteCandidates[index].username.isEmpty
-                                      ? '(未命名用户)'
-                                      : inviteCandidates[index].username,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w800,
+                                if (index != inviteCandidates.length - 1)
+                                  Divider(height: 1, color: context.sx.border),
+                              ],
+                              Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: SizedBox(
+                                  width: double.infinity,
+                                  child: FilledButton.icon(
+                                    onPressed: _inviteFriendIds.isEmpty
+                                        ? null
+                                        : () => _invite(conversation),
+                                    icon: const Icon(Icons.person_add_outlined),
+                                    label: const Text('邀请进群'),
                                   ),
                                 ),
-                                subtitle: Text(inviteCandidates[index].email),
                               ),
-                              if (index != inviteCandidates.length - 1)
-                                Divider(height: 1, color: context.sx.border),
                             ],
-                            Padding(
-                              padding: const EdgeInsets.all(16),
-                              child: SizedBox(
-                                width: double.infinity,
-                                child: FilledButton.icon(
-                                  onPressed: _inviteFriendIds.isEmpty
-                                      ? null
-                                      : () => _invite(conversation),
-                                  icon: const Icon(Icons.person_add_outlined),
-                                  label: const Text('邀请进群'),
-                                ),
-                              ),
-                            ),
                           ],
-                        ],
+                        ),
                       ),
-                    ),
+                    ],
                     const SizedBox(height: 12),
                     Card(
                       child: Padding(
@@ -1236,7 +1465,9 @@ class _GroupChatDetailPageState extends State<_GroupChatDetailPage> {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              '退出后会删除当前账号在本机缓存和加密归档中的该群成员信息与聊天记录，后续将无法再恢复。',
+                              isDissolved
+                                  ? '解散后的群只允许删除当前账号自己的会话，删除后你将无法再看到这个群的历史消息。'
+                                  : '清空聊天记录只会删除当前账号自己的本地缓存和加密归档，不会退出群聊，也不会影响其他成员查看自己的记录。',
                               style: Theme.of(context).textTheme.bodyMedium
                                   ?.copyWith(color: context.sx.mutedText),
                             ),
@@ -1244,15 +1475,71 @@ class _GroupChatDetailPageState extends State<_GroupChatDetailPage> {
                             SizedBox(
                               width: double.infinity,
                               child: OutlinedButton.icon(
-                                onPressed: () => _confirmLeave(conversation),
-                                icon: const Icon(Icons.logout_rounded),
-                                label: const Text('退出群聊'),
+                                onPressed: widget.controller.busy
+                                    ? null
+                                    : (isDissolved
+                                          ? () =>
+                                                _confirmDeleteDissolvedConversation(
+                                                  conversation,
+                                                )
+                                          : () => _confirmClearHistory(
+                                              conversation,
+                                            )),
+                                icon: Icon(
+                                  isDissolved
+                                      ? Icons.delete_outline
+                                      : Icons.delete_sweep_outlined,
+                                ),
+                                label: Text(isDissolved ? '删除会话' : '清空聊天记录'),
                                 style: OutlinedButton.styleFrom(
                                   foregroundColor: context.sx.danger,
                                   side: BorderSide(color: context.sx.danger),
                                 ),
                               ),
                             ),
+                            if (!isDissolved && isAdmin) ...[
+                              const SizedBox(height: 12),
+                              Text(
+                                '解散后，所有成员的聊天列表里仍会保留“已解散”提示，成员只能删除自己的会话，群元数据会逐步清理。',
+                                style: Theme.of(context).textTheme.bodyMedium
+                                    ?.copyWith(color: context.sx.mutedText),
+                              ),
+                              const SizedBox(height: 14),
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  onPressed: () =>
+                                      _confirmDissolve(conversation),
+                                  icon: const Icon(Icons.block_outlined),
+                                  label: const Text('解散群聊'),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: context.sx.danger,
+                                    side: BorderSide(color: context.sx.danger),
+                                  ),
+                                ),
+                              ),
+                            ],
+                            if (!isDissolved) ...[
+                              const SizedBox(height: 12),
+                              Text(
+                                '退出后会删除当前账号在本机缓存和加密归档中的该群成员信息与聊天记录，后续将无法再恢复。',
+                                style: Theme.of(context).textTheme.bodyMedium
+                                    ?.copyWith(color: context.sx.mutedText),
+                              ),
+                              const SizedBox(height: 14),
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  onPressed: () => _confirmLeave(conversation),
+                                  icon: const Icon(Icons.logout_rounded),
+                                  label: const Text('退出群聊'),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: context.sx.danger,
+                                    side: BorderSide(color: context.sx.danger),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                       ),
@@ -1280,6 +1567,9 @@ class _GroupChatDetailPageState extends State<_GroupChatDetailPage> {
     ChatConversation conversation,
     PublicUser member,
   ) async {
+    if (conversation.isDissolved) {
+      return;
+    }
     final members = conversation.members
         .where((current) => current.id != member.id)
         .toList();
@@ -1290,6 +1580,9 @@ class _GroupChatDetailPageState extends State<_GroupChatDetailPage> {
   }
 
   Future<void> _invite(ChatConversation conversation) async {
+    if (conversation.isDissolved) {
+      return;
+    }
     final invitees = widget.controller.friends
         .where((friend) => _inviteFriendIds.contains(friend.id))
         .toList();
@@ -1328,7 +1621,106 @@ class _GroupChatDetailPageState extends State<_GroupChatDetailPage> {
       return;
     }
     Navigator.of(context).pop();
-    Navigator.of(context).maybePop();
+    Navigator.of(context).pop(_ChatRouteResult.leftGroup);
+  }
+
+  Future<void> _confirmClearHistory(ChatConversation conversation) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('清空聊天记录'),
+        content: Text(
+          '确定清空你在“${conversation.displayTitle}”中的聊天记录吗？清空后只有你自己看不到，其他成员的聊天记录不会删除，你也不会退出该群。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('清空'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+    await widget.controller.clearGroupChatHistory(conversation.id);
+    if (!mounted) {
+      return;
+    }
+    final message = widget.controller.statusMessage;
+    if (message != null && message.isNotEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    }
+  }
+
+  Future<void> _confirmDissolve(ChatConversation conversation) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('解散群聊'),
+        content: Text(
+          '确定解散“${conversation.displayTitle}”吗？解散后成员仍会暂时看到该群，但只能删除自己的会话，且不能再继续聊天。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('解散'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+    await widget.controller.dissolveGroupChat(conversation.id);
+    if (!mounted) {
+      return;
+    }
+    Navigator.of(context).pop();
+    Navigator.of(context).pop(_ChatRouteResult.dissolvedGroup);
+  }
+
+  Future<void> _confirmDeleteDissolvedConversation(
+    ChatConversation conversation,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除会话'),
+        content: Text(
+          '确定删除“${conversation.displayTitle}”的当前账号会话吗？删除后你将无法再看到该群的历史记录，其他成员不受影响。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+    await widget.controller.deleteDissolvedGroupConversation(conversation.id);
+    if (!mounted) {
+      return;
+    }
+    Navigator.of(context).pop();
+    Navigator.of(context).pop(_ChatRouteResult.deletedConversation);
   }
 }
 
@@ -1388,6 +1780,7 @@ class _ChatComposer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final composerDisabled = conversation?.isDissolved == true;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: context.sx.card,
@@ -1407,6 +1800,30 @@ class _ChatComposer extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (composerDisabled)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 14, 18, 0),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.info_outline,
+                      size: 16,
+                      color: context.sx.danger,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '该群已解散，当前页面只支持查看历史记录；如不再需要，可到群信息页删除会话。',
+                        style: Theme.of(context).textTheme.labelMedium
+                            ?.copyWith(
+                              color: context.sx.danger,
+                              fontWeight: FontWeight.w800,
+                            ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             Padding(
               padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
               child: Row(
@@ -1420,6 +1837,7 @@ class _ChatComposer extends StatelessWidget {
                   Expanded(
                     child: TextField(
                       controller: textController,
+                      readOnly: composerDisabled,
                       minLines: 1,
                       maxLines: 4,
                       style: Theme.of(context).textTheme.bodyLarge?.copyWith(
@@ -1427,7 +1845,7 @@ class _ChatComposer extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                       ),
                       decoration: InputDecoration(
-                        hintText: '输入加密消息',
+                        hintText: composerDisabled ? '群聊已解散' : '输入加密消息',
                         hintStyle: Theme.of(context).textTheme.bodyLarge
                             ?.copyWith(
                               color: context.sx.mutedText,
@@ -1446,7 +1864,7 @@ class _ChatComposer extends StatelessWidget {
                     icon: showTools
                         ? Icons.keyboard_arrow_down
                         : Icons.add_circle_outline,
-                    onPressed: onToggleTools,
+                    onPressed: composerDisabled ? null : onToggleTools,
                   ),
                   const SizedBox(width: 10),
                   FilledButton(
@@ -1459,31 +1877,33 @@ class _ChatComposer extends StatelessWidget {
                         borderRadius: BorderRadius.circular(20),
                       ),
                     ),
-                    onPressed: () async {
-                      final text = textController.text;
-                      textController.clear();
-                      if (conversation?.isGroup == true) {
-                        await controller.sendGroupChatMessage(
-                          conversation: conversation!,
-                          text: text,
-                        );
-                        return;
-                      }
-                      final directFriend = friend;
-                      if (directFriend == null) {
-                        return;
-                      }
-                      await controller.sendLocalChatMessage(
-                        friend: directFriend,
-                        text: text,
-                      );
-                    },
+                    onPressed: composerDisabled
+                        ? null
+                        : () async {
+                            final text = textController.text;
+                            textController.clear();
+                            if (conversation?.isGroup == true) {
+                              await controller.sendGroupChatMessage(
+                                conversation: conversation!,
+                                text: text,
+                              );
+                              return;
+                            }
+                            final directFriend = friend;
+                            if (directFriend == null) {
+                              return;
+                            }
+                            await controller.sendLocalChatMessage(
+                              friend: directFriend,
+                              text: text,
+                            );
+                          },
                     child: const Text('发送'),
                   ),
                 ],
               ),
             ),
-            if (showTools)
+            if (showTools && !composerDisabled)
               Padding(
                 padding: const EdgeInsets.fromLTRB(18, 6, 18, 18),
                 child: GridView.count(

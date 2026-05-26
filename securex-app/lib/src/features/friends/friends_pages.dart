@@ -303,7 +303,10 @@ class _FriendGroupsPage extends StatelessWidget {
         listenable: controller.chatListenable,
         builder: (context, _) {
           final groups = controller.chatConversations
-              .where((conversation) => conversation.isGroup)
+              .where(
+                (conversation) =>
+                    conversation.isGroup && !conversation.isDissolved,
+              )
               .toList();
           final userId = controller.user?.id ?? '';
           final createdGroups = groups
@@ -894,7 +897,7 @@ class _FriendDetailPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: controller.friendsListenable,
+      animation: controller,
       builder: (context, _) {
         return Scaffold(
           appBar: AppBar(title: const Text('好友信息')),
@@ -977,6 +980,53 @@ class _FriendDetailPage extends StatelessWidget {
                               final confirmed = await showDialog<bool>(
                                 context: context,
                                 builder: (context) => AlertDialog(
+                                  title: const Text('清除聊天记录'),
+                                  content: Text(
+                                    '确定清除你与“${friend.username.isEmpty ? friend.email : friend.username}”的聊天记录吗？清除后只有你自己看不到，对方聊天记录不会删除。',
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () =>
+                                          Navigator.of(context).pop(false),
+                                      child: const Text('取消'),
+                                    ),
+                                    FilledButton(
+                                      onPressed: () =>
+                                          Navigator.of(context).pop(true),
+                                      child: const Text('清除'),
+                                    ),
+                                  ],
+                                ),
+                              );
+                              if (confirmed != true) {
+                                return;
+                              }
+                              await controller.clearDirectChatHistory(friend);
+                              if (context.mounted &&
+                                  controller.statusMessage != null &&
+                                  controller.statusMessage!.isNotEmpty) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(controller.statusMessage!),
+                                  ),
+                                );
+                              }
+                            },
+                      icon: const Icon(Icons.delete_sweep_outlined),
+                      label: const Text('清除聊天记录'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: context.sx.danger,
+                        side: BorderSide(color: context.sx.danger),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: controller.busy
+                          ? null
+                          : () async {
+                              final confirmed = await showDialog<bool>(
+                                context: context,
+                                builder: (context) => AlertDialog(
                                   title: const Text('删除好友'),
                                   content: Text('确定删除“${friend.username}”吗？'),
                                   actions: [
@@ -1003,6 +1053,10 @@ class _FriendDetailPage extends StatelessWidget {
                             },
                       icon: const Icon(Icons.person_remove_outlined),
                       label: const Text('删除好友'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: context.sx.danger,
+                        side: BorderSide(color: context.sx.danger),
+                      ),
                     ),
                   ],
                 ),

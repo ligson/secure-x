@@ -57,6 +57,7 @@ func NewRouter(db *gorm.DB, tokens *auth.TokenManager, fileStore *storage.FileSt
 		protected.POST("/groups", handler.createGroup)
 		protected.PUT("/groups/:id", handler.updateGroup)
 		protected.PUT("/groups/:id/snapshot", handler.upsertGroupSnapshot)
+		protected.POST("/groups/:id/dissolve", handler.dissolveGroup)
 		protected.POST("/groups/:id/leave", handler.leaveGroup)
 		protected.GET("/chat/archive/manifest", handler.getChatArchiveManifest)
 		protected.GET("/chat/archive/conversations", handler.listChatArchiveConversations)

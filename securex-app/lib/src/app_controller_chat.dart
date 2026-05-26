@@ -141,6 +141,11 @@ extension AppControllerChatActions on AppController {
     if (index < 0 || !conversations[index].isGroup) {
       return;
     }
+    if (conversations[index].isDissolved) {
+      _statusMessage = '群聊已解散，无法继续修改群信息。';
+      notifyListeners();
+      return;
+    }
 
     final archiveVersion = _nextChatArchiveVersion();
     conversations[index] = conversations[index].copyWith(
@@ -168,6 +173,11 @@ extension AppControllerChatActions on AppController {
     if (conversation == null || !conversation.isGroup || currentUser == null) {
       return;
     }
+    if (conversation.isDissolved) {
+      _statusMessage = '群聊已解散，请使用删除会话来清理当前账号记录。';
+      notifyListeners();
+      return;
+    }
 
     final remainingMembers = _uniqueFriends(conversation.members);
     final leavingAdmin = conversation.adminUserId == currentUser.id;
@@ -190,6 +200,142 @@ extension AppControllerChatActions on AppController {
     _statusMessage = '已退出群聊，当前账号的群消息记录已从缓存和归档中删除。';
     notifyListeners();
     await _persistChatSnapshot();
+  }
+
+  Future<void> dissolveGroupChat(String conversationId) async {
+    final conversation = _conversationById(conversationId);
+    final currentUser = _user;
+    if (conversation == null || !conversation.isGroup || currentUser == null) {
+      return;
+    }
+    if (conversation.isDissolved) {
+      _statusMessage = '群聊已处于解散状态。';
+      notifyListeners();
+      return;
+    }
+    if (conversation.adminUserId != currentUser.id) {
+      _statusMessage = '只有群管理可以解散群聊。';
+      notifyListeners();
+      return;
+    }
+
+    final recipients = _uniqueFriends(conversation.members);
+    final response = await _apiClient.dissolveGroup(
+      baseUrl: _baseUrl,
+      token: _token!,
+      groupId: conversation.id,
+    );
+    final remainingMemberIds =
+        (response['memberIds'] as List<dynamic>? ?? const [])
+            .map((entry) => entry.toString())
+            .where((entry) => entry.isNotEmpty)
+            .toList();
+    await _sendRealtimeGroupControl(
+      conversation: conversation,
+      recipients: recipients,
+      controlType: 'group-dissolved',
+      removedUserId: '',
+      memberIds: remainingMemberIds,
+      adminUserId: conversation.adminUserId,
+      groupStatus: 'dissolved',
+      isDissolved: true,
+      dissolvedByUserId: currentUser.id,
+    );
+    _deleteGroupConversation(conversation.id);
+    _statusMessage = '群聊已解散，当前账号的群会话与归档已删除，其他成员会看到已解散提示。';
+    notifyListeners();
+    await _persistChatSnapshot();
+  }
+
+  Future<void> deleteDissolvedGroupConversation(String conversationId) async {
+    final conversation = _conversationById(conversationId);
+    if (conversation == null || !conversation.isGroup) {
+      return;
+    }
+    if (!conversation.isDissolved) {
+      _statusMessage = '当前群聊未解散，不能直接删除群会话。';
+      notifyListeners();
+      return;
+    }
+
+    await _leaveGroupOnServer(conversationId: conversation.id);
+    _deleteGroupConversation(conversation.id);
+    _statusMessage = '已删除解散群的会话记录，当前账号不再保留该群数据。';
+    notifyListeners();
+    await _persistChatSnapshot();
+  }
+
+  Future<void> clearDirectChatHistory(PublicUser friend) async {
+    final conversationId = friend.id.trim();
+    if (conversationId.isEmpty) {
+      _statusMessage = '好友信息不完整，无法清除聊天记录。';
+      notifyListeners();
+      return;
+    }
+
+    await _runBusy(() async {
+      _chatConversations = _chatConversations
+          .where(
+            (conversation) =>
+                conversation.id != conversationId || conversation.isGroup,
+          )
+          .toList();
+      _loadedChatConversationIds.remove(conversationId);
+      _loadingChatConversationIds.remove(conversationId);
+      _chatConversationLoadTasks.remove(conversationId);
+      _queueChatConversationDeletion(conversationId);
+      await _deleteLocalChatDetailCache(conversationId);
+      await _persistChatSnapshot();
+      _sortChatConversations();
+      _markChatChanged();
+      _statusMessage =
+          '已清除你与“${friend.username.isEmpty ? friend.email : friend.username}”的聊天记录，对方记录不会受影响。';
+      notifyListeners();
+    });
+  }
+
+  Future<void> clearGroupChatHistory(String conversationId) async {
+    final cleanConversationId = conversationId.trim();
+    final conversation = _conversationById(cleanConversationId);
+    if (cleanConversationId.isEmpty || conversation == null) {
+      _statusMessage = '群聊不存在，无法清除聊天记录。';
+      notifyListeners();
+      return;
+    }
+    if (!conversation.isGroup) {
+      _statusMessage = '当前会话不是群聊，无法使用群聊清空功能。';
+      notifyListeners();
+      return;
+    }
+    if (conversation.isDissolved) {
+      _statusMessage = '群聊已解散，只能删除会话，不能再单独清空聊天记录。';
+      notifyListeners();
+      return;
+    }
+
+    await _runBusy(() async {
+      final archiveVersion = _nextChatArchiveVersion();
+      final conversations = [..._chatConversations];
+      final index = conversations.indexWhere(
+        (current) => current.id == cleanConversationId,
+      );
+      if (index < 0) {
+        return;
+      }
+      conversations[index] = conversations[index].copyWith(
+        messages: const [],
+        archiveVersion: archiveVersion,
+      );
+      _chatConversations = conversations;
+      _queueChatConversationSync(cleanConversationId, archiveVersion);
+      await _deleteLocalChatDetailCache(cleanConversationId);
+      await _persistChatSnapshot();
+      _sortChatConversations();
+      _markChatChanged();
+      _statusMessage =
+          '已清空你在“${conversation.displayTitle}”中的聊天记录，群成员和其他成员记录不会受影响。';
+      notifyListeners();
+    });
   }
 
   Future<void> sendLocalChatMessage({
@@ -243,6 +389,11 @@ extension AppControllerChatActions on AppController {
     await _ensureChatConversationLoaded(conversation.id);
 
     final latest = _conversationById(conversation.id) ?? conversation;
+    if (latest.isDissolved) {
+      _statusMessage = '群聊已解散，无法继续发送消息。';
+      notifyListeners();
+      return;
+    }
     final message = ChatMessage(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
       friendId: latest.id,
@@ -326,6 +477,12 @@ extension AppControllerChatActions on AppController {
       return;
     }
     await _ensureChatConversationLoaded(conversation.id);
+    final latest = _conversationById(conversation.id) ?? conversation;
+    if (latest.isDissolved) {
+      _statusMessage = '群聊已解散，无法重发消息。';
+      notifyListeners();
+      return;
+    }
     final retryStatus = _realtimeConfig?.signalingEnabled == true
         ? 'pending'
         : 'localOnly';
@@ -344,7 +501,6 @@ extension AppControllerChatActions on AppController {
     );
     notifyListeners();
 
-    final latest = _conversationById(conversation.id) ?? conversation;
     final updated =
         _findMessageInConversation(conversation.id, message.id) ?? message;
     final sentPeerIds = await _sendRealtimeGroupMessage(latest, updated);
@@ -536,6 +692,9 @@ extension AppControllerChatActions on AppController {
     required String removedUserId,
     required List<String> memberIds,
     required String adminUserId,
+    String groupStatus = 'active',
+    bool isDissolved = false,
+    String dissolvedByUserId = '',
   }) async {
     if (_realtimeConfig?.signalingEnabled != true) {
       return;
@@ -548,6 +707,9 @@ extension AppControllerChatActions on AppController {
         removedUserId: removedUserId,
         memberIds: memberIds,
         adminUserId: adminUserId,
+        groupStatus: groupStatus,
+        isDissolved: isDissolved,
+        dissolvedByUserId: dissolvedByUserId,
       );
     } catch (error) {
       appLog('实时群聊控制消息发送失败', error);
@@ -604,6 +766,9 @@ extension AppControllerChatActions on AppController {
     required String removedUserId,
     required List<String> memberIds,
     required String adminUserId,
+    String groupStatus = 'active',
+    bool isDissolved = false,
+    String dissolvedByUserId = '',
   }) async {
     final targetIds = _uniqueFriends(recipients)
         .map((member) => member.id)
@@ -623,6 +788,9 @@ extension AppControllerChatActions on AppController {
         'memberIds': _uniqueIds(memberIds),
         'adminUserId': adminUserId,
         'removedUserId': removedUserId,
+        'groupStatus': groupStatus,
+        'isDissolved': isDissolved,
+        'dissolvedByUserId': dissolvedByUserId,
       },
     );
   }
@@ -931,6 +1099,10 @@ extension AppControllerChatActions on AppController {
       return;
     }
     await _ensureChatConversationLoaded(incoming.groupId);
+    final existingConversation = _conversationById(incoming.groupId);
+    if (existingConversation?.isDissolved == true) {
+      return;
+    }
     if (_findMessageInConversation(incoming.groupId, incoming.messageId) !=
         null) {
       return;
@@ -995,6 +1167,21 @@ extension AppControllerChatActions on AppController {
     if (_user == null || control.groupId.isEmpty) {
       return;
     }
+    if (control.controlType == 'group-dissolved') {
+      await _ensureChatConversationLoaded(control.groupId);
+      final members = await _resolveGroupControlMembers(control);
+      _applyDissolvedGroupConversation(
+        groupId: control.groupId,
+        title: control.groupName,
+        members: members,
+        adminUserId: control.adminUserId,
+        dissolvedByUserId: control.dissolvedByUserId,
+      );
+      _statusMessage = '群聊已被群管理解散，你可以在群信息页删除该会话。';
+      notifyListeners();
+      await _persistChatSnapshot();
+      return;
+    }
     if (control.removedUserId == _user!.id ||
         !control.memberIds.contains(_user!.id)) {
       _deleteGroupConversation(control.groupId);
@@ -1005,7 +1192,30 @@ extension AppControllerChatActions on AppController {
     }
 
     await _ensureChatConversationLoaded(control.groupId);
+    final members = await _resolveGroupControlMembers(control);
+    final conversation = _ensureGroupConversation(
+      id: control.groupId,
+      title: control.groupName,
+      members: members,
+      adminUserId: control.adminUserId,
+      groupStatus: control.groupStatus,
+      isDissolved: control.isDissolved,
+      dissolvedByUserId: control.dissolvedByUserId,
+    );
+    await updateGroupChat(
+      conversationId: conversation.id,
+      title: control.groupName,
+      members: members,
+      adminUserId: control.adminUserId,
+      syncServer: false,
+    );
+    _statusMessage = '群聊成员已更新。';
+    notifyListeners();
+  }
 
+  Future<List<PublicUser>> _resolveGroupControlMembers(
+    RealtimeGroupControl control,
+  ) async {
     var memberById = <String, PublicUser>{
       for (final friend in _friends) friend.id: friend,
     };
@@ -1028,26 +1238,34 @@ extension AppControllerChatActions on AppController {
         }
       }
     }
-    final members = control.memberIds
+    return control.memberIds
         .where((memberId) => memberId != _user!.id)
         .map((memberId) => memberById[memberId])
         .whereType<PublicUser>()
         .toList();
+  }
+
+  void _applyDissolvedGroupConversation({
+    required String groupId,
+    required String title,
+    required List<PublicUser> members,
+    required String adminUserId,
+    required String dissolvedByUserId,
+  }) {
     final conversation = _ensureGroupConversation(
-      id: control.groupId,
-      title: control.groupName,
+      id: groupId,
+      title: title,
       members: members,
-      adminUserId: control.adminUserId,
+      adminUserId: adminUserId,
+      groupStatus: 'dissolved',
+      isDissolved: true,
+      dissolvedByUserId: dissolvedByUserId,
+      dissolvedAt: DateTime.now(),
     );
-    await updateGroupChat(
-      conversationId: conversation.id,
-      title: control.groupName,
-      members: members,
-      adminUserId: control.adminUserId,
-      syncServer: false,
+    _markConversationForArchiveSync(
+      conversation.id,
+      forceNewVersion: conversation.archiveVersion <= 0,
     );
-    _statusMessage = '群聊成员已更新。';
-    notifyListeners();
   }
 
   Future<void> _markRealtimeMessageDelivered(
@@ -1279,6 +1497,10 @@ extension AppControllerChatActions on AppController {
     required String title,
     required List<PublicUser> members,
     required String adminUserId,
+    String groupStatus = 'active',
+    bool isDissolved = false,
+    String? dissolvedByUserId,
+    DateTime? dissolvedAt,
     bool markDirty = true,
     int? archiveVersion,
   }) {
@@ -1290,10 +1512,15 @@ extension AppControllerChatActions on AppController {
         archiveVersion ?? (markDirty ? _nextChatArchiveVersion() : 0);
     if (index >= 0) {
       final existing = conversations[index];
+      final nextIsDissolved = existing.isDissolved || isDissolved;
       conversations[index] = existing.copyWith(
         title: title.isEmpty ? existing.title : title,
         members: _uniqueFriends([...existing.members, ...members]),
         adminUserId: adminUserId.isEmpty ? existing.adminUserId : adminUserId,
+        groupStatus: nextIsDissolved ? 'dissolved' : groupStatus,
+        isDissolved: nextIsDissolved,
+        dissolvedByUserId: dissolvedByUserId ?? existing.dissolvedByUserId,
+        dissolvedAt: dissolvedAt ?? existing.dissolvedAt,
         archiveVersion: nextArchiveVersion > 0
             ? nextArchiveVersion
             : existing.archiveVersion,
@@ -1313,6 +1540,10 @@ extension AppControllerChatActions on AppController {
       members: _uniqueFriends(members),
       adminUserId: adminUserId,
       isGroup: true,
+      groupStatus: groupStatus,
+      isDissolved: isDissolved,
+      dissolvedByUserId: dissolvedByUserId,
+      dissolvedAt: dissolvedAt,
       messages: [],
       archiveVersion: nextArchiveVersion,
     );
@@ -1499,6 +1730,10 @@ extension AppControllerChatActions on AppController {
       title: title,
       members: group.members.where((member) => member.id != _user!.id).toList(),
       adminUserId: group.adminUserId,
+      groupStatus: group.status,
+      isDissolved: group.isDissolved,
+      dissolvedByUserId: group.dissolvedByUserId,
+      dissolvedAt: group.dissolvedAt,
       markDirty: false,
     );
   }
@@ -1513,7 +1748,10 @@ extension AppControllerChatActions on AppController {
   }
 
   bool _canSyncGroupConversation(ChatConversation conversation) {
-    return conversation.isGroup && _token != null && _vaultKey != null;
+    return conversation.isGroup &&
+        !conversation.isDissolved &&
+        _token != null &&
+        _vaultKey != null;
   }
 
   String _groupMessageStatus(
@@ -1576,6 +1814,10 @@ extension AppControllerChatActions on AppController {
       'isGroup': conversation.isGroup,
       'friendId': conversation.friend?.id ?? '',
       'adminUserId': conversation.adminUserId,
+      'groupStatus': conversation.groupStatus,
+      'isDissolved': conversation.isDissolved,
+      'dissolvedByUserId': conversation.dissolvedByUserId ?? '',
+      'dissolvedAt': conversation.dissolvedAt?.toIso8601String() ?? '',
       'members': conversation.members.map((member) => member.toJson()).toList(),
       'messages': conversation.messages.map((message) {
         return _messageToHistoryJson(message);
@@ -1638,6 +1880,15 @@ extension AppControllerChatActions on AppController {
       members: _uniqueFriends([...?existing?.members, ...rawMembers]),
       adminUserId:
           entry['adminUserId'] as String? ?? existing?.adminUserId ?? '',
+      groupStatus:
+          entry['groupStatus'] as String? ?? existing?.groupStatus ?? 'active',
+      isDissolved:
+          entry['isDissolved'] as bool? ?? existing?.isDissolved ?? false,
+      dissolvedByUserId:
+          entry['dissolvedByUserId'] as String? ?? existing?.dissolvedByUserId,
+      dissolvedAt:
+          DateTime.tryParse(entry['dissolvedAt'] as String? ?? '') ??
+          existing?.dissolvedAt,
     );
     final messages = _historyMessagesFromEntry(entry, groupId);
     final before = conversation.messages.length;

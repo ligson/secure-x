@@ -83,7 +83,9 @@ ensure_changelog_heading() {
 
 ensure_head_contains_changelog() {
   local tag="$1"
-  if ! git show HEAD:CHANGELOG.md | grep -Eq "^## \\[${tag//./\\.}\\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$"; then
+  local changelog_head
+  changelog_head="$(git show HEAD:CHANGELOG.md)"
+  if ! grep -Eq "^## \\[${tag//./\\.}\\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" <<<"${changelog_head}"; then
     echo "当前 HEAD 尚未包含 ${tag} 的 changelog 章节，请先提交 release commit 再打 tag。" >&2
     exit 1
   fi

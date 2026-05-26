@@ -46,7 +46,11 @@ extension AppControllerAuthActions on AppController {
     required String unlockPassword,
   }) async {
     await _runBusy(() async {
+      _statusMessage = '正在生成保险库密钥...';
+      notifyListeners();
       final bundle = await _cryptoService.createRegisterBundle(unlockPassword);
+      _statusMessage = '正在创建账号并上传加密配置...';
+      notifyListeners();
       final response = await _apiClient.register(
         baseUrl: _baseUrl,
         username: username.trim(),
@@ -62,8 +66,12 @@ extension AppControllerAuthActions on AppController {
       _user = UserProfile.fromJson(response['user'] as Map<String, dynamic>);
       _vaultKey = bundle.vaultKeyBytes;
       final tokenPersisted = await _persistToken(_token!);
+      _statusMessage = '正在初始化设备身份与保险库...';
+      notifyListeners();
       await _ensureChatIdentity(registerOnServer: true);
       await _loadVaultSnapshot();
+      _statusMessage = '正在同步好友与聊天归档...';
+      notifyListeners();
       await _loadFriendsSnapshot();
       await _loadChatSnapshot();
       _markAppShellChanged();
@@ -78,6 +86,8 @@ extension AppControllerAuthActions on AppController {
     required String authPassword,
   }) async {
     await _runBusy(() async {
+      _statusMessage = '正在登录并校验账号...';
+      notifyListeners();
       final response = await _apiClient.login(
         baseUrl: _baseUrl,
         identifier: identifier.trim(),
@@ -101,16 +111,24 @@ extension AppControllerAuthActions on AppController {
     }
 
     await _runBusy(() async {
+      _statusMessage = '正在验证解锁密码...';
+      notifyListeners();
       _vaultKey = await _cryptoService.unwrapVaultKey(
         wrappedVaultKey: _user!.wrappedVaultKey,
         unlockPassword: unlockPassword,
         saltBase64: _user!.masterKeySalt,
         iterations: _user!.masterKeyIterations,
       );
+      _statusMessage = '正在恢复本地保险库数据...';
+      notifyListeners();
       await _ensureChatIdentity(registerOnServer: true);
       await _loadVaultSnapshot();
+      _statusMessage = '正在同步好友、群聊和聊天归档...';
+      notifyListeners();
       await _loadFriendsSnapshot();
       await _loadChatSnapshot();
+      _statusMessage = '即将进入主页...';
+      notifyListeners();
       _markAppShellChanged();
       _statusMessage = '保险库已解锁。';
     });

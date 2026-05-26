@@ -84,6 +84,8 @@ type groupLeaveRequest struct {
 	NextAdminUserID string `json:"nextAdminUserId"`
 }
 
+type groupDissolveRequest struct{}
+
 type chatArchiveUpsertRequest struct {
 	Payload string `json:"payload" binding:"required"`
 	Version int    `json:"version"`

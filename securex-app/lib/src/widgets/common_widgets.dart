@@ -261,7 +261,7 @@ class _StatusLine extends StatelessWidget {
             ],
             Expanded(
               child: Text(
-                message ?? '处理中...',
+                message ?? '正在处理中，请稍候...',
                 style: Theme.of(
                   context,
                 ).textTheme.bodyMedium?.copyWith(color: context.sx.mutedText),

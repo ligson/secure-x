@@ -38,6 +38,9 @@ class RealtimeGroupControl {
     required this.memberIds,
     required this.adminUserId,
     required this.removedUserId,
+    this.groupStatus = 'active',
+    this.isDissolved = false,
+    this.dissolvedByUserId = '',
   });
 
   final String friendId;
@@ -48,6 +51,9 @@ class RealtimeGroupControl {
   final List<String> memberIds;
   final String adminUserId;
   final String removedUserId;
+  final String groupStatus;
+  final bool isDissolved;
+  final String dissolvedByUserId;
 }
 
 class RealtimeHistoryRequest {
@@ -291,6 +297,9 @@ class RealtimeChatService {
     required String removedUserId,
     required List<String> memberIds,
     required String adminUserId,
+    String groupStatus = 'active',
+    bool isDissolved = false,
+    String dissolvedByUserId = '',
   }) async {
     if (!connected) {
       return false;
@@ -313,6 +322,9 @@ class RealtimeChatService {
       'memberIds': memberIds,
       'adminUserId': adminUserId,
       'removedUserId': removedUserId,
+      'groupStatus': groupStatus,
+      'isDissolved': isDissolved,
+      'dissolvedByUserId': dissolvedByUserId,
     });
     final cipherText = await _encryptText(clearPayload, peer.sessionKey!);
     final payload = {
@@ -673,6 +685,9 @@ class RealtimeChatService {
               .toList(),
           adminUserId: payload['adminUserId'] as String? ?? '',
           removedUserId: payload['removedUserId'] as String? ?? '',
+          groupStatus: payload['groupStatus'] as String? ?? 'active',
+          isDissolved: payload['isDissolved'] as bool? ?? false,
+          dissolvedByUserId: payload['dissolvedByUserId'] as String? ?? '',
         ),
       );
       return;
@@ -795,6 +810,9 @@ class RealtimeChatService {
             .toList(),
         adminUserId: data['adminUserId'] as String? ?? '',
         removedUserId: data['removedUserId'] as String? ?? '',
+        groupStatus: data['groupStatus'] as String? ?? 'active',
+        isDissolved: data['isDissolved'] as bool? ?? false,
+        dissolvedByUserId: data['dissolvedByUserId'] as String? ?? '',
       ),
     );
   }

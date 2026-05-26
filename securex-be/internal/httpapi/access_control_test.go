@@ -214,6 +214,96 @@ func TestChatMessageDispatchRejectsUnauthorizedTargetDevice(t *testing.T) {
 	}, http.StatusForbidden)
 }
 
+func TestOnlyAdminCanDissolveGroup(t *testing.T) {
+	router, tokens, db := newAccessControlRouter(t)
+	createTestUser(t, db, "user-a", "alice", "alice@example.com")
+	createTestUser(t, db, "user-b", "bob", "bob@example.com")
+	tokenB := issueTestToken(t, tokens, "user-b")
+
+	createTestGroup(t, db, "group-test", "user-a", []string{"user-a", "user-b"})
+
+	assertJSONStatus(
+		t,
+		router,
+		http.MethodPost,
+		"/api/v1/groups/group-test/dissolve",
+		tokenB,
+		map[string]any{},
+		http.StatusForbidden,
+	)
+}
+
+func TestDissolveGroupRemovesAdminMembershipButKeepsMembersVisible(t *testing.T) {
+	router, tokens, db := newAccessControlRouter(t)
+	createTestUser(t, db, "user-a", "alice", "alice@example.com")
+	createTestUser(t, db, "user-b", "bob", "bob@example.com")
+	createTestUser(t, db, "user-c", "cindy", "cindy@example.com")
+	tokenA := issueTestToken(t, tokens, "user-a")
+	tokenB := issueTestToken(t, tokens, "user-b")
+
+	createTestGroup(
+		t,
+		db,
+		"group-test",
+		"user-a",
+		[]string{"user-a", "user-b", "user-c"},
+	)
+
+	assertJSONStatus(
+		t,
+		router,
+		http.MethodPost,
+		"/api/v1/groups/group-test/dissolve",
+		tokenA,
+		map[string]any{},
+		http.StatusOK,
+	)
+
+	var adminMembershipCount int64
+	if err := db.Model(&model.GroupMembership{}).
+		Where("group_id = ? AND user_id = ?", "group-test", "user-a").
+		Count(&adminMembershipCount).Error; err != nil {
+		t.Fatalf("count admin membership: %v", err)
+	}
+	if adminMembershipCount != 0 {
+		t.Fatalf("expected admin membership removed after dissolve, got %d", adminMembershipCount)
+	}
+
+	var room model.GroupRoom
+	if err := db.Where("id = ?", "group-test").First(&room).Error; err != nil {
+		t.Fatalf("find group room: %v", err)
+	}
+	if room.Status != "dissolved" {
+		t.Fatalf("expected group status dissolved, got %s", room.Status)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/groups", nil)
+	request.Header.Set("Authorization", "Bearer "+tokenB)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d: %s", http.StatusOK, response.Code, response.Body.String())
+	}
+
+	var body struct {
+		Data struct {
+			Groups []struct {
+				ID          string `json:"id"`
+				IsDissolved bool   `json:"isDissolved"`
+			} `json:"groups"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode group list: %v", err)
+	}
+	if len(body.Data.Groups) != 1 {
+		t.Fatalf("expected 1 dissolved group for remaining member, got %d", len(body.Data.Groups))
+	}
+	if body.Data.Groups[0].ID != "group-test" || !body.Data.Groups[0].IsDissolved {
+		t.Fatalf("expected remaining member to see dissolved group, got %+v", body.Data.Groups[0])
+	}
+}
+
 func newAccessControlRouter(t *testing.T) (http.Handler, *auth.TokenManager, *gorm.DB) {
 	t.Helper()
 
@@ -267,6 +357,36 @@ func createTestUser(t *testing.T, db *gorm.DB, id string, username string, email
 	}
 	if err := db.Create(&user).Error; err != nil {
 		t.Fatalf("create test user %s: %v", id, err)
+	}
+}
+
+func createTestGroup(t *testing.T, db *gorm.DB, groupID string, adminUserID string, memberIDs []string) {
+	t.Helper()
+
+	room := model.GroupRoom{
+		ID:            groupID,
+		CreatorUserID: adminUserID,
+		AdminUserID:   adminUserID,
+		Status:        "active",
+		Version:       1,
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+	if err := db.Create(&room).Error; err != nil {
+		t.Fatalf("create test group: %v", err)
+	}
+	for _, memberID := range memberIDs {
+		membership := model.GroupMembership{
+			ID:            memberID + "-" + groupID,
+			GroupID:       groupID,
+			UserID:        memberID,
+			AddedByUserID: adminUserID,
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
+		}
+		if err := db.Create(&membership).Error; err != nil {
+			t.Fatalf("create test group membership: %v", err)
+		}
 	}
 }
 

@@ -87,12 +87,15 @@ type Friendship struct {
 }
 
 type GroupRoom struct {
-	ID            string    `gorm:"primaryKey;size:64" json:"id"`
-	CreatorUserID string    `gorm:"index;size:36;not null" json:"creatorUserId"`
-	AdminUserID   string    `gorm:"index;size:36;not null" json:"adminUserId"`
-	Version       int       `gorm:"not null;default:1" json:"version"`
-	CreatedAt     time.Time `json:"createdAt"`
-	UpdatedAt     time.Time `json:"updatedAt"`
+	ID                string     `gorm:"primaryKey;size:64" json:"id"`
+	CreatorUserID     string     `gorm:"index;size:36;not null" json:"creatorUserId"`
+	AdminUserID       string     `gorm:"index;size:36;not null" json:"adminUserId"`
+	Status            string     `gorm:"index;size:24;not null;default:'active'" json:"status"`
+	DissolvedAt       *time.Time `json:"dissolvedAt,omitempty"`
+	DissolvedByUserID *string    `gorm:"size:36" json:"dissolvedByUserId,omitempty"`
+	Version           int        `gorm:"not null;default:1" json:"version"`
+	CreatedAt         time.Time  `json:"createdAt"`
+	UpdatedAt         time.Time  `json:"updatedAt"`
 }
 
 type GroupMembership struct {

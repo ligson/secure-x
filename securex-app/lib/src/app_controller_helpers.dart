@@ -454,6 +454,10 @@ extension AppControllerInternalHelpers on AppController {
           members: members,
           adminUserId: entry['adminUserId'] as String? ?? '',
           isGroup: true,
+          groupStatus: entry['groupStatus'] as String? ?? 'active',
+          isDissolved: entry['isDissolved'] as bool? ?? false,
+          dissolvedByUserId: entry['dissolvedByUserId'] as String?,
+          dissolvedAt: DateTime.tryParse(entry['dissolvedAt'] as String? ?? ''),
           messages: messages,
           archiveVersion: snapshotArchiveVersion,
         ),
@@ -495,6 +499,10 @@ extension AppControllerInternalHelpers on AppController {
         'friendId': conversation.friend?.id ?? '',
         'friend': conversation.friend?.toJson() ?? <String, dynamic>{},
         'adminUserId': conversation.adminUserId,
+        'groupStatus': conversation.groupStatus,
+        'isDissolved': conversation.isDissolved,
+        'dissolvedByUserId': conversation.dissolvedByUserId ?? '',
+        'dissolvedAt': conversation.dissolvedAt?.toIso8601String() ?? '',
         'members': conversation.members
             .map((member) => member.toJson())
             .toList(),
@@ -776,6 +784,7 @@ extension AppControllerInternalHelpers on AppController {
         !detailLoaded &&
         incoming.archiveVersion > 0 &&
         incoming.archiveVersion >= existing.archiveVersion;
+    final nextIsDissolved = existing.isDissolved || incoming.isDissolved;
     conversations[index] = existing.copyWith(
       title: incoming.title.isEmpty ? existing.title : incoming.title,
       friend: incoming.friend ?? existing.friend,
@@ -786,6 +795,11 @@ extension AppControllerInternalHelpers on AppController {
           ? existing.adminUserId
           : incoming.adminUserId,
       isGroup: incoming.isGroup,
+      groupStatus: nextIsDissolved ? 'dissolved' : incoming.groupStatus,
+      isDissolved: nextIsDissolved,
+      dissolvedByUserId:
+          incoming.dissolvedByUserId ?? existing.dissolvedByUserId,
+      dissolvedAt: incoming.dissolvedAt ?? existing.dissolvedAt,
       messages: detailLoaded || replaceWithSummary
           ? _sortMessages(incoming.messages)
           : _mergeMessagesReplacingCurrent(
@@ -868,6 +882,10 @@ extension AppControllerInternalHelpers on AppController {
       'friendId': conversation.friend?.id ?? '',
       'friend': conversation.friend?.toJson() ?? <String, dynamic>{},
       'adminUserId': conversation.adminUserId,
+      'groupStatus': conversation.groupStatus,
+      'isDissolved': conversation.isDissolved,
+      'dissolvedByUserId': conversation.dissolvedByUserId ?? '',
+      'dissolvedAt': conversation.dissolvedAt?.toIso8601String() ?? '',
       'members': conversation.members.map((member) => member.toJson()).toList(),
       'archiveVersion': archiveVersion,
       'messages': _chatConversationSummaryMessages(
@@ -887,6 +905,10 @@ extension AppControllerInternalHelpers on AppController {
       'friendId': conversation.friend?.id ?? '',
       'friend': conversation.friend?.toJson() ?? <String, dynamic>{},
       'adminUserId': conversation.adminUserId,
+      'groupStatus': conversation.groupStatus,
+      'isDissolved': conversation.isDissolved,
+      'dissolvedByUserId': conversation.dissolvedByUserId ?? '',
+      'dissolvedAt': conversation.dissolvedAt?.toIso8601String() ?? '',
       'members': conversation.members.map((member) => member.toJson()).toList(),
       'archiveVersion': archiveVersion,
       'messages': conversation.messages
@@ -963,6 +985,10 @@ extension AppControllerInternalHelpers on AppController {
             .where((member) => member.id != _user!.id)
             .toList(),
         adminUserId: group.adminUserId,
+        groupStatus: group.status,
+        isDissolved: group.isDissolved,
+        dissolvedByUserId: group.dissolvedByUserId,
+        dissolvedAt: group.dissolvedAt,
         markDirty: false,
       );
     }
