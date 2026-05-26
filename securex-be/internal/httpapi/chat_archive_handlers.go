@@ -63,6 +63,10 @@ func (h *Handler) upsertChatArchive(c *gin.Context) {
 		RespondFailure(c, http.StatusInternalServerError, "保存聊天归档失败")
 		return
 	}
+	if normalizeVersion(req.Version) < archive.Version {
+		RespondSuccess(c, http.StatusOK, "聊天归档版本较旧，已忽略本次覆盖", gin.H{})
+		return
+	}
 
 	archive.Payload = req.Payload
 	archive.Version = normalizeVersion(req.Version)
@@ -188,10 +192,14 @@ func (h *Handler) upsertChatArchiveConversations(c *gin.Context) {
 			if err != nil {
 				return err
 			}
+			nextVersion := normalizeVersion(item.Version)
+			if nextVersion < conversation.Version {
+				continue
+			}
 
 			conversation.SummaryPayload = strings.TrimSpace(item.SummaryPayload)
 			conversation.Payload = strings.TrimSpace(item.Payload)
-			conversation.Version = normalizeVersion(item.Version)
+			conversation.Version = nextVersion
 			if err := tx.Save(&conversation).Error; err != nil {
 				return err
 			}

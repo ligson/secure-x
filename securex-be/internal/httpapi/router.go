@@ -45,6 +45,7 @@ func NewRouter(db *gorm.DB, tokens *auth.TokenManager, fileStore *storage.FileSt
 		protected.Use(middleware.RequireAuth(tokens))
 		protected.GET("/sync/export", handler.exportVault)
 		protected.GET("/realtime/config", handler.realtimeConfig)
+		protected.GET("/realtime/presence", handler.realtimePresence)
 		protected.GET("/realtime/ws", handler.realtimeWebSocket)
 
 		protected.GET("/friends", handler.listFriends)

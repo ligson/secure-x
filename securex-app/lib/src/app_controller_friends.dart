@@ -51,6 +51,7 @@ extension AppControllerFriendActions on AppController {
       await _loadFriendsSnapshot();
       if (status == 'accepted') {
         await _ensureRealtimeChatConnected();
+        await _refreshRealtimePresenceSnapshot(userIds: [friendId]);
         await _requestHistoryFromPeer(friendId);
         _statusMessage = '好友关系已更新。';
       } else if (status == 'deleted') {

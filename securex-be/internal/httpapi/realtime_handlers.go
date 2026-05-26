@@ -39,6 +39,37 @@ func (h *Handler) realtimeConfig(c *gin.Context) {
 	})
 }
 
+func (h *Handler) realtimePresence(c *gin.Context) {
+	userID := middleware.CurrentUserID(c)
+	rawIDs := c.QueryArray("userIds")
+	if len(rawIDs) == 0 {
+		if single := strings.TrimSpace(c.Query("userIds")); single != "" {
+			rawIDs = strings.Split(single, ",")
+		}
+	}
+
+	peerIDs := normalizeUniqueIDs(rawIDs)
+	statuses := make([]gin.H, 0, len(peerIDs))
+	for _, peerID := range peerIDs {
+		if peerID == "" {
+			continue
+		}
+		if peerID != userID && !h.canExchangeRealtime(userID, peerID) {
+			continue
+		}
+		lastSeenAt := h.latestChatDeviceSeenAt(peerID)
+		statuses = append(statuses, gin.H{
+			"userId":     peerID,
+			"online":     h.realtimeHub.isOnline(peerID),
+			"lastSeenAt": lastSeenAt,
+		})
+	}
+
+	RespondSuccess(c, http.StatusOK, "在线状态快照已加载", gin.H{
+		"statuses": statuses,
+	})
+}
+
 var realtimeUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		return true
@@ -51,12 +82,12 @@ type realtimeHub struct {
 }
 
 type realtimeClient struct {
-	userID  string
+	userID   string
 	deviceID string
-	conn    *websocket.Conn
-	send    chan realtimeSignal
-	hub     *realtimeHub
-	writeMu sync.Mutex
+	conn     *websocket.Conn
+	send     chan realtimeSignal
+	hub      *realtimeHub
+	writeMu  sync.Mutex
 }
 
 type realtimeSignal struct {
@@ -199,6 +230,30 @@ func (h *realtimeHub) notifyChatPending(
 	})
 }
 
+func (h *realtimeHub) forwardToDevice(userID, deviceID string, signal realtimeSignal) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	clients := h.clients[userID]
+	if len(clients) == 0 {
+		return false
+	}
+
+	delivered := false
+	for client := range clients {
+		if client.deviceID == "" || client.deviceID != deviceID {
+			continue
+		}
+		delivered = true
+		select {
+		case client.send <- signal:
+		default:
+			log.Printf("实时信令未投递：to=%s, device=%s, type=%s, reason=发送队列已满", userID, deviceID, signal.Type)
+		}
+	}
+	return delivered
+}
+
 func (h *Handler) friendIDs(userID string) []string {
 	var friendships []model.Friendship
 	if err := h.db.Where("user_id = ?", userID).Find(&friendships).Error; err != nil {
@@ -274,10 +329,12 @@ func (c *realtimeClient) readLoop(handler *Handler) {
 	_ = c.conn.SetReadDeadline(time.Now().Add(realtimePongWait))
 	c.conn.SetPingHandler(func(appData string) error {
 		_ = c.conn.SetReadDeadline(time.Now().Add(realtimePongWait))
+		handler.touchChatDeviceActivity(c.userID, c.deviceID)
 		return c.writeControl(websocket.PongMessage, []byte(appData))
 	})
 	c.conn.SetPongHandler(func(appData string) error {
 		_ = c.conn.SetReadDeadline(time.Now().Add(realtimePongWait))
+		handler.touchChatDeviceActivity(c.userID, c.deviceID)
 		return nil
 	})
 
@@ -298,6 +355,7 @@ func (c *realtimeClient) readLoop(handler *Handler) {
 		if signal.Payload == nil {
 			signal.Payload = map[string]any{}
 		}
+		handler.touchChatDeviceActivity(c.userID, c.deviceID)
 		handler.realtimeHub.forward(signal.To, signal)
 	}
 }
@@ -347,4 +405,32 @@ func (c *realtimeClient) writeControl(messageType int, data []byte) error {
 		data,
 		time.Now().Add(realtimeWriteWait),
 	)
+}
+
+func (h *Handler) touchChatDeviceActivity(userID, deviceID string) {
+	if strings.TrimSpace(userID) == "" || strings.TrimSpace(deviceID) == "" {
+		return
+	}
+	_ = h.db.Model(&model.ChatDevice{}).
+		Where("id = ? AND user_id = ?", deviceID, userID).
+		Update("last_seen_at", time.Now()).
+		Error
+}
+
+func (h *Handler) latestChatDeviceSeenAt(userID string) string {
+	if strings.TrimSpace(userID) == "" {
+		return ""
+	}
+
+	var device model.ChatDevice
+	if err := h.db.
+		Where("user_id = ?", userID).
+		Order("last_seen_at desc").
+		First(&device).Error; err != nil {
+		return ""
+	}
+	if device.LastSeenAt.IsZero() {
+		return ""
+	}
+	return device.LastSeenAt.Format(time.RFC3339)
 }

@@ -16,8 +16,8 @@ extension AppControllerRuntimeActions on AppController {
       return;
     }
 
-    // 实时通知偶发丢失时，前台定时补拉待处理密文，避免必须手动下拉刷新。
-    _pendingChatPollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+    // 在线消息优先走 websocket 直推；这里保留较低频的补拉作为弱网兜底。
+    _pendingChatPollTimer = Timer.periodic(const Duration(seconds: 12), (_) {
       if (_token == null || _user == null || _vaultKey == null) {
         _stopPendingChatPolling();
         return;
@@ -96,6 +96,7 @@ extension AppControllerRuntimeActions on AppController {
           );
         }
         await _ensureRealtimeChatConnected(forceReconnect: forceReconnect);
+        await _refreshRealtimePresenceSnapshot();
         _historyRequestedPeerIds.clear();
         await _openRealtimePeersForHistorySync();
         _statusMessage = reason;

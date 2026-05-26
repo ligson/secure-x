@@ -659,6 +659,34 @@ class ApiClient {
         .toList();
   }
 
+  Future<List<ChatPresenceRecord>> listRealtimePresence({
+    required String baseUrl,
+    required String token,
+    required List<String> userIds,
+  }) async {
+    final ids = userIds
+        .map((entry) => entry.trim())
+        .where((entry) => entry.isNotEmpty)
+        .toSet()
+        .toList();
+    if (ids.isEmpty) {
+      return const [];
+    }
+
+    final data = _unwrapMap(
+      await _dio.get<Map<String, dynamic>>(
+        '$baseUrl/api/v1/realtime/presence',
+        queryParameters: {'userIds': ids},
+        options: _authorized(token),
+      ),
+    );
+    return (data['statuses'] as List<dynamic>? ?? const [])
+        .map(
+          (entry) => ChatPresenceRecord.fromJson(entry as Map<String, dynamic>),
+        )
+        .toList();
+  }
+
   Future<void> ackChatMessages({
     required String baseUrl,
     required String token,

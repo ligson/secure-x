@@ -160,6 +160,7 @@ func (h *Handler) acceptFriendRequest(c *gin.Context) {
 		return
 	}
 	h.notifyFriendshipChanged(request.RequesterID, request.AddresseeID, friendRequestAccepted)
+	h.notifyCurrentPresenceBetweenUsers(request.RequesterID, request.AddresseeID)
 
 	RespondSuccess(c, http.StatusOK, "已添加好友", gin.H{
 		"request": h.friendRequestResponse(request),
@@ -223,6 +224,23 @@ func (h *Handler) notifyFriendshipChanged(userID, friendID, status string) {
 		"friendId": userID,
 	}
 	h.realtimeHub.forward(friendID, signal)
+}
+
+func (h *Handler) notifyCurrentPresenceBetweenUsers(userID, friendID string) {
+	h.realtimeHub.forward(userID, realtimeSignal{
+		Type: "presence",
+		From: friendID,
+		Payload: map[string]any{
+			"online": h.realtimeHub.isOnline(friendID),
+		},
+	})
+	h.realtimeHub.forward(friendID, realtimeSignal{
+		Type: "presence",
+		From: userID,
+		Payload: map[string]any{
+			"online": h.realtimeHub.isOnline(userID),
+		},
+	})
 }
 
 func (h *Handler) acceptFriendRequestRecord(request *model.FriendRequest) error {

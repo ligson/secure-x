@@ -151,6 +151,9 @@ extension AppControllerInternalHelpers on AppController {
     );
     _incomingFriendRequests = requests['incoming'] ?? [];
     _outgoingFriendRequests = requests['outgoing'] ?? [];
+    await _refreshRealtimePresenceSnapshot(
+      userIds: _friends.map((friend) => friend.id).toList(),
+    );
     _markFriendsChanged();
   }
 
@@ -745,6 +748,12 @@ extension AppControllerInternalHelpers on AppController {
         return false;
       }
       final record = records.first;
+      final existingVersion =
+          _conversationById(conversationId)?.archiveVersion ?? 0;
+      final staleDetail =
+          existingVersion > 0 &&
+          record.version > 0 &&
+          record.version < existingVersion;
       final data = await _cryptoService.decryptJson(record.payload, _vaultKey!);
       _mergeConversationSnapshot(
         data,
@@ -752,7 +761,13 @@ extension AppControllerInternalHelpers on AppController {
         archiveVersion: record.version,
         detailLoaded: true,
       );
-      await _writeLocalChatDetailCache(conversationId, record.payload);
+      if (staleDetail) {
+        appLog(
+          '跳过回写旧会话详情缓存：conversationId=$conversationId, serverVersion=${record.version}, localVersion=$existingVersion',
+        );
+      } else {
+        await _writeLocalChatDetailCache(conversationId, record.payload);
+      }
       return true;
     } catch (error) {
       appLog('服务端会话详情加载失败：conversationId=$conversationId', error);
@@ -780,6 +795,10 @@ extension AppControllerInternalHelpers on AppController {
       return;
     }
     final existing = conversations[index];
+    final incomingOlderThanExisting =
+        incoming.archiveVersion > 0 &&
+        existing.archiveVersion > 0 &&
+        incoming.archiveVersion < existing.archiveVersion;
     final replaceWithSummary =
         !detailLoaded &&
         incoming.archiveVersion > 0 &&
@@ -800,16 +819,27 @@ extension AppControllerInternalHelpers on AppController {
       dissolvedByUserId:
           incoming.dissolvedByUserId ?? existing.dissolvedByUserId,
       dissolvedAt: incoming.dissolvedAt ?? existing.dissolvedAt,
-      messages: detailLoaded || replaceWithSummary
+      messages: detailLoaded
+          ? (incomingOlderThanExisting
+                ? _mergeMessages(existing.messages, incoming.messages)
+                : _sortMessages(incoming.messages))
+          : replaceWithSummary
           ? _sortMessages(incoming.messages)
           : _mergeMessagesReplacingCurrent(
               existing.messages,
               incoming.messages,
             ),
-      archiveVersion: incoming.archiveVersion > 0
+      archiveVersion: incomingOlderThanExisting
+          ? existing.archiveVersion
+          : incoming.archiveVersion > 0
           ? incoming.archiveVersion
           : existing.archiveVersion,
     );
+    if (detailLoaded && incomingOlderThanExisting) {
+      appLog(
+        '检测到旧会话详情，已按增量合并保留新消息：conversationId=${incoming.id}, incomingVersion=${incoming.archiveVersion}, currentVersion=${existing.archiveVersion}',
+      );
+    }
     _chatConversations = conversations;
     if (detailLoaded) {
       _loadedChatConversationIds.add(incoming.id);

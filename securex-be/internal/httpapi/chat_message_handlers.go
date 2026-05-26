@@ -179,6 +179,19 @@ func (h *Handler) dispatchChatMessages(c *gin.Context) {
 			envelope.RecipientDeviceID,
 			envelope.SenderUserID,
 		)
+		h.realtimeHub.forwardToDevice(envelope.RecipientUserID, envelope.RecipientDeviceID, realtimeSignal{
+			Type: "chat-envelope",
+			From: envelope.SenderUserID,
+			Payload: map[string]any{
+				"envelopeId":        envelope.ID,
+				"recipientDeviceId": envelope.RecipientDeviceID,
+				"senderUserId":      envelope.SenderUserID,
+				"senderDeviceId":    envelope.SenderDeviceID,
+				"protocol":          envelope.Protocol,
+				"payload":           envelope.Payload,
+				"createdAt":         envelope.CreatedAt,
+			},
+		})
 	}
 
 	RespondSuccess(c, http.StatusOK, "聊天消息已入队", gin.H{

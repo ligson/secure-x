@@ -82,6 +82,9 @@ class AppController extends ChangeNotifier {
         ),
       );
     };
+    _realtimeChatService.onQueuedEnvelope = (envelope) {
+      unawaited(_handleRealtimeQueuedEnvelope(envelope));
+    };
     _realtimeChatService.onPeerStatus = _handleRealtimePeerStatus;
     _realtimeChatService.onFriendshipUpdated = _handleRealtimeFriendshipUpdated;
     _realtimeChatService.onSignalingState = _handleRealtimeSignalingState;

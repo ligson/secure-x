@@ -75,6 +75,24 @@ class RealtimeHistoryResponse {
   final List<Map<String, dynamic>> conversations;
 }
 
+class RealtimeQueuedEnvelope {
+  RealtimeQueuedEnvelope({
+    required this.id,
+    required this.senderUserId,
+    required this.senderDeviceId,
+    required this.recipientDeviceId,
+    required this.protocol,
+    required this.payload,
+  });
+
+  final String id;
+  final String senderUserId;
+  final String senderDeviceId;
+  final String recipientDeviceId;
+  final String protocol;
+  final String payload;
+}
+
 class RealtimeChatService {
   final _x25519 = X25519();
   final _aesGcm = AesGcm.with256bits();
@@ -97,6 +115,7 @@ class RealtimeChatService {
   void Function(RealtimeHistoryResponse response)? onHistoryResponse;
   void Function(String friendId, String messageId)? onDelivered;
   void Function(String recipientDeviceId, String senderUserId)? onPendingChat;
+  void Function(RealtimeQueuedEnvelope envelope)? onQueuedEnvelope;
   void Function(String friendId, String status)? onPeerStatus;
   void Function(String friendId, String status)? onFriendshipUpdated;
   void Function(String status)? onSignalingState;
@@ -432,6 +451,18 @@ class RealtimeChatService {
         onPendingChat?.call(
           payload['recipientDeviceId'] as String? ?? '',
           from,
+        );
+        break;
+      case 'chat-envelope':
+        onQueuedEnvelope?.call(
+          RealtimeQueuedEnvelope(
+            id: payload['envelopeId'] as String? ?? '',
+            senderUserId: payload['senderUserId'] as String? ?? from,
+            senderDeviceId: payload['senderDeviceId'] as String? ?? '',
+            recipientDeviceId: payload['recipientDeviceId'] as String? ?? '',
+            protocol: payload['protocol'] as String? ?? '',
+            payload: payload['payload'] as String? ?? '',
+          ),
         );
         break;
       case 'connect-request':

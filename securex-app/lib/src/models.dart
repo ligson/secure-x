@@ -396,6 +396,7 @@ class ChatDeviceRecord {
     required this.protocolVersion,
     required this.publicKey,
     required this.appInstance,
+    this.lastSeenAt,
   });
 
   final String id;
@@ -404,6 +405,7 @@ class ChatDeviceRecord {
   final int protocolVersion;
   final String publicKey;
   final String appInstance;
+  final DateTime? lastSeenAt;
 
   factory ChatDeviceRecord.fromJson(Map<String, dynamic> json) {
     return ChatDeviceRecord(
@@ -413,6 +415,7 @@ class ChatDeviceRecord {
       protocolVersion: (json['protocolVersion'] as num?)?.toInt() ?? 1,
       publicKey: json['publicKey'] as String? ?? '',
       appInstance: json['appInstance'] as String? ?? '',
+      lastSeenAt: DateTime.tryParse(json['lastSeenAt'] as String? ?? ''),
     );
   }
 }
@@ -439,6 +442,26 @@ class QueuedChatEnvelopeRecord {
       senderDeviceId: json['senderDeviceId'] as String? ?? '',
       protocol: json['protocol'] as String? ?? '',
       payload: json['payload'] as String? ?? '',
+    );
+  }
+}
+
+class ChatPresenceRecord {
+  ChatPresenceRecord({
+    required this.userId,
+    required this.online,
+    this.lastSeenAt,
+  });
+
+  final String userId;
+  final bool online;
+  final DateTime? lastSeenAt;
+
+  factory ChatPresenceRecord.fromJson(Map<String, dynamic> json) {
+    return ChatPresenceRecord(
+      userId: json['userId'] as String? ?? '',
+      online: json['online'] as bool? ?? false,
+      lastSeenAt: DateTime.tryParse(json['lastSeenAt'] as String? ?? ''),
     );
   }
 }

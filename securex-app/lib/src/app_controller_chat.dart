@@ -53,6 +53,7 @@ extension AppControllerChatActions on AppController {
     if (!hadConversation) {
       notifyListeners();
     }
+    unawaited(_refreshRealtimePresenceSnapshot(userIds: [friend.id]));
     unawaited(_ensureRealtimeChatConnected());
   }
 
@@ -93,6 +94,11 @@ extension AppControllerChatActions on AppController {
     if (conversation == null || !conversation.isGroup) {
       return;
     }
+    unawaited(
+      _refreshRealtimePresenceSnapshot(
+        userIds: conversation.members.map((member) => member.id).toList(),
+      ),
+    );
     unawaited(_ensureRealtimeChatConnected());
   }
 
@@ -911,24 +917,11 @@ extension AppControllerChatActions on AppController {
         if (pending.isEmpty) {
           return;
         }
-        final ackIds = <String>[];
-        for (final envelope in pending) {
-          if (senderUserId.isNotEmpty &&
-              envelope.senderUserId.isNotEmpty &&
-              envelope.senderUserId != senderUserId) {
-            continue;
-          }
-          try {
-            final decrypted = await _chatProtocol.decryptEnvelope(
-              recipientIdentity: identity,
-              envelope: envelope,
-            );
-            await _handleDecryptedChatEnvelope(envelope, decrypted);
-            ackIds.add(envelope.id);
-          } catch (error) {
-            appLog('处理待同步聊天消息失败：messageId=${envelope.id}', error);
-          }
-        }
+        final ackIds = await _processQueuedChatEnvelopes(
+          identity: identity,
+          envelopes: pending,
+          senderUserId: senderUserId,
+        );
         if (ackIds.isEmpty) {
           return;
         }
@@ -945,7 +938,85 @@ extension AppControllerChatActions on AppController {
     await _pendingChatSyncTask;
   }
 
-  Future<void> _handleDecryptedChatEnvelope(
+  Future<void> _handleRealtimeQueuedEnvelope(
+    RealtimeQueuedEnvelope envelope,
+  ) async {
+    final identity = await _ensureChatIdentity(registerOnServer: true);
+    if (_token == null ||
+        identity == null ||
+        envelope.id.isEmpty ||
+        envelope.payload.isEmpty) {
+      return;
+    }
+    if (envelope.recipientDeviceId.isNotEmpty &&
+        envelope.recipientDeviceId != identity.deviceId) {
+      return;
+    }
+    appLog(
+      '收到实时加密信封：messageId=${envelope.id}, senderUserId=${envelope.senderUserId}, deviceId=${identity.deviceId}',
+    );
+
+    final ackIds = await _processQueuedChatEnvelopes(
+      identity: identity,
+      envelopes: [
+        QueuedChatEnvelopeRecord(
+          id: envelope.id,
+          senderUserId: envelope.senderUserId,
+          senderDeviceId: envelope.senderDeviceId,
+          protocol: envelope.protocol,
+          payload: envelope.payload,
+        ),
+      ],
+    );
+    if (ackIds.isEmpty) {
+      return;
+    }
+    try {
+      await _apiClient.ackChatMessages(
+        baseUrl: _baseUrl,
+        token: _token!,
+        deviceId: identity.deviceId,
+        messageIds: ackIds,
+      );
+    } catch (error) {
+      appLog('确认实时直推聊天消息失败', error);
+    }
+  }
+
+  Future<List<String>> _processQueuedChatEnvelopes({
+    required ChatIdentityBundle identity,
+    required List<QueuedChatEnvelopeRecord> envelopes,
+    String senderUserId = '',
+  }) async {
+    final ackIds = <String>[];
+    for (final envelope in envelopes) {
+      if (senderUserId.isNotEmpty &&
+          envelope.senderUserId.isNotEmpty &&
+          envelope.senderUserId != senderUserId) {
+        continue;
+      }
+      try {
+        final decrypted = await _chatProtocol.decryptEnvelope(
+          recipientIdentity: identity,
+          envelope: envelope,
+        );
+        appLog(
+          '聊天密文已解封：messageId=${envelope.id}, kind=${decrypted.kind}, senderUserId=${decrypted.senderUserId}',
+        );
+        final handled = await _handleDecryptedChatEnvelope(envelope, decrypted);
+        if (handled) {
+          ackIds.add(envelope.id);
+        } else {
+          appLog('聊天消息暂不确认，等待下次继续处理：messageId=${envelope.id}');
+        }
+      } catch (error) {
+        appLog('处理待同步聊天消息失败：messageId=${envelope.id}', error);
+      }
+    }
+    return ackIds;
+  }
+
+  Future<bool> _handleDecryptedChatEnvelope(
     QueuedChatEnvelopeRecord envelope,
     ChatDecryptedEnvelope decrypted,
   ) async {
@@ -954,28 +1025,31 @@ extension AppControllerChatActions on AppController {
         final messageId = decrypted.body['messageId'] as String? ?? '';
         final text = decrypted.body['text'] as String? ?? '';
         if (messageId.isEmpty || text.isEmpty) {
-          return;
+          return false;
         }
-        await _handleRealtimeIncomingMessage(
+        final handled = await _handleRealtimeIncomingMessage(
           RealtimeIncomingMessage(
             friendId: decrypted.senderUserId,
             messageId: messageId,
             text: text,
           ),
         );
+        if (!handled) {
+          return false;
+        }
         await _dispatchDeliveryAck(
           recipientUserId: decrypted.senderUserId,
           messageId: messageId,
         );
-        return;
+        return true;
       case 'group-message':
         final messageId = decrypted.body['messageId'] as String? ?? '';
         final text = decrypted.body['text'] as String? ?? '';
         final groupId = decrypted.body['groupId'] as String? ?? '';
         if (messageId.isEmpty || text.isEmpty || groupId.isEmpty) {
-          return;
+          return false;
         }
-        await _handleRealtimeIncomingMessage(
+        final handled = await _handleRealtimeIncomingMessage(
           RealtimeIncomingMessage(
             friendId: decrypted.senderUserId,
             messageId: messageId,
@@ -990,14 +1064,17 @@ extension AppControllerChatActions on AppController {
             adminUserId: decrypted.body['adminUserId'] as String? ?? '',
           ),
         );
+        if (!handled) {
+          return false;
+        }
         await _dispatchDeliveryAck(
           recipientUserId: decrypted.senderUserId,
           messageId: messageId,
           groupId: groupId,
         );
-        return;
+        return true;
       case 'group-control':
-        await _handleRealtimeGroupControl(
+        return _handleRealtimeGroupControl(
           RealtimeGroupControl(
             friendId: decrypted.senderUserId,
             controlId: decrypted.body['controlId'] as String? ?? envelope.id,
@@ -1013,17 +1090,15 @@ extension AppControllerChatActions on AppController {
             removedUserId: decrypted.body['removedUserId'] as String? ?? '',
           ),
         );
-        return;
       case 'history-request':
-        await _handleRealtimeHistoryRequest(
+        return _handleRealtimeHistoryRequest(
           RealtimeHistoryRequest(
             friendId: decrypted.senderUserId,
             requestId: decrypted.body['requestId'] as String? ?? '',
           ),
         );
-        return;
       case 'history-response':
-        await _handleRealtimeHistoryResponse(
+        return _handleRealtimeHistoryResponse(
           RealtimeHistoryResponse(
             friendId: decrypted.senderUserId,
             requestId: decrypted.body['requestId'] as String? ?? '',
@@ -1033,26 +1108,24 @@ extension AppControllerChatActions on AppController {
                     .toList(),
           ),
         );
-        return;
       case 'delivery-ack':
         final messageId = decrypted.body['messageId'] as String? ?? '';
         if (messageId.isEmpty) {
-          return;
+          return false;
         }
         await _markRealtimeMessageDelivered(decrypted.senderUserId, messageId);
-        return;
+        return true;
       default:
         appLog('收到未知聊天消息类型：${decrypted.kind}');
-        return;
+        return false;
     }
   }
 
-  Future<void> _handleRealtimeIncomingMessage(
+  Future<bool> _handleRealtimeIncomingMessage(
     RealtimeIncomingMessage incoming,
   ) async {
     if (incoming.groupId.isNotEmpty) {
-      await _handleRealtimeIncomingGroupMessage(incoming);
-      return;
+      return _handleRealtimeIncomingGroupMessage(incoming);
     }
 
     var friend = _knownChatPeerById(incoming.friendId);
@@ -1061,13 +1134,19 @@ extension AppControllerChatActions on AppController {
       friend = _knownChatPeerById(incoming.friendId);
     }
     if (friend == null) {
-      return;
+      appLog('实时单聊消息暂缓确认：未找到好友信息，friendId=${incoming.friendId}');
+      return false;
     }
     final messageFriend = friend;
     await _ensureChatConversationLoaded(messageFriend.id);
     if (_findMessage(messageFriend.id, incoming.messageId) != null) {
-      return;
+      appLog(
+        '实时单聊消息已存在，跳过重复落库：friendId=${messageFriend.id}, messageId=${incoming.messageId}',
+      );
+      return true;
     }
+    final beforeCount =
+        _findDirectConversation(messageFriend.id)?.messages.length ?? 0;
     _replaceConversationMessages(
       messageFriend,
       (messages) => [
@@ -1084,28 +1163,38 @@ extension AppControllerChatActions on AppController {
         ),
       ],
     );
+    final afterCount =
+        _findDirectConversation(messageFriend.id)?.messages.length ?? 0;
+    appLog(
+      '实时单聊消息已写入会话：friendId=${messageFriend.id}, messageId=${incoming.messageId}, before=$beforeCount, after=$afterCount',
+    );
     await _persistChatSnapshot();
     notifyListeners();
+    return true;
   }
 
-  Future<void> _handleRealtimeIncomingGroupMessage(
+  Future<bool> _handleRealtimeIncomingGroupMessage(
     RealtimeIncomingMessage incoming,
   ) async {
     if (_user == null || incoming.groupId.isEmpty) {
-      return;
+      return false;
     }
     if (incoming.memberIds.isNotEmpty &&
         !incoming.memberIds.contains(_user!.id)) {
-      return;
+      appLog('实时群消息暂缓确认：当前用户不在群成员列表中，groupId=${incoming.groupId}');
+      return false;
     }
     await _ensureChatConversationLoaded(incoming.groupId);
     final existingConversation = _conversationById(incoming.groupId);
     if (existingConversation?.isDissolved == true) {
-      return;
+      return true;
     }
     if (_findMessageInConversation(incoming.groupId, incoming.messageId) !=
         null) {
-      return;
+      appLog(
+        '实时群消息已存在，跳过重复落库：groupId=${incoming.groupId}, messageId=${incoming.messageId}',
+      );
+      return true;
     }
 
     var sender = _knownChatPeerById(incoming.friendId);
@@ -1115,7 +1204,8 @@ extension AppControllerChatActions on AppController {
       sender = _knownChatPeerById(incoming.friendId);
     }
     if (sender == null) {
-      return;
+      appLog('实时群消息暂缓确认：未找到发送者信息，friendId=${incoming.friendId}');
+      return false;
     }
     final messageSender = sender;
     final memberById = <String, PublicUser>{
@@ -1159,13 +1249,18 @@ extension AppControllerChatActions on AppController {
         ),
       ],
     );
+    final total = _conversationById(incoming.groupId)?.messages.length ?? 0;
+    appLog(
+      '实时群消息已写入会话：groupId=${incoming.groupId}, messageId=${incoming.messageId}, total=$total',
+    );
     await _persistChatSnapshot();
     notifyListeners();
+    return true;
   }
 
-  Future<void> _handleRealtimeGroupControl(RealtimeGroupControl control) async {
+  Future<bool> _handleRealtimeGroupControl(RealtimeGroupControl control) async {
     if (_user == null || control.groupId.isEmpty) {
-      return;
+      return false;
     }
     if (control.controlType == 'group-dissolved') {
       await _ensureChatConversationLoaded(control.groupId);
@@ -1180,7 +1275,7 @@ extension AppControllerChatActions on AppController {
       _statusMessage = '群聊已被群管理解散，你可以在群信息页删除该会话。';
       notifyListeners();
       await _persistChatSnapshot();
-      return;
+      return true;
     }
     if (control.removedUserId == _user!.id ||
         !control.memberIds.contains(_user!.id)) {
@@ -1188,7 +1283,7 @@ extension AppControllerChatActions on AppController {
       _statusMessage = '已退出群聊，当前账号的群消息记录已从缓存和归档中删除。';
       notifyListeners();
       await _persistChatSnapshot();
-      return;
+      return true;
     }
 
     await _ensureChatConversationLoaded(control.groupId);
@@ -1211,6 +1306,7 @@ extension AppControllerChatActions on AppController {
     );
     _statusMessage = '群聊成员已更新。';
     notifyListeners();
+    return true;
   }
 
   Future<List<PublicUser>> _resolveGroupControlMembers(
@@ -1320,6 +1416,46 @@ extension AppControllerChatActions on AppController {
     }
   }
 
+  Future<void> _refreshRealtimePresenceSnapshot({
+    List<String> userIds = const [],
+  }) async {
+    final token = _token;
+    if (token == null) {
+      return;
+    }
+
+    final peerIds = <String>{
+      ...userIds.where((entry) => entry.trim().isNotEmpty),
+      ..._friends.map((friend) => friend.id),
+      for (final conversation in _chatConversations)
+        ...conversation.members.map((member) => member.id),
+    }.where((entry) => entry.isNotEmpty && entry != _user?.id).toList();
+    if (peerIds.isEmpty) {
+      return;
+    }
+
+    try {
+      final statuses = await _apiClient.listRealtimePresence(
+        baseUrl: _baseUrl,
+        token: token,
+        userIds: peerIds,
+      );
+      var changed = false;
+      for (final status in statuses) {
+        if (_chatFriendOnline[status.userId] != status.online) {
+          _chatFriendOnline[status.userId] = status.online;
+          changed = true;
+        }
+      }
+      if (changed) {
+        _markChatChanged();
+        notifyListeners();
+      }
+    } catch (error) {
+      appLog('刷新在线状态快照失败', error);
+    }
+  }
+
   Future<void> _requestHistoryFromPeer(String friendId) async {
     if (_historyRequestedPeerIds.contains(friendId)) {
       return;
@@ -1338,12 +1474,15 @@ extension AppControllerChatActions on AppController {
     }
   }
 
-  Future<void> _handleRealtimeHistoryRequest(
+  Future<bool> _handleRealtimeHistoryRequest(
     RealtimeHistoryRequest request,
   ) async {
     final friend = _knownChatPeerById(request.friendId);
     if (friend == null || request.requestId.isEmpty) {
-      return;
+      if (friend == null) {
+        appLog('实时历史请求暂缓确认：未找到好友信息，friendId=${request.friendId}');
+      }
+      return false;
     }
     final conversations = await _historyConversationsForPeer(friend.id);
     try {
@@ -1354,15 +1493,18 @@ extension AppControllerChatActions on AppController {
       );
     } catch (error) {
       appLog('实时聊天历史同步响应失败', error);
+      return false;
     }
+    return true;
   }
 
-  Future<void> _handleRealtimeHistoryResponse(
+  Future<bool> _handleRealtimeHistoryResponse(
     RealtimeHistoryResponse response,
   ) async {
     final friend = _knownChatPeerById(response.friendId);
     if (friend == null) {
-      return;
+      appLog('实时历史响应暂缓确认：未找到好友信息，friendId=${response.friendId}');
+      return false;
     }
     var changed = false;
     for (final entry in response.conversations) {
@@ -1374,12 +1516,13 @@ extension AppControllerChatActions on AppController {
       }
     }
     if (!changed) {
-      return;
+      return true;
     }
     _statusMessage = '聊天历史已从在线好友同步。';
     await _persistChatSnapshot();
     await _syncKnownGroupSnapshotsSilently();
     notifyListeners();
+    return true;
   }
 
   void _replaceMessage(
