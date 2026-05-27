@@ -74,14 +74,7 @@ extension AppControllerSessionActions on AppController {
     if (folderId == null || folderId.isEmpty) {
       return '未分类';
     }
-
-    for (final folder in _folders) {
-      if (folder.id == folderId) {
-        return folder.name;
-      }
-    }
-
-    return '未知文件夹';
+    return _passwordFolderPathById(folderId) ?? '未知分类';
   }
 
   String fileFolderNameById(String? folderId) {
@@ -96,5 +89,115 @@ extension AppControllerSessionActions on AppController {
     }
 
     return '未知文件夹';
+  }
+
+  List<DecryptedFolder> orderedPasswordFolders() {
+    final folders = [..._folders];
+    final childrenByParent = <String, List<DecryptedFolder>>{};
+    for (final folder in folders) {
+      final parentId = folder.parentFolderId ?? '';
+      childrenByParent.putIfAbsent(parentId, () => []).add(folder);
+    }
+    for (final children in childrenByParent.values) {
+      children.sort(
+        (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+      );
+    }
+
+    final ordered = <DecryptedFolder>[];
+    void visit(String parentId) {
+      for (final folder
+          in childrenByParent[parentId] ?? const <DecryptedFolder>[]) {
+        ordered.add(folder);
+        visit(folder.id);
+      }
+    }
+
+    visit('');
+    return ordered;
+  }
+
+  int passwordFolderDepth(String folderId) {
+    final depthById = <String, int>{};
+    int compute(String currentId, Set<String> visiting) {
+      final cached = depthById[currentId];
+      if (cached != null) {
+        return cached;
+      }
+      if (!visiting.add(currentId)) {
+        return 0;
+      }
+      DecryptedFolder? folder;
+      for (final entry in _folders) {
+        if (entry.id == currentId) {
+          folder = entry;
+          break;
+        }
+      }
+      if (folder == null || (folder.parentFolderId ?? '').isEmpty) {
+        depthById[currentId] = 0;
+        visiting.remove(currentId);
+        return 0;
+      }
+      final depth = compute(folder.parentFolderId!, visiting) + 1;
+      depthById[currentId] = depth;
+      visiting.remove(currentId);
+      return depth;
+    }
+
+    return compute(folderId, <String>{});
+  }
+
+  Set<String> passwordFolderFamilyIds(String folderId) {
+    final result = <String>{folderId};
+    var changed = true;
+    while (changed) {
+      changed = false;
+      for (final folder in _folders) {
+        final parentId = folder.parentFolderId ?? '';
+        if (result.contains(parentId) && result.add(folder.id)) {
+          changed = true;
+        }
+      }
+    }
+    return result;
+  }
+
+  bool canMovePasswordFolder({
+    required String folderId,
+    required String nextParentFolderId,
+  }) {
+    if (folderId.isEmpty || nextParentFolderId.isEmpty) {
+      return true;
+    }
+    return !passwordFolderFamilyIds(folderId).contains(nextParentFolderId);
+  }
+
+  String passwordFolderLabel(DecryptedFolder folder) {
+    final depth = passwordFolderDepth(folder.id);
+    final prefix = depth <= 0 ? '' : '  ' * depth;
+    return '$prefix${folder.name}';
+  }
+
+  String? _passwordFolderPathById(String folderId) {
+    final folderById = {for (final folder in _folders) folder.id: folder};
+    final visited = <String>{};
+    final parts = <String>[];
+    var currentId = folderId;
+    while (currentId.isNotEmpty) {
+      if (!visited.add(currentId)) {
+        break;
+      }
+      final folder = folderById[currentId];
+      if (folder == null) {
+        break;
+      }
+      parts.insert(0, folder.name);
+      currentId = folder.parentFolderId ?? '';
+    }
+    if (parts.isEmpty) {
+      return null;
+    }
+    return parts.join(' / ');
   }
 }

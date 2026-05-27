@@ -15,6 +15,7 @@ class _PasswordFolderManagerPage extends StatefulWidget {
 class _PasswordFolderManagerPageState
     extends State<_PasswordFolderManagerPage> {
   final _nameController = TextEditingController();
+  String _parentFolderId = '';
   String? _localMessage;
 
   @override
@@ -28,7 +29,7 @@ class _PasswordFolderManagerPageState
     return AnimatedBuilder(
       animation: widget.controller,
       builder: (context, _) {
-        final folders = widget.controller.folders;
+        final folders = widget.controller.orderedPasswordFolders();
         return Scaffold(
           appBar: AppBar(title: const Text('分类管理')),
           body: SafeArea(
@@ -55,25 +56,38 @@ class _PasswordFolderManagerPageState
                                   ?.copyWith(fontWeight: FontWeight.w800),
                             ),
                             const SizedBox(height: 12),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: TextField(
-                                    controller: _nameController,
-                                    decoration: const InputDecoration(
-                                      hintText: '分类名称',
-                                    ),
-                                    onSubmitted: (_) => _createFolder(),
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                FilledButton(
-                                  onPressed: widget.controller.busy
-                                      ? null
-                                      : _createFolder,
-                                  child: const Text('新增'),
-                                ),
-                              ],
+                            TextField(
+                              controller: _nameController,
+                              decoration: const InputDecoration(
+                                hintText: '分类名称',
+                              ),
+                              onSubmitted: (_) => _createFolder(),
+                            ),
+                            const SizedBox(height: 12),
+                            DropdownButtonFormField<String>(
+                              initialValue: _parentFolderId,
+                              items: _folderItems(
+                                folders: folders,
+                                currentFolderId: null,
+                              ),
+                              onChanged: (value) {
+                                setState(() {
+                                  _parentFolderId = value ?? '';
+                                });
+                              },
+                              decoration: const InputDecoration(
+                                labelText: '父分类',
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: FilledButton(
+                                onPressed: widget.controller.busy
+                                    ? null
+                                    : _createFolder,
+                                child: const Text('新增'),
+                              ),
                             ),
                           ],
                         ),
@@ -113,7 +127,15 @@ class _PasswordFolderManagerPageState
                                 final folder = folders[index];
                                 final itemCount = _countItems(folder);
                                 final childCount = _countChildren(folder);
+                                final depth = widget.controller
+                                    .passwordFolderDepth(folder.id);
                                 return ListTile(
+                                  contentPadding: EdgeInsets.fromLTRB(
+                                    16 + depth * 18.0,
+                                    8,
+                                    8,
+                                    8,
+                                  ),
                                   leading: Container(
                                     width: 38,
                                     height: 38,
@@ -121,14 +143,16 @@ class _PasswordFolderManagerPageState
                                       color: context.sx.subtle,
                                       borderRadius: BorderRadius.circular(12),
                                     ),
-                                    child: const Icon(
-                                      Icons.folder_outlined,
+                                    child: Icon(
+                                      depth == 0
+                                          ? Icons.folder_outlined
+                                          : Icons.subdirectory_arrow_right,
                                       size: 18,
                                     ),
                                   ),
                                   title: Text(folder.name),
                                   subtitle: Text(
-                                    '$itemCount 个密码 · $childCount 个子分类',
+                                    '$itemCount 个当前分类密码 · $childCount 个子分类',
                                   ),
                                   trailing: PopupMenuButton<String>(
                                     onSelected: (value) async {
@@ -167,6 +191,31 @@ class _PasswordFolderManagerPageState
     );
   }
 
+  List<DropdownMenuItem<String>> _folderItems({
+    required List<DecryptedFolder> folders,
+    required String? currentFolderId,
+  }) {
+    return [
+      const DropdownMenuItem<String>(value: '', child: Text('顶级分类')),
+      ...folders
+          .where(
+            (folder) =>
+                currentFolderId == null ||
+                (folder.id != currentFolderId &&
+                    widget.controller.canMovePasswordFolder(
+                      folderId: currentFolderId,
+                      nextParentFolderId: folder.id,
+                    )),
+          )
+          .map(
+            (folder) => DropdownMenuItem<String>(
+              value: folder.id,
+              child: Text(widget.controller.passwordFolderLabel(folder)),
+            ),
+          ),
+    ];
+  }
+
   int _countItems(DecryptedFolder folder) {
     return widget.controller.items
         .where((item) => item.folderId == folder.id)
@@ -192,11 +241,17 @@ class _PasswordFolderManagerPageState
     }
 
     try {
-      await widget.controller.createFolder(name);
+      await widget.controller.upsertFolder(
+        name: name,
+        parentFolderId: _parentFolderId,
+      );
       if (!mounted) {
         return;
       }
       _nameController.clear();
+      setState(() {
+        _parentFolderId = '';
+      });
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('分类已新增')));
@@ -204,20 +259,24 @@ class _PasswordFolderManagerPageState
   }
 
   Future<void> _editFolder(DecryptedFolder folder) async {
-    final name = await Navigator.of(context).push<String>(
+    final result = await Navigator.of(context).push<_FolderDraft>(
       MaterialPageRoute(
-        builder: (context) => _PasswordFolderEditorPage(folder: folder),
+        builder: (context) => _PasswordFolderEditorPage(
+          controller: widget.controller,
+          folder: folder,
+          folders: widget.controller.orderedPasswordFolders(),
+        ),
       ),
     );
-    if (name == null || name.isEmpty) {
+    if (result == null || result.name.isEmpty) {
       return;
     }
 
     try {
       await widget.controller.upsertFolder(
-        name: name,
+        name: result.name,
         existing: folder,
-        parentFolderId: folder.parentFolderId ?? '',
+        parentFolderId: result.parentFolderId,
       );
     } catch (_) {}
   }
@@ -279,9 +338,15 @@ class _PasswordFolderManagerPageState
 }
 
 class _PasswordFolderEditorPage extends StatefulWidget {
-  const _PasswordFolderEditorPage({required this.folder});
+  const _PasswordFolderEditorPage({
+    required this.controller,
+    required this.folder,
+    required this.folders,
+  });
 
+  final AppController controller;
   final DecryptedFolder folder;
+  final List<DecryptedFolder> folders;
 
   @override
   State<_PasswordFolderEditorPage> createState() =>
@@ -290,18 +355,41 @@ class _PasswordFolderEditorPage extends StatefulWidget {
 
 class _PasswordFolderEditorPageState extends State<_PasswordFolderEditorPage> {
   late final TextEditingController _nameController;
+  late String _parentFolderId;
   String? _localMessage;
 
   @override
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: widget.folder.name);
+    _parentFolderId = widget.folder.parentFolderId ?? '';
   }
 
   @override
   void dispose() {
     _nameController.dispose();
     super.dispose();
+  }
+
+  List<DropdownMenuItem<String>> _folderItems() {
+    return [
+      const DropdownMenuItem<String>(value: '', child: Text('顶级分类')),
+      ...widget.folders
+          .where(
+            (folder) =>
+                folder.id != widget.folder.id &&
+                widget.controller.canMovePasswordFolder(
+                  folderId: widget.folder.id,
+                  nextParentFolderId: folder.id,
+                ),
+          )
+          .map(
+            (folder) => DropdownMenuItem<String>(
+              value: folder.id,
+              child: Text(widget.controller.passwordFolderLabel(folder)),
+            ),
+          ),
+    ];
   }
 
   @override
@@ -329,6 +417,17 @@ class _PasswordFolderEditorPageState extends State<_PasswordFolderEditorPage> {
                           controller: _nameController,
                           decoration: const InputDecoration(labelText: '分类名称'),
                           onSubmitted: (_) => _submit(),
+                        ),
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          initialValue: _parentFolderId,
+                          items: _folderItems(),
+                          onChanged: (value) {
+                            setState(() {
+                              _parentFolderId = value ?? '';
+                            });
+                          },
+                          decoration: const InputDecoration(labelText: '父分类'),
                         ),
                         if (_localMessage != null) ...[
                           const SizedBox(height: 12),
@@ -377,6 +476,8 @@ class _PasswordFolderEditorPageState extends State<_PasswordFolderEditorPage> {
       });
       return;
     }
-    Navigator.of(context).pop(name);
+    Navigator.of(
+      context,
+    ).pop(_FolderDraft(name: name, parentFolderId: _parentFolderId));
   }
 }

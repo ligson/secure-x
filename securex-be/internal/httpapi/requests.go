@@ -33,6 +33,11 @@ type changeUnlockPasswordRequest struct {
 	WrappedVaultKey     string `json:"wrappedVaultKey" binding:"required"`
 }
 
+type updateProfileRequest struct {
+	Nickname     string `json:"nickname"`
+	AvatarPreset string `json:"avatarPreset"`
+}
+
 type folderUpsertRequest struct {
 	ParentFolderID *string `json:"parentFolderId"`
 	Payload        string  `json:"payload" binding:"required"`
@@ -65,6 +70,11 @@ type fileUploadCompleteRequest struct {
 type friendRequestCreateRequest struct {
 	Identifier string `json:"identifier" binding:"required"`
 	Message    string `json:"message"`
+}
+
+type friendAliasUpsertRequest struct {
+	Payload string `json:"payload" binding:"required"`
+	Version int    `json:"version"`
 }
 
 type groupUpsertRequest struct {
@@ -171,6 +181,8 @@ func validationErrorMessage(fieldErr validator.FieldError) string {
 		return "缺少主密钥迭代次数参数"
 	case "WrappedVaultKey":
 		return "缺少封装后的保险库密钥"
+	case "Nickname":
+		return "请输入昵称"
 	case "Payload":
 		return "缺少加密负载内容"
 	case "ConversationID":

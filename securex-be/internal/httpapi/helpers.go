@@ -20,6 +20,8 @@ func userResponse(user model.User) gin.H {
 	return gin.H{
 		"id":                  user.ID,
 		"username":            user.Username,
+		"nickname":            user.Nickname,
+		"avatarPreset":        defaultAvatarPreset(user.AvatarPreset),
 		"email":               user.Email,
 		"kdfAlgorithm":        user.KDFAlgorithm,
 		"masterKeySalt":       user.MasterKeySalt,
@@ -28,6 +30,51 @@ func userResponse(user model.User) gin.H {
 		"createdAt":           user.CreatedAt,
 		"updatedAt":           user.UpdatedAt,
 	}
+}
+
+func friendAliasResponse(alias model.FriendAlias) gin.H {
+	return gin.H{
+		"friendId":  alias.FriendID,
+		"payload":   alias.Payload,
+		"version":   alias.Version,
+		"createdAt": alias.CreatedAt,
+		"updatedAt": alias.UpdatedAt,
+	}
+}
+
+var allowedAvatarPresets = map[string]struct{}{
+	"sunrise": {},
+	"forest":  {},
+	"ocean":   {},
+	"ember":   {},
+	"violet":  {},
+	"sky":     {},
+	"stone":   {},
+	"mint":    {},
+	"orbit":   {},
+	"shield":  {},
+}
+
+func defaultAvatarPreset(value string) string {
+	normalized := strings.TrimSpace(value)
+	if normalized == "" {
+		return "sunrise"
+	}
+	if _, ok := allowedAvatarPresets[normalized]; ok {
+		return normalized
+	}
+	return "sunrise"
+}
+
+func normalizeAvatarPreset(value string) string {
+	normalized := strings.TrimSpace(value)
+	if normalized == "" {
+		return ""
+	}
+	if _, ok := allowedAvatarPresets[normalized]; ok {
+		return normalized
+	}
+	return ""
 }
 
 func normalizeVersion(version int) int {
@@ -101,6 +148,30 @@ func (h *Handler) folderInUse(userID, folderID string) (bool, error) {
 		return true, nil
 	}
 
+	return false, nil
+}
+
+func (h *Handler) passwordFolderIsDescendant(userID, folderID, candidateParentID string) (bool, error) {
+	currentIDs := []string{folderID}
+	visited := map[string]struct{}{}
+	for len(currentIDs) > 0 {
+		nextIDs := make([]string, 0)
+		var children []model.Folder
+		if err := h.db.Where("user_id = ? AND parent_folder_id IN ?", userID, currentIDs).Find(&children).Error; err != nil {
+			return false, err
+		}
+		for _, child := range children {
+			if child.ID == candidateParentID {
+				return true, nil
+			}
+			if _, ok := visited[child.ID]; ok {
+				continue
+			}
+			visited[child.ID] = struct{}{}
+			nextIDs = append(nextIDs, child.ID)
+		}
+		currentIDs = nextIDs
+	}
 	return false, nil
 }
 

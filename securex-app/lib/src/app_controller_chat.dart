@@ -3,6 +3,53 @@
 part of 'app_controller.dart';
 
 extension AppControllerChatActions on AppController {
+  Future<void> activateConversation(String conversationId) async {
+    final id = conversationId.trim();
+    if (id.isEmpty) {
+      return;
+    }
+    _activeConversationIds.add(id);
+    await _ensureChatConversationLoaded(id);
+    await markConversationRead(id);
+  }
+
+  void deactivateConversation(String conversationId) {
+    final id = conversationId.trim();
+    if (id.isEmpty) {
+      return;
+    }
+    _activeConversationIds.remove(id);
+  }
+
+  Future<void> markConversationRead(String conversationId) async {
+    final id = conversationId.trim();
+    if (id.isEmpty) {
+      return;
+    }
+    final conversation = _conversationById(id);
+    if (conversation == null) {
+      return;
+    }
+    final hasUnread = conversation.messages.any(
+      (message) => !message.sentByMe && !message.isRead,
+    );
+    if (!hasUnread) {
+      return;
+    }
+    _replaceConversationMessagesById(
+      id,
+      (messages) => messages
+          .map(
+            (message) => !message.sentByMe && !message.isRead
+                ? message.copyWith(isRead: true)
+                : message,
+          )
+          .toList(),
+    );
+    await _persistChatSnapshot();
+    notifyListeners();
+  }
+
   Future<void> refreshRealtimeConfig() async {
     if (_token == null) {
       return;
@@ -66,6 +113,7 @@ extension AppControllerChatActions on AppController {
     final conversation = ChatConversation(
       id: 'group-${DateTime.now().microsecondsSinceEpoch}',
       title: title.trim().isEmpty ? '未命名群聊' : title.trim(),
+      avatarPreset: secureXDefaultGroupAvatarPreset,
       members: cleanMembers,
       adminUserId: _user?.id ?? '',
       isGroup: true,
@@ -135,6 +183,7 @@ extension AppControllerChatActions on AppController {
   Future<void> updateGroupChat({
     required String conversationId,
     String? title,
+    String? avatarPreset,
     List<PublicUser>? members,
     String? adminUserId,
     bool syncServer = true,
@@ -152,10 +201,54 @@ extension AppControllerChatActions on AppController {
       notifyListeners();
       return;
     }
+    final currentUserId = _user?.id ?? '';
+    final existingConversation = conversations[index];
+    final isAdmin = existingConversation.adminUserId == currentUserId;
+    final nextTitle = title?.trim();
+    final nextAvatarPreset = avatarPreset == null
+        ? null
+        : normalizeSecureXAvatarPreset(avatarPreset, group: true);
+    final nextAdminUserId = adminUserId?.trim();
+    final currentMemberIds = existingConversation.members
+        .map((member) => member.id)
+        .where((id) => id.isNotEmpty)
+        .toList();
+    final nextMemberIds = (members ?? existingConversation.members)
+        .map((member) => member.id)
+        .where((id) => id.isNotEmpty)
+        .toList();
+    final addedMemberIds = nextMemberIds
+        .where((id) => !currentMemberIds.contains(id))
+        .toList();
+    final removedMemberIds = currentMemberIds
+        .where((id) => !nextMemberIds.contains(id))
+        .toList();
+    final titleChanged =
+        nextTitle != null &&
+        nextTitle.isNotEmpty &&
+        nextTitle != existingConversation.title;
+    final avatarChanged =
+        nextAvatarPreset != null &&
+        nextAvatarPreset != existingConversation.avatarPreset;
+    final adminChanged =
+        nextAdminUserId != null &&
+        nextAdminUserId.isNotEmpty &&
+        nextAdminUserId != existingConversation.adminUserId;
+    if (!isAdmin && (titleChanged || avatarChanged || adminChanged)) {
+      _statusMessage = '只有群管理才能修改群名称、群头像或转让群管理。';
+      notifyListeners();
+      return;
+    }
+    if (!isAdmin && removedMemberIds.isNotEmpty) {
+      _statusMessage = '只有群管理才能移除群成员。';
+      notifyListeners();
+      return;
+    }
 
     final archiveVersion = _nextChatArchiveVersion();
     conversations[index] = conversations[index].copyWith(
       title: title,
+      avatarPreset: nextAvatarPreset,
       members: members == null ? null : _uniqueFriends(members),
       adminUserId: adminUserId,
       archiveVersion: archiveVersion,
@@ -170,7 +263,114 @@ extension AppControllerChatActions on AppController {
     } else {
       await _syncGroupSnapshotForConversation(updatedConversation);
     }
+    if (syncServer) {
+      await _notifyGroupConversationUpdated(
+        before: existingConversation,
+        after: updatedConversation,
+        addedMemberIds: addedMemberIds,
+        removedMemberIds: removedMemberIds,
+        titleChanged: titleChanged,
+        avatarChanged: avatarChanged,
+        adminChanged: adminChanged,
+      );
+    }
     await _persistChatSnapshot();
+  }
+
+  Future<void> renameGroupChat({
+    required String conversationId,
+    required String title,
+  }) async {
+    final conversation = _conversationById(conversationId);
+    if (conversation == null || !conversation.isGroup) {
+      return;
+    }
+    final cleanTitle = title.trim();
+    if (cleanTitle.isEmpty) {
+      _statusMessage = '群名称不能为空。';
+      notifyListeners();
+      return;
+    }
+    if ((_user?.id ?? '') != conversation.adminUserId) {
+      _statusMessage = '只有群管理才能修改群名称。';
+      notifyListeners();
+      return;
+    }
+    if (cleanTitle == conversation.title) {
+      _statusMessage = '群名称未发生变化。';
+      notifyListeners();
+      return;
+    }
+    await updateGroupChat(conversationId: conversationId, title: cleanTitle);
+    _statusMessage = '群名称已更新。';
+    notifyListeners();
+  }
+
+  Future<void> changeGroupAvatar({
+    required String conversationId,
+    required String avatarPreset,
+  }) async {
+    final conversation = _conversationById(conversationId);
+    if (conversation == null || !conversation.isGroup) {
+      return;
+    }
+    final normalized = normalizeSecureXAvatarPreset(avatarPreset, group: true);
+    if ((_user?.id ?? '') != conversation.adminUserId) {
+      _statusMessage = '只有群管理才能修改群头像。';
+      notifyListeners();
+      return;
+    }
+    if (normalized == conversation.avatarPreset) {
+      _statusMessage = '群头像未发生变化。';
+      notifyListeners();
+      return;
+    }
+    await updateGroupChat(
+      conversationId: conversationId,
+      avatarPreset: normalized,
+    );
+    _statusMessage = '群头像已更新。';
+    notifyListeners();
+  }
+
+  Future<void> transferGroupAdmin({
+    required String conversationId,
+    required String nextAdminUserId,
+  }) async {
+    final conversation = _conversationById(conversationId);
+    if (conversation == null || !conversation.isGroup) {
+      return;
+    }
+    final cleanUserId = nextAdminUserId.trim();
+    if (cleanUserId.isEmpty) {
+      _statusMessage = '请选择新的群管理。';
+      notifyListeners();
+      return;
+    }
+    if ((_user?.id ?? '') != conversation.adminUserId) {
+      _statusMessage = '只有当前群管理才能转让群管理。';
+      notifyListeners();
+      return;
+    }
+    if (cleanUserId == conversation.adminUserId) {
+      _statusMessage = '新的群管理与当前一致。';
+      notifyListeners();
+      return;
+    }
+    final memberExists = conversation.members.any(
+      (member) => member.id == cleanUserId,
+    );
+    if (!memberExists) {
+      _statusMessage = '新的群管理必须是当前群成员。';
+      notifyListeners();
+      return;
+    }
+    await updateGroupChat(
+      conversationId: conversationId,
+      adminUserId: cleanUserId,
+    );
+    _statusMessage = '群管理已转让。';
+    notifyListeners();
   }
 
   Future<void> leaveGroupChat(String conversationId) async {
@@ -201,6 +401,7 @@ extension AppControllerChatActions on AppController {
       removedUserId: currentUser.id,
       memberIds: remainingMembers.map((member) => member.id).toList(),
       adminUserId: nextAdminUserId,
+      groupAvatarPreset: conversation.avatarPreset,
     );
     _deleteGroupConversation(conversation.id);
     _statusMessage = '已退出群聊，当前账号的群消息记录已从缓存和归档中删除。';
@@ -243,6 +444,7 @@ extension AppControllerChatActions on AppController {
       removedUserId: '',
       memberIds: remainingMemberIds,
       adminUserId: conversation.adminUserId,
+      groupAvatarPreset: conversation.avatarPreset,
       groupStatus: 'dissolved',
       isDissolved: true,
       dissolvedByUserId: currentUser.id,
@@ -294,8 +496,7 @@ extension AppControllerChatActions on AppController {
       await _persistChatSnapshot();
       _sortChatConversations();
       _markChatChanged();
-      _statusMessage =
-          '已清除你与“${friend.username.isEmpty ? friend.email : friend.username}”的聊天记录，对方记录不会受影响。';
+      _statusMessage = '已清除你与“${friend.displayName}”的聊天记录，对方记录不会受影响。';
       notifyListeners();
     });
   }
@@ -410,7 +611,7 @@ extension AppControllerChatActions on AppController {
           ? 'pending'
           : 'localOnly',
       senderId: _user?.id ?? '',
-      senderName: _user?.username ?? '',
+      senderName: _user?.displayName ?? '',
     );
     _replaceConversationMessagesById(
       latest.id,
@@ -698,6 +899,7 @@ extension AppControllerChatActions on AppController {
     required String removedUserId,
     required List<String> memberIds,
     required String adminUserId,
+    String groupAvatarPreset = '',
     String groupStatus = 'active',
     bool isDissolved = false,
     String dissolvedByUserId = '',
@@ -713,6 +915,7 @@ extension AppControllerChatActions on AppController {
         removedUserId: removedUserId,
         memberIds: memberIds,
         adminUserId: adminUserId,
+        groupAvatarPreset: groupAvatarPreset,
         groupStatus: groupStatus,
         isDissolved: isDissolved,
         dissolvedByUserId: dissolvedByUserId,
@@ -720,6 +923,43 @@ extension AppControllerChatActions on AppController {
     } catch (error) {
       appLog('实时群聊控制消息发送失败', error);
     }
+  }
+
+  Future<void> _notifyGroupConversationUpdated({
+    required ChatConversation before,
+    required ChatConversation after,
+    required List<String> addedMemberIds,
+    required List<String> removedMemberIds,
+    required bool titleChanged,
+    required bool avatarChanged,
+    required bool adminChanged,
+  }) async {
+    final sharedChanged =
+        titleChanged ||
+        adminChanged ||
+        addedMemberIds.isNotEmpty ||
+        removedMemberIds.isNotEmpty;
+    if (!sharedChanged) {
+      return;
+    }
+    final recipientIds = _uniqueIds([
+      ...before.members.map((member) => member.id),
+      ...after.members.map((member) => member.id),
+    ]);
+    final knownRecipients = <PublicUser>[...before.members, ...after.members];
+    final recipients = _uniqueFriends(
+      knownRecipients
+          .where((member) => recipientIds.contains(member.id))
+          .toList(),
+    );
+    await _sendRealtimeGroupControl(
+      conversation: after,
+      recipients: recipients,
+      controlType: 'group-updated',
+      removedUserId: removedMemberIds.length == 1 ? removedMemberIds.first : '',
+      memberIds: [_user?.id ?? '', ...after.members.map((member) => member.id)],
+      adminUserId: after.adminUserId,
+    );
   }
 
   Future<bool> _dispatchDirectMessage({
@@ -755,6 +995,7 @@ extension AppControllerChatActions on AppController {
         'text': message.text,
         'groupId': conversation.id,
         'groupName': conversation.title,
+        'groupAvatarPreset': conversation.avatarPreset,
         'memberIds': [_user?.id ?? '', ...memberIds],
         'adminUserId': conversation.adminUserId,
       },
@@ -772,6 +1013,7 @@ extension AppControllerChatActions on AppController {
     required String removedUserId,
     required List<String> memberIds,
     required String adminUserId,
+    String groupAvatarPreset = '',
     String groupStatus = 'active',
     bool isDissolved = false,
     String dissolvedByUserId = '',
@@ -791,6 +1033,7 @@ extension AppControllerChatActions on AppController {
         'controlType': controlType,
         'groupId': conversation.id,
         'groupName': conversation.title,
+        'groupAvatarPreset': groupAvatarPreset,
         'memberIds': _uniqueIds(memberIds),
         'adminUserId': adminUserId,
         'removedUserId': removedUserId,
@@ -1056,6 +1299,8 @@ extension AppControllerChatActions on AppController {
             text: text,
             groupId: groupId,
             groupName: decrypted.body['groupName'] as String? ?? '',
+            groupAvatarPreset:
+                decrypted.body['groupAvatarPreset'] as String? ?? '',
             memberIds:
                 (decrypted.body['memberIds'] as List<dynamic>? ?? const [])
                     .map((entry) => entry.toString())
@@ -1081,6 +1326,8 @@ extension AppControllerChatActions on AppController {
             controlType: decrypted.body['controlType'] as String? ?? '',
             groupId: decrypted.body['groupId'] as String? ?? '',
             groupName: decrypted.body['groupName'] as String? ?? '',
+            groupAvatarPreset:
+                decrypted.body['groupAvatarPreset'] as String? ?? '',
             memberIds:
                 (decrypted.body['memberIds'] as List<dynamic>? ?? const [])
                     .map((entry) => entry.toString())
@@ -1088,6 +1335,10 @@ extension AppControllerChatActions on AppController {
                     .toList(),
             adminUserId: decrypted.body['adminUserId'] as String? ?? '',
             removedUserId: decrypted.body['removedUserId'] as String? ?? '',
+            groupStatus: decrypted.body['groupStatus'] as String? ?? 'active',
+            isDissolved: decrypted.body['isDissolved'] as bool? ?? false,
+            dissolvedByUserId:
+                decrypted.body['dissolvedByUserId'] as String? ?? '',
           ),
         );
       case 'history-request':
@@ -1158,8 +1409,9 @@ extension AppControllerChatActions on AppController {
           sentByMe: false,
           createdAt: DateTime.now(),
           status: 'delivered',
+          isRead: _activeConversationIds.contains(messageFriend.id),
           senderId: messageFriend.id,
-          senderName: messageFriend.username,
+          senderName: messageFriend.displayName,
         ),
       ],
     );
@@ -1244,8 +1496,9 @@ extension AppControllerChatActions on AppController {
           sentByMe: false,
           createdAt: DateTime.now(),
           status: 'delivered',
+          isRead: _activeConversationIds.contains(incoming.groupId),
           senderId: messageSender.id,
-          senderName: messageSender.username,
+          senderName: messageSender.displayName,
         ),
       ],
     );
@@ -1268,6 +1521,7 @@ extension AppControllerChatActions on AppController {
       _applyDissolvedGroupConversation(
         groupId: control.groupId,
         title: control.groupName,
+        avatarPreset: '',
         members: members,
         adminUserId: control.adminUserId,
         dissolvedByUserId: control.dissolvedByUserId,
@@ -1344,6 +1598,7 @@ extension AppControllerChatActions on AppController {
   void _applyDissolvedGroupConversation({
     required String groupId,
     required String title,
+    required String avatarPreset,
     required List<PublicUser> members,
     required String adminUserId,
     required String dissolvedByUserId,
@@ -1351,6 +1606,7 @@ extension AppControllerChatActions on AppController {
     final conversation = _ensureGroupConversation(
       id: groupId,
       title: title,
+      avatarPreset: avatarPreset,
       members: members,
       adminUserId: adminUserId,
       groupStatus: 'dissolved',
@@ -1638,6 +1894,7 @@ extension AppControllerChatActions on AppController {
   ChatConversation _ensureGroupConversation({
     required String id,
     required String title,
+    String avatarPreset = '',
     required List<PublicUser> members,
     required String adminUserId,
     String groupStatus = 'active',
@@ -1658,6 +1915,9 @@ extension AppControllerChatActions on AppController {
       final nextIsDissolved = existing.isDissolved || isDissolved;
       conversations[index] = existing.copyWith(
         title: title.isEmpty ? existing.title : title,
+        avatarPreset: avatarPreset.isEmpty
+            ? existing.avatarPreset
+            : avatarPreset,
         members: _uniqueFriends([...existing.members, ...members]),
         adminUserId: adminUserId.isEmpty ? existing.adminUserId : adminUserId,
         groupStatus: nextIsDissolved ? 'dissolved' : groupStatus,
@@ -1680,6 +1940,7 @@ extension AppControllerChatActions on AppController {
     final conversation = ChatConversation(
       id: id,
       title: title.isEmpty ? '未命名群聊' : title,
+      avatarPreset: avatarPreset,
       members: _uniqueFriends(members),
       adminUserId: adminUserId,
       isGroup: true,
@@ -1771,6 +2032,7 @@ extension AppControllerChatActions on AppController {
     return _cryptoService.encryptJson({
       'id': conversation.id,
       'title': conversation.title,
+      'avatarPreset': conversation.avatarPreset,
       'memberIds': conversation.members.map((member) => member.id).toList(),
       'adminUserId': conversation.adminUserId,
     }, _vaultKey!);
@@ -1854,6 +2116,7 @@ extension AppControllerChatActions on AppController {
       return;
     }
     var title = '未命名群聊';
+    var avatarPreset = secureXDefaultGroupAvatarPreset;
     if (group.snapshotPayload.isNotEmpty) {
       try {
         final data = await _cryptoService.decryptJson(
@@ -1864,6 +2127,10 @@ extension AppControllerChatActions on AppController {
         if (value.isNotEmpty) {
           title = value;
         }
+        avatarPreset = normalizeSecureXAvatarPreset(
+          data['avatarPreset'] as String?,
+          group: true,
+        );
       } catch (error) {
         appLog('群聊快照解密失败：groupId=${group.id}', error);
       }
@@ -1871,6 +2138,7 @@ extension AppControllerChatActions on AppController {
     _ensureGroupConversation(
       id: group.id,
       title: title,
+      avatarPreset: avatarPreset,
       members: group.members.where((member) => member.id != _user!.id).toList(),
       adminUserId: group.adminUserId,
       groupStatus: group.status,
@@ -1954,6 +2222,7 @@ extension AppControllerChatActions on AppController {
     return {
       'id': conversation.id,
       'title': conversation.title,
+      'avatarPreset': conversation.avatarPreset,
       'isGroup': conversation.isGroup,
       'friendId': conversation.friend?.id ?? '',
       'adminUserId': conversation.adminUserId,
@@ -1974,7 +2243,7 @@ extension AppControllerChatActions on AppController {
       data['senderId'] = message.sentByMe ? _user?.id ?? '' : message.friendId;
     }
     if ((data['senderName'] as String? ?? '').isEmpty) {
-      data['senderName'] = message.sentByMe ? _user?.username ?? '' : '';
+      data['senderName'] = message.sentByMe ? _user?.displayName ?? '' : '';
     }
     return data;
   }
@@ -2020,6 +2289,8 @@ extension AppControllerChatActions on AppController {
     final conversation = _ensureGroupConversation(
       id: groupId,
       title: entry['title'] as String? ?? existing?.title ?? '未命名群聊',
+      avatarPreset:
+          entry['avatarPreset'] as String? ?? existing?.avatarPreset ?? '',
       members: _uniqueFriends([...?existing?.members, ...rawMembers]),
       adminUserId:
           entry['adminUserId'] as String? ?? existing?.adminUserId ?? '',

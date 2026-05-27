@@ -5,10 +5,17 @@ part of 'app_controller.dart';
 extension AppControllerAuthActions on AppController {
   Future<void> initialize() async {
     final prefs = await SharedPreferences.getInstance();
+    final durablePrefs = await _readDurableClientPreferences();
     _baseUrl =
-        prefs.getString(_storageKey(AppController._baseUrlKey)) ?? _baseUrl;
+        prefs.getString(_storageKey(AppController._baseUrlKey)) ??
+        (durablePrefs['baseUrl'] as String?) ??
+        _baseUrl;
     _themeId =
-        prefs.getString(_storageKey(AppController._themeIdKey)) ?? _themeId;
+        prefs.getString(_storageKey(AppController._themeIdKey)) ??
+        (durablePrefs['themeId'] as String?) ??
+        _themeId;
+    await prefs.setString(_storageKey(AppController._baseUrlKey), _baseUrl);
+    await prefs.setString(_storageKey(AppController._themeIdKey), _themeId);
     _token = await _readPersistedToken(prefs);
 
     if (_token != null) {
@@ -28,6 +35,7 @@ extension AppControllerAuthActions on AppController {
     _baseUrl = _normalizeBaseUrl(value);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_storageKey(AppController._baseUrlKey), _baseUrl);
+    await _writeDurableClientPreferences(baseUrl: _baseUrl, themeId: _themeId);
     notifyListeners();
   }
 
@@ -35,6 +43,7 @@ extension AppControllerAuthActions on AppController {
     _themeId = value;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_storageKey(AppController._themeIdKey), _themeId);
+    await _writeDurableClientPreferences(baseUrl: _baseUrl, themeId: _themeId);
     _markThemeChanged();
     notifyListeners();
   }
@@ -150,6 +159,26 @@ extension AppControllerAuthActions on AppController {
         newPassword: newPassword,
       );
       _statusMessage = '登录密码已修改。';
+    });
+  }
+
+  Future<void> updateProfile({
+    required String nickname,
+    required String avatarPreset,
+  }) async {
+    if (_token == null || _user == null) {
+      return;
+    }
+
+    await _runBusy(() async {
+      _user = await _apiClient.updateProfile(
+        baseUrl: _baseUrl,
+        token: _token!,
+        nickname: nickname.trim(),
+        avatarPreset: avatarPreset.trim(),
+      );
+      _statusMessage = '个人信息已更新。';
+      _markAppShellChanged();
     });
   }
 

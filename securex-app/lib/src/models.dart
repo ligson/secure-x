@@ -1,26 +1,91 @@
+const secureXAvatarPresetIds = <String>{
+  'sunrise',
+  'forest',
+  'ocean',
+  'ember',
+  'violet',
+  'sky',
+  'stone',
+  'mint',
+  'orbit',
+  'shield',
+};
+
+const secureXDefaultUserAvatarPreset = 'sunrise';
+const secureXDefaultGroupAvatarPreset = 'shield';
+
+String normalizeSecureXAvatarPreset(String? value, {bool group = false}) {
+  final normalized = (value ?? '').trim();
+  if (secureXAvatarPresetIds.contains(normalized)) {
+    return normalized;
+  }
+  return group
+      ? secureXDefaultGroupAvatarPreset
+      : secureXDefaultUserAvatarPreset;
+}
+
 class UserProfile {
   UserProfile({
     required this.id,
     required this.username,
+    required this.nickname,
+    required String avatarPreset,
     required this.email,
     required this.kdfAlgorithm,
     required this.masterKeySalt,
     required this.masterKeyIterations,
     required this.wrappedVaultKey,
-  });
+  }) : avatarPreset = normalizeSecureXAvatarPreset(avatarPreset);
 
   final String id;
   final String username;
+  final String nickname;
+  final String avatarPreset;
   final String email;
   final String kdfAlgorithm;
   final String masterKeySalt;
   final int masterKeyIterations;
   final String wrappedVaultKey;
 
+  String get displayName {
+    if (nickname.trim().isNotEmpty) {
+      return nickname.trim();
+    }
+    if (username.trim().isNotEmpty) {
+      return username.trim();
+    }
+    return email.trim();
+  }
+
+  UserProfile copyWith({
+    String? username,
+    String? nickname,
+    String? avatarPreset,
+    String? email,
+    String? kdfAlgorithm,
+    String? masterKeySalt,
+    int? masterKeyIterations,
+    String? wrappedVaultKey,
+  }) {
+    return UserProfile(
+      id: id,
+      username: username ?? this.username,
+      nickname: nickname ?? this.nickname,
+      avatarPreset: avatarPreset ?? this.avatarPreset,
+      email: email ?? this.email,
+      kdfAlgorithm: kdfAlgorithm ?? this.kdfAlgorithm,
+      masterKeySalt: masterKeySalt ?? this.masterKeySalt,
+      masterKeyIterations: masterKeyIterations ?? this.masterKeyIterations,
+      wrappedVaultKey: wrappedVaultKey ?? this.wrappedVaultKey,
+    );
+  }
+
   factory UserProfile.fromJson(Map<String, dynamic> json) {
     return UserProfile(
       id: json['id'] as String,
       username: json['username'] as String,
+      nickname: json['nickname'] as String? ?? '',
+      avatarPreset: json['avatarPreset'] as String? ?? '',
       email: json['email'] as String,
       kdfAlgorithm: json['kdfAlgorithm'] as String,
       masterKeySalt: json['masterKeySalt'] as String,
@@ -205,23 +270,103 @@ class DecryptedFileRecord {
 }
 
 class PublicUser {
-  PublicUser({required this.id, required this.username, required this.email});
+  PublicUser({
+    required this.id,
+    required this.username,
+    required this.email,
+    this.nickname = '',
+    String avatarPreset = '',
+    this.remarkName = '',
+  }) : avatarPreset = normalizeSecureXAvatarPreset(avatarPreset);
 
   final String id;
   final String username;
+  final String nickname;
+  final String avatarPreset;
   final String email;
+  final String remarkName;
+
+  String get displayName {
+    if (remarkName.trim().isNotEmpty) {
+      return remarkName.trim();
+    }
+    if (nickname.trim().isNotEmpty) {
+      return nickname.trim();
+    }
+    if (username.trim().isNotEmpty) {
+      return username.trim();
+    }
+    return email.trim();
+  }
+
+  String get searchableText =>
+      '${remarkName.toLowerCase()} ${nickname.toLowerCase()} ${username.toLowerCase()} ${email.toLowerCase()}';
+
+  PublicUser copyWith({
+    String? username,
+    String? nickname,
+    String? avatarPreset,
+    String? email,
+    String? remarkName,
+  }) {
+    return PublicUser(
+      id: id,
+      username: username ?? this.username,
+      nickname: nickname ?? this.nickname,
+      avatarPreset: avatarPreset ?? this.avatarPreset,
+      email: email ?? this.email,
+      remarkName: remarkName ?? this.remarkName,
+    );
+  }
 
   factory PublicUser.fromJson(Map<String, dynamic> json) {
     return PublicUser(
       id: json['id'] as String? ?? '',
       username: json['username'] as String? ?? '',
+      nickname: json['nickname'] as String? ?? '',
+      avatarPreset: json['avatarPreset'] as String? ?? '',
       email: json['email'] as String? ?? '',
+      remarkName: json['remarkName'] as String? ?? '',
     );
   }
 
   Map<String, dynamic> toJson() {
-    return {'id': id, 'username': username, 'email': email};
+    return {
+      'id': id,
+      'username': username,
+      'nickname': nickname,
+      'avatarPreset': avatarPreset,
+      'email': email,
+      'remarkName': remarkName,
+    };
   }
+}
+
+class FriendAliasRecord {
+  FriendAliasRecord({
+    required this.friendId,
+    required this.payload,
+    required this.version,
+  });
+
+  final String friendId;
+  final String payload;
+  final int version;
+
+  factory FriendAliasRecord.fromJson(Map<String, dynamic> json) {
+    return FriendAliasRecord(
+      friendId: json['friendId'] as String? ?? '',
+      payload: json['payload'] as String? ?? '',
+      version: (json['version'] as num?)?.toInt() ?? 1,
+    );
+  }
+}
+
+class FriendListResponse {
+  FriendListResponse({required this.friends, required this.aliases});
+
+  final List<PublicUser> friends;
+  final List<FriendAliasRecord> aliases;
 }
 
 class FriendRequestRecord {
@@ -499,6 +644,7 @@ class ChatMessage {
     required this.sentByMe,
     required this.createdAt,
     required this.status,
+    this.isRead = true,
     this.senderId = '',
     this.senderName = '',
     this.sentPeerIds = const [],
@@ -511,6 +657,7 @@ class ChatMessage {
   final bool sentByMe;
   final DateTime createdAt;
   final String status;
+  final bool isRead;
   final String senderId;
   final String senderName;
   final List<String> sentPeerIds;
@@ -523,6 +670,7 @@ class ChatMessage {
     bool? sentByMe,
     DateTime? createdAt,
     String? status,
+    bool? isRead,
     String? senderId,
     String? senderName,
     List<String>? sentPeerIds,
@@ -535,6 +683,7 @@ class ChatMessage {
       sentByMe: sentByMe ?? this.sentByMe,
       createdAt: createdAt ?? this.createdAt,
       status: status ?? this.status,
+      isRead: isRead ?? this.isRead,
       senderId: senderId ?? this.senderId,
       senderName: senderName ?? this.senderName,
       sentPeerIds: sentPeerIds ?? this.sentPeerIds,
@@ -550,6 +699,7 @@ class ChatMessage {
       'sentByMe': sentByMe,
       'createdAt': createdAt.toIso8601String(),
       'status': status,
+      'isRead': isRead,
       'senderId': senderId,
       'senderName': senderName,
       'sentPeerIds': sentPeerIds,
@@ -567,6 +717,7 @@ class ChatMessage {
           DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now(),
       status: json['status'] as String? ?? 'localOnly',
+      isRead: json['isRead'] as bool? ?? true,
       senderId: json['senderId'] as String? ?? '',
       senderName: json['senderName'] as String? ?? '',
       sentPeerIds: (json['sentPeerIds'] as List<dynamic>? ?? const [])
@@ -587,6 +738,7 @@ class ChatConversation {
     this.friend,
     String? id,
     String? title,
+    String avatarPreset = '',
     List<PublicUser>? members,
     this.adminUserId = '',
     this.isGroup = false,
@@ -596,6 +748,10 @@ class ChatConversation {
     this.dissolvedAt,
     this.archiveVersion = 0,
   }) : id = id ?? friend?.id ?? '',
+       avatarPreset = normalizeSecureXAvatarPreset(
+         avatarPreset,
+         group: isGroup,
+       ),
        title = title ?? _chatUserDisplayName(friend),
        members = List.unmodifiable(
          members ?? (friend == null ? const <PublicUser>[] : [friend]),
@@ -603,6 +759,7 @@ class ChatConversation {
 
   final String id;
   final String title;
+  final String avatarPreset;
   final PublicUser? friend;
   final List<PublicUser> members;
   final String adminUserId;
@@ -619,6 +776,9 @@ class ChatConversation {
   int get pendingCount =>
       messages.where((message) => message.status != 'delivered').length;
 
+  int get unreadCount =>
+      messages.where((message) => !message.sentByMe && !message.isRead).length;
+
   String get displayTitle {
     if (isGroup) {
       return title.isEmpty ? '未命名群聊' : title;
@@ -629,6 +789,7 @@ class ChatConversation {
   ChatConversation copyWith({
     String? id,
     String? title,
+    String? avatarPreset,
     PublicUser? friend,
     List<PublicUser>? members,
     String? adminUserId,
@@ -643,6 +804,7 @@ class ChatConversation {
     return ChatConversation(
       id: id ?? this.id,
       title: title ?? this.title,
+      avatarPreset: avatarPreset ?? this.avatarPreset,
       friend: friend ?? this.friend,
       members: members ?? this.members,
       adminUserId: adminUserId ?? this.adminUserId,
@@ -661,5 +823,5 @@ String _chatUserDisplayName(PublicUser? user) {
   if (user == null) {
     return '';
   }
-  return user.username.isEmpty ? user.email : user.username;
+  return user.displayName;
 }

@@ -287,11 +287,11 @@ class _ConversationTile extends StatelessWidget {
           conversation.isGroup
               ? _GroupAvatar(conversation: conversation)
               : _ChatAvatar(user: conversation.friend!),
-          if (conversation.pendingCount > 0)
+          if (conversation.unreadCount > 0)
             Positioned(
               right: -5,
               top: -5,
-              child: _RequestBadge(count: conversation.pendingCount),
+              child: _RequestBadge(count: conversation.unreadCount),
             ),
         ],
       ),
@@ -486,13 +486,12 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
   void initState() {
     super.initState();
     _inputController.clear();
-    unawaited(
-      widget.controller.ensureChatConversationDetails(widget.conversationId),
-    );
+    unawaited(widget.controller.activateConversation(widget.conversationId));
   }
 
   @override
   void dispose() {
+    widget.controller.deactivateConversation(widget.conversationId);
     _inputController.dispose();
     super.dispose();
   }
@@ -510,7 +509,7 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
           widget.conversationId,
         );
         final isGroup = conversation?.isGroup == true;
-        final friend = widget.friend ?? conversation?.friend;
+        final friend = conversation?.friend ?? widget.friend;
         final friendOnline =
             friend != null && widget.controller.isChatFriendOnline(friend.id);
         final groupOnlineCount =
@@ -524,9 +523,7 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
             conversation?.isGroup == true && conversation?.isDissolved == true;
         final title =
             conversation?.displayTitle ??
-            (friend == null
-                ? '聊天'
-                : (friend.username.isEmpty ? friend.email : friend.username));
+            (friend == null ? '聊天' : friend.displayName);
         final messageCount = messages.length;
         return Scaffold(
           backgroundColor: context.sx.scaffold,
@@ -713,6 +710,7 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
     unawaited(
       widget.controller.ensureChatConversationDetails(widget.conversationId),
     );
+    unawaited(widget.controller.markConversationRead(widget.conversationId));
   }
 }
 
@@ -971,6 +969,8 @@ class _ChatMessageBubble extends StatelessWidget {
                 id: 'me',
                 username: '我',
                 email: 'secure-x.local',
+                nickname: '我',
+                avatarPreset: controller.user?.avatarPreset ?? '',
               ),
             ),
           ],
@@ -993,6 +993,7 @@ class _ChatMessageBubble extends StatelessWidget {
         id: message.senderId,
         username: message.senderName,
         email: '',
+        nickname: message.senderName,
       );
     }
     return null;
@@ -1007,29 +1008,10 @@ class _ChatAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final source = user.username.trim().isNotEmpty
-        ? user.username.trim()
-        : user.email.trim();
-    final label = source.isNotEmpty ? source[0].toUpperCase() : '?';
-    return Container(
-      width: 46,
-      height: 46,
-      decoration: BoxDecoration(
-        color: isMine ? context.sx.primary : context.sx.accentSoft,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: isMine ? context.sx.primary : context.sx.border,
-        ),
-      ),
-      child: Center(
-        child: Text(
-          label,
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            color: isMine ? context.sx.onPrimary : context.sx.primary,
-            fontWeight: FontWeight.w900,
-          ),
-        ),
-      ),
+    return _PresetAvatar(
+      presetId: user.avatarPreset,
+      size: 46,
+      borderColor: isMine ? context.sx.primary : context.sx.border,
     );
   }
 }
@@ -1041,15 +1023,11 @@ class _GroupAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 46,
-      height: 46,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(colors: context.sx.gradient),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: context.sx.border),
-      ),
-      child: const Icon(Icons.groups_2_outlined, color: Colors.white, size: 24),
+    return _PresetAvatar(
+      presetId: conversation.avatarPreset,
+      size: 46,
+      group: true,
+      borderColor: context.sx.border,
     );
   }
 }
@@ -1156,9 +1134,9 @@ class _StartGroupChatPageState extends State<_StartGroupChatPage> {
                                       user: friends[index],
                                     ),
                                     title: Text(
-                                      friends[index].username.isEmpty
+                                      friends[index].displayName.isEmpty
                                           ? '(未命名用户)'
-                                          : friends[index].username,
+                                          : friends[index].displayName,
                                       style: const TextStyle(
                                         fontWeight: FontWeight.w800,
                                       ),
@@ -1262,6 +1240,12 @@ class _GroupChatDetailPageState extends State<_GroupChatDetailPage> {
   final Set<String> _inviteFriendIds = {};
 
   @override
+  void initState() {
+    super.initState();
+    unawaited(widget.controller.refreshFriendsSilently());
+  }
+
+  @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: widget.controller,
@@ -1294,9 +1278,17 @@ class _GroupChatDetailPageState extends State<_GroupChatDetailPage> {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _SettingsDetailHeader(
-                          icon: Icons.groups_2_outlined,
-                          title: conversation.displayTitle,
+                        Row(
+                          children: [
+                            _GroupAvatar(conversation: conversation),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: _SettingsDetailHeader(
+                                icon: Icons.groups_2_outlined,
+                                title: conversation.displayTitle,
+                              ),
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 6),
                         Wrap(
@@ -1339,14 +1331,65 @@ class _GroupChatDetailPageState extends State<_GroupChatDetailPage> {
                       ),
                       const SizedBox(height: 12),
                     ],
+                    if (!isDissolved && isAdmin) ...[
+                      Card(
+                        child: Column(
+                          children: [
+                            const _ListCardHeader(title: '群设置'),
+                            ListTile(
+                              leading: const Icon(Icons.edit_outlined),
+                              title: const Text(
+                                '修改群名称',
+                                style: TextStyle(fontWeight: FontWeight.w800),
+                              ),
+                              subtitle: Text(conversation.displayTitle),
+                              trailing: const Icon(Icons.chevron_right_rounded),
+                              onTap: () => _showRenameGroupPage(conversation),
+                            ),
+                            Divider(height: 1, color: context.sx.border),
+                            ListTile(
+                              leading: const Icon(Icons.image_outlined),
+                              title: const Text(
+                                '修改群头像',
+                                style: TextStyle(fontWeight: FontWeight.w800),
+                              ),
+                              subtitle: const Text('仅群管理可修改'),
+                              trailing: const Icon(Icons.chevron_right_rounded),
+                              onTap: () =>
+                                  _showChangeGroupAvatarPage(conversation),
+                            ),
+                            Divider(height: 1, color: context.sx.border),
+                            ListTile(
+                              leading: const Icon(
+                                Icons.admin_panel_settings_outlined,
+                              ),
+                              title: const Text(
+                                '转让群管理',
+                                style: TextStyle(fontWeight: FontWeight.w800),
+                              ),
+                              subtitle: Text(_adminDisplayName(conversation)),
+                              trailing: const Icon(Icons.chevron_right_rounded),
+                              onTap: () => _showTransferAdminPage(conversation),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                     Card(
                       child: Column(
                         children: [
                           const _ListCardHeader(title: '群成员'),
                           _GroupMemberTile(
-                            name:
-                                '${widget.controller.user?.username ?? '我'}（我）',
-                            email: widget.controller.user?.email ?? '',
+                            user: PublicUser(
+                              id: widget.controller.user?.id ?? '',
+                              username: widget.controller.user?.username ?? '我',
+                              nickname:
+                                  '${widget.controller.user?.displayName ?? '我'}（我）',
+                              avatarPreset:
+                                  widget.controller.user?.avatarPreset ?? '',
+                              email: widget.controller.user?.email ?? '',
+                            ),
                             admin: isAdmin,
                           ),
                           Divider(height: 1, color: context.sx.border),
@@ -1356,10 +1399,7 @@ class _GroupChatDetailPageState extends State<_GroupChatDetailPage> {
                             index++
                           ) ...[
                             _GroupMemberTile(
-                              name: conversation.members[index].username.isEmpty
-                                  ? '(未命名用户)'
-                                  : conversation.members[index].username,
-                              email: conversation.members[index].email,
+                              user: conversation.members[index],
                               admin:
                                   conversation.members[index].id ==
                                   conversation.adminUserId,
@@ -1421,9 +1461,9 @@ class _GroupChatDetailPageState extends State<_GroupChatDetailPage> {
                                     user: inviteCandidates[index],
                                   ),
                                   title: Text(
-                                    inviteCandidates[index].username.isEmpty
+                                    inviteCandidates[index].displayName.isEmpty
                                         ? '(未命名用户)'
-                                        : inviteCandidates[index].username,
+                                        : inviteCandidates[index].displayName,
                                     style: const TextStyle(
                                       fontWeight: FontWeight.w800,
                                     ),
@@ -1579,6 +1619,53 @@ class _GroupChatDetailPageState extends State<_GroupChatDetailPage> {
     );
   }
 
+  Future<void> _showRenameGroupPage(ChatConversation conversation) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (context) => _RenameGroupPage(
+          controller: widget.controller,
+          conversationId: conversation.id,
+          initialTitle: conversation.displayTitle,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showTransferAdminPage(ChatConversation conversation) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (context) => _TransferGroupAdminPage(
+          controller: widget.controller,
+          conversationId: conversation.id,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showChangeGroupAvatarPage(ChatConversation conversation) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (context) => _ChangeGroupAvatarPage(
+          controller: widget.controller,
+          conversationId: conversation.id,
+          initialAvatarPreset: conversation.avatarPreset,
+        ),
+      ),
+    );
+  }
+
+  String _adminDisplayName(ChatConversation conversation) {
+    if (widget.controller.user?.id == conversation.adminUserId) {
+      return '${widget.controller.user?.displayName ?? '我'}（我）';
+    }
+    for (final member in conversation.members) {
+      if (member.id == conversation.adminUserId) {
+        return member.displayName;
+      }
+    }
+    return '未命名成员';
+  }
+
   Future<void> _invite(ChatConversation conversation) async {
     if (conversation.isDissolved) {
       return;
@@ -1724,27 +1811,348 @@ class _GroupChatDetailPageState extends State<_GroupChatDetailPage> {
   }
 }
 
+class _RenameGroupPage extends StatefulWidget {
+  const _RenameGroupPage({
+    required this.controller,
+    required this.conversationId,
+    required this.initialTitle,
+  });
+
+  final AppController controller;
+  final String conversationId;
+  final String initialTitle;
+
+  @override
+  State<_RenameGroupPage> createState() => _RenameGroupPageState();
+}
+
+class _RenameGroupPageState extends State<_RenameGroupPage> {
+  late final TextEditingController _titleController;
+
+  @override
+  void initState() {
+    super.initState();
+    _titleController = TextEditingController(text: widget.initialTitle);
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: widget.controller,
+      builder: (context, _) {
+        return Scaffold(
+          appBar: AppBar(title: const Text('修改群名称')),
+          body: SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 720),
+                child: ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    const _SettingsDetailHeader(
+                      icon: Icons.edit_outlined,
+                      title: '修改群名称',
+                    ),
+                    const SizedBox(height: 12),
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '群名称修改后，会通过端到端加密控制消息同步给群成员。',
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(color: context.sx.mutedText),
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: _titleController,
+                              decoration: const InputDecoration(
+                                labelText: '群名称',
+                                hintText: '请输入新的群名称',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: FilledButton(
+                        onPressed: widget.controller.busy
+                            ? null
+                            : () async {
+                                await widget.controller.renameGroupChat(
+                                  conversationId: widget.conversationId,
+                                  title: _titleController.text,
+                                );
+                                if (context.mounted &&
+                                    widget.controller.statusMessage ==
+                                        '群名称已更新。') {
+                                  Navigator.of(context).pop();
+                                }
+                              },
+                        child: const Text('保存'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ChangeGroupAvatarPage extends StatefulWidget {
+  const _ChangeGroupAvatarPage({
+    required this.controller,
+    required this.conversationId,
+    required this.initialAvatarPreset,
+  });
+
+  final AppController controller;
+  final String conversationId;
+  final String initialAvatarPreset;
+
+  @override
+  State<_ChangeGroupAvatarPage> createState() => _ChangeGroupAvatarPageState();
+}
+
+class _ChangeGroupAvatarPageState extends State<_ChangeGroupAvatarPage> {
+  late String _avatarPreset;
+
+  @override
+  void initState() {
+    super.initState();
+    _avatarPreset = normalizeSecureXAvatarPreset(
+      widget.initialAvatarPreset,
+      group: true,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: widget.controller,
+      builder: (context, _) {
+        return Scaffold(
+          appBar: AppBar(title: const Text('修改群头像')),
+          body: SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 720),
+                child: ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    const _SettingsDetailHeader(
+                      icon: Icons.image_outlined,
+                      title: '修改群头像',
+                    ),
+                    const SizedBox(height: 12),
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                _PresetAvatar(
+                                  presetId: _avatarPreset,
+                                  size: 68,
+                                  group: true,
+                                  borderColor: context.sx.border,
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Text(
+                                    '群头像会随群资料一起加密同步到群成员本地和个人归档，只有群管理可以修改。',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium
+                                        ?.copyWith(color: context.sx.mutedText),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 18),
+                            _AvatarPresetPicker(
+                              selectedPresetId: _avatarPreset,
+                              group: true,
+                              onSelected: (value) {
+                                setState(() {
+                                  _avatarPreset = value;
+                                });
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: FilledButton(
+                        onPressed: widget.controller.busy
+                            ? null
+                            : () async {
+                                await widget.controller.changeGroupAvatar(
+                                  conversationId: widget.conversationId,
+                                  avatarPreset: _avatarPreset,
+                                );
+                                if (context.mounted &&
+                                    widget.controller.statusMessage ==
+                                        '群头像已更新。') {
+                                  Navigator.of(context).pop();
+                                }
+                              },
+                        child: const Text('保存'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _TransferGroupAdminPage extends StatelessWidget {
+  const _TransferGroupAdminPage({
+    required this.controller,
+    required this.conversationId,
+  });
+
+  final AppController controller;
+  final String conversationId;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) {
+        final conversation = controller.chatConversations
+            .where((entry) => entry.id == conversationId)
+            .cast<ChatConversation?>()
+            .firstWhere((entry) => entry != null, orElse: () => null);
+        if (conversation == null) {
+          return Scaffold(
+            appBar: AppBar(title: const Text('转让群管理')),
+            body: const Center(child: Text('群聊不存在')),
+          );
+        }
+        return Scaffold(
+          appBar: AppBar(title: const Text('转让群管理')),
+          body: SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 760),
+                child: ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    const _SettingsDetailHeader(
+                      icon: Icons.admin_panel_settings_outlined,
+                      title: '选择新的群管理',
+                    ),
+                    const SizedBox(height: 12),
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Text(
+                          '转让后，新的群管理将拥有修改群名称、移除成员、转让群管理和解散群聊的权限。',
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(color: context.sx.mutedText),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Card(
+                      child: Column(
+                        children: [
+                          const _ListCardHeader(title: '群成员'),
+                          for (
+                            var index = 0;
+                            index < conversation.members.length;
+                            index++
+                          ) ...[
+                            ListTile(
+                              leading: _ChatAvatar(
+                                user: conversation.members[index],
+                              ),
+                              title: Text(
+                                conversation.members[index].displayName,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              subtitle: Text(conversation.members[index].email),
+                              trailing: FilledButton.tonal(
+                                onPressed: controller.busy
+                                    ? null
+                                    : () async {
+                                        await controller.transferGroupAdmin(
+                                          conversationId: conversation.id,
+                                          nextAdminUserId:
+                                              conversation.members[index].id,
+                                        );
+                                        if (context.mounted &&
+                                            controller.statusMessage ==
+                                                '群管理已转让。') {
+                                          Navigator.of(context).pop();
+                                        }
+                                      },
+                                child: const Text('设为群管理'),
+                              ),
+                            ),
+                            if (index != conversation.members.length - 1)
+                              Divider(height: 1, color: context.sx.border),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 class _GroupMemberTile extends StatelessWidget {
   const _GroupMemberTile({
-    required this.name,
-    required this.email,
+    required this.user,
     this.admin = false,
     this.trailing,
   });
 
-  final String name;
-  final String email;
+  final PublicUser user;
   final bool admin;
   final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
+    final title = user.displayName.isEmpty ? '(未命名用户)' : user.displayName;
     return ListTile(
-      leading: _ChatAvatar(
-        user: PublicUser(id: '', username: name, email: ''),
-      ),
-      title: Text(name, style: const TextStyle(fontWeight: FontWeight.w800)),
-      subtitle: Text(email.isEmpty ? (admin ? '群管理' : '群成员') : email),
+      leading: _ChatAvatar(user: user),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+      subtitle: Text(user.email.isEmpty ? (admin ? '群管理' : '群成员') : user.email),
       trailing:
           trailing ??
           (admin

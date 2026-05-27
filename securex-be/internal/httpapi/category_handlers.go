@@ -79,6 +79,17 @@ func (h *Handler) updateFolder(c *gin.Context) {
 		RespondFailure(c, http.StatusBadRequest, "父级分类不能选择当前分类")
 		return
 	}
+	if parentFolderID != nil {
+		descendant, err := h.passwordFolderIsDescendant(userID, folder.ID, *parentFolderID)
+		if err != nil {
+			RespondFailure(c, http.StatusInternalServerError, "校验分类层级失败")
+			return
+		}
+		if descendant {
+			RespondFailure(c, http.StatusBadRequest, "父级分类不能选择当前分类的子分类")
+			return
+		}
+	}
 
 	folder.ParentFolderID = parentFolderID
 	folder.Payload = req.Payload

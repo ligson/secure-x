@@ -48,7 +48,7 @@ class _UnlockScreenState extends State<UnlockScreen> {
                         ),
                         const SizedBox(height: 16),
                         Text(
-                          '欢迎回来，${user?.username ?? ''}',
+                          '欢迎回来，${user?.displayName ?? ''}',
                           style: Theme.of(context).textTheme.headlineSmall
                               ?.copyWith(fontWeight: FontWeight.w800),
                         ),

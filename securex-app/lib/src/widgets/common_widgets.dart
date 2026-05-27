@@ -1,5 +1,204 @@
 part of '../../main.dart';
 
+class _SecureXAvatarPreset {
+  const _SecureXAvatarPreset({
+    required this.id,
+    required this.label,
+    required this.icon,
+    required this.colors,
+  });
+
+  final String id;
+  final String label;
+  final IconData icon;
+  final List<Color> colors;
+}
+
+const _secureXAvatarPresets = <_SecureXAvatarPreset>[
+  _SecureXAvatarPreset(
+    id: 'sunrise',
+    label: '晨光',
+    icon: Icons.wb_sunny_outlined,
+    colors: [Color(0xFFF97316), Color(0xFFFACC15)],
+  ),
+  _SecureXAvatarPreset(
+    id: 'forest',
+    label: '森林',
+    icon: Icons.park_outlined,
+    colors: [Color(0xFF15803D), Color(0xFF4ADE80)],
+  ),
+  _SecureXAvatarPreset(
+    id: 'ocean',
+    label: '海湾',
+    icon: Icons.waves_outlined,
+    colors: [Color(0xFF0369A1), Color(0xFF38BDF8)],
+  ),
+  _SecureXAvatarPreset(
+    id: 'ember',
+    label: '余烬',
+    icon: Icons.local_fire_department_outlined,
+    colors: [Color(0xFFB91C1C), Color(0xFFFB7185)],
+  ),
+  _SecureXAvatarPreset(
+    id: 'violet',
+    label: '紫晶',
+    icon: Icons.auto_awesome_outlined,
+    colors: [Color(0xFF7C3AED), Color(0xFFC084FC)],
+  ),
+  _SecureXAvatarPreset(
+    id: 'sky',
+    label: '晴空',
+    icon: Icons.cloud_queue_outlined,
+    colors: [Color(0xFF2563EB), Color(0xFF93C5FD)],
+  ),
+  _SecureXAvatarPreset(
+    id: 'stone',
+    label: '岩层',
+    icon: Icons.terrain_outlined,
+    colors: [Color(0xFF475569), Color(0xFF94A3B8)],
+  ),
+  _SecureXAvatarPreset(
+    id: 'mint',
+    label: '薄荷',
+    icon: Icons.spa_outlined,
+    colors: [Color(0xFF0F766E), Color(0xFF5EEAD4)],
+  ),
+  _SecureXAvatarPreset(
+    id: 'orbit',
+    label: '星轨',
+    icon: Icons.public_outlined,
+    colors: [Color(0xFF1D4ED8), Color(0xFF818CF8)],
+  ),
+  _SecureXAvatarPreset(
+    id: 'shield',
+    label: '盾牌',
+    icon: Icons.shield_outlined,
+    colors: [Color(0xFF0F766E), Color(0xFF14B8A6)],
+  ),
+];
+
+String _normalizeAvatarPreset(
+  String? value, {
+  bool group = false,
+}) {
+  return normalizeSecureXAvatarPreset(value, group: group);
+}
+
+_SecureXAvatarPreset _avatarPresetById(
+  String? value, {
+  bool group = false,
+}) {
+  final normalized = _normalizeAvatarPreset(value, group: group);
+  for (final preset in _secureXAvatarPresets) {
+    if (preset.id == normalized) {
+      return preset;
+    }
+  }
+  return _secureXAvatarPresets.first;
+}
+
+class _PresetAvatar extends StatelessWidget {
+  const _PresetAvatar({
+    required this.presetId,
+    required this.size,
+    this.group = false,
+    this.borderColor,
+  });
+
+  final String presetId;
+  final double size;
+  final bool group;
+  final Color? borderColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final preset = _avatarPresetById(presetId, group: group);
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: preset.colors,
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(size * 0.34),
+        border: Border.all(color: borderColor ?? context.sx.border),
+        boxShadow: [
+          BoxShadow(
+            color: preset.colors.last.withAlpha(38),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Icon(
+        preset.icon,
+        color: Colors.white,
+        size: size * 0.5,
+      ),
+    );
+  }
+}
+
+class _AvatarPresetPicker extends StatelessWidget {
+  const _AvatarPresetPicker({
+    required this.selectedPresetId,
+    required this.onSelected,
+    this.group = false,
+  });
+
+  final String selectedPresetId;
+  final ValueChanged<String> onSelected;
+  final bool group;
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = _normalizeAvatarPreset(selectedPresetId, group: group);
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      children: [
+        for (final preset in _secureXAvatarPresets)
+          InkWell(
+            onTap: () => onSelected(preset.id),
+            borderRadius: BorderRadius.circular(18),
+            child: Container(
+              width: 92,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+              decoration: BoxDecoration(
+                color: selected == preset.id ? context.sx.accentSoft : context.sx.card,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: selected == preset.id ? context.sx.primary : context.sx.border,
+                ),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _PresetAvatar(
+                    presetId: preset.id,
+                    size: 46,
+                    group: group,
+                    borderColor: selected == preset.id ? context.sx.primary : context.sx.border,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    preset.label,
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: selected == preset.id ? context.sx.primary : context.sx.text,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
 class _AuthBackdrop extends StatelessWidget {
   const _AuthBackdrop();
 

@@ -526,8 +526,8 @@ class ChatSmokeClient {
   }
 
   Future<bool> hasFriend(String friendUserId) async {
-    final friends = await api.listFriends(baseUrl: baseUrl, token: token);
-    return friends.any((friend) => friend.id == friendUserId);
+    final response = await api.listFriends(baseUrl: baseUrl, token: token);
+    return response.friends.any((friend) => friend.id == friendUserId);
   }
 
   Future<Map<String, List<FriendRequestRecord>>> friendRequests() {

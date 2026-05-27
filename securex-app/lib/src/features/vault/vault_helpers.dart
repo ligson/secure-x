@@ -61,13 +61,13 @@ extension _VaultHelpers on _VaultScreenState {
     } catch (_) {}
   }
 
-  int _countItemsInFolder(String? folderId) {
+  int _countItemsInFolderTree(String? folderId) {
+    if (folderId == null || folderId.isEmpty) {
+      return widget.controller.items.length;
+    }
+    final familyIds = widget.controller.passwordFolderFamilyIds(folderId);
     return widget.controller.items
-        .where(
-          (item) => folderId == null || folderId.isEmpty
-              ? true
-              : item.folderId == folderId,
-        )
+        .where((item) => familyIds.contains(item.folderId ?? ''))
         .length;
   }
 
@@ -164,18 +164,15 @@ extension _VaultHelpers on _VaultScreenState {
     ];
   }
 
-  TextStyle _chipLabelStyle(bool selected) {
-    return TextStyle(
-      color: selected ? context.sx.primary : context.sx.text,
-      fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
-    );
-  }
-
   List<DecryptedLoginItem> _filteredVaultItems() {
     final query = _itemSearchController.text.trim().toLowerCase();
+    final selectedFolderIds = _activeVaultFolderId.isEmpty
+        ? <String>{}
+        : widget.controller.passwordFolderFamilyIds(_activeVaultFolderId);
     return widget.controller.items.where((item) {
-      final matchesFolder =
-          _activeVaultFolderId.isEmpty || item.folderId == _activeVaultFolderId;
+      final matchesFolder = _activeVaultFolderId.isEmpty
+          ? true
+          : selectedFolderIds.contains(item.folderId ?? '');
       if (!matchesFolder) {
         return false;
       }
@@ -297,6 +294,7 @@ extension _VaultHelpers on _VaultScreenState {
     final result = await Navigator.of(context).push<_LoginItemDraft>(
       MaterialPageRoute(
         builder: (context) => _PasswordEditorPage(
+          controller: widget.controller,
           item: item,
           folders: widget.controller.folders,
           initialGeneratedPassword: _generatedPassword,

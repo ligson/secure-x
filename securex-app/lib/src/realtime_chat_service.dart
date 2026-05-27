@@ -15,6 +15,7 @@ class RealtimeIncomingMessage {
     required this.text,
     this.groupId = '',
     this.groupName = '',
+    this.groupAvatarPreset = '',
     this.memberIds = const [],
     this.adminUserId = '',
   });
@@ -24,6 +25,7 @@ class RealtimeIncomingMessage {
   final String text;
   final String groupId;
   final String groupName;
+  final String groupAvatarPreset;
   final List<String> memberIds;
   final String adminUserId;
 }
@@ -35,6 +37,7 @@ class RealtimeGroupControl {
     required this.controlType,
     required this.groupId,
     required this.groupName,
+    this.groupAvatarPreset = '',
     required this.memberIds,
     required this.adminUserId,
     required this.removedUserId,
@@ -48,6 +51,7 @@ class RealtimeGroupControl {
   final String controlType;
   final String groupId;
   final String groupName;
+  final String groupAvatarPreset;
   final List<String> memberIds;
   final String adminUserId;
   final String removedUserId;
@@ -291,6 +295,9 @@ class RealtimeChatService {
       'chatKind': conversation?.isGroup == true ? 'group' : 'direct',
       'groupId': conversation?.isGroup == true ? conversation!.id : '',
       'groupName': conversation?.isGroup == true ? conversation!.title : '',
+      'groupAvatarPreset': conversation?.isGroup == true
+          ? conversation!.avatarPreset
+          : '',
       'memberIds': conversation?.isGroup == true
           ? [_userId, ...conversation!.members.map((member) => member.id)]
           : const <String>[],
@@ -316,6 +323,7 @@ class RealtimeChatService {
     required String removedUserId,
     required List<String> memberIds,
     required String adminUserId,
+    String groupAvatarPreset = '',
     String groupStatus = 'active',
     bool isDissolved = false,
     String dissolvedByUserId = '',
@@ -338,6 +346,7 @@ class RealtimeChatService {
       'controlType': controlType,
       'groupId': conversation.id,
       'groupName': conversation.title,
+      'groupAvatarPreset': groupAvatarPreset,
       'memberIds': memberIds,
       'adminUserId': adminUserId,
       'removedUserId': removedUserId,
@@ -710,6 +719,7 @@ class RealtimeChatService {
           controlType: payload['controlType'] as String? ?? '',
           groupId: payload['groupId'] as String? ?? '',
           groupName: payload['groupName'] as String? ?? '',
+          groupAvatarPreset: payload['groupAvatarPreset'] as String? ?? '',
           memberIds: (payload['memberIds'] as List<dynamic>? ?? const [])
               .map((entry) => entry.toString())
               .where((entry) => entry.isNotEmpty)
@@ -771,6 +781,7 @@ class RealtimeChatService {
         text: text,
         groupId: data['groupId'] as String? ?? '',
         groupName: data['groupName'] as String? ?? '',
+        groupAvatarPreset: data['groupAvatarPreset'] as String? ?? '',
         memberIds: (data['memberIds'] as List<dynamic>? ?? const [])
             .map((entry) => entry.toString())
             .where((entry) => entry.isNotEmpty)
@@ -805,6 +816,7 @@ class RealtimeChatService {
         text: text,
         groupId: payload['groupId'] as String? ?? '',
         groupName: payload['groupName'] as String? ?? '',
+        groupAvatarPreset: payload['groupAvatarPreset'] as String? ?? '',
         memberIds: (payload['memberIds'] as List<dynamic>? ?? const [])
             .map((entry) => entry.toString())
             .where((entry) => entry.isNotEmpty)
@@ -835,6 +847,7 @@ class RealtimeChatService {
         controlType: data['controlType'] as String? ?? '',
         groupId: data['groupId'] as String? ?? '',
         groupName: data['groupName'] as String? ?? '',
+        groupAvatarPreset: data['groupAvatarPreset'] as String? ?? '',
         memberIds: (data['memberIds'] as List<dynamic>? ?? const [])
             .map((entry) => entry.toString())
             .where((entry) => entry.isNotEmpty)

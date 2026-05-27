@@ -47,6 +47,8 @@ func (h *Handler) register(c *gin.Context) {
 	user := model.User{
 		ID:                  uuid.NewString(),
 		Username:            req.Username,
+		Nickname:            req.Username,
+		AvatarPreset:        defaultAvatarPreset(""),
 		Email:               req.Email,
 		PasswordHash:        string(passwordHash),
 		KDFAlgorithm:        req.KDFAlgorithm,
@@ -111,6 +113,44 @@ func (h *Handler) me(c *gin.Context) {
 	}
 
 	RespondSuccess(c, http.StatusOK, "用户信息已加载", gin.H{"user": userResponse(*user)})
+}
+
+func (h *Handler) updateProfile(c *gin.Context) {
+	var req updateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondFailure(c, http.StatusBadRequest, bindErrorMessage(err))
+		return
+	}
+
+	user, err := h.findUserByID(middleware.CurrentUserID(c))
+	if err != nil {
+		RespondFailure(c, http.StatusNotFound, "用户不存在")
+		return
+	}
+
+	nickname := strings.TrimSpace(req.Nickname)
+	if nickname != "" {
+		user.Nickname = nickname
+	}
+	avatarPreset := normalizeAvatarPreset(req.AvatarPreset)
+	avatarPresetProvided := strings.TrimSpace(req.AvatarPreset) != ""
+	if avatarPresetProvided && avatarPreset == "" {
+		RespondFailure(c, http.StatusBadRequest, "头像预设不存在")
+		return
+	}
+	if avatarPresetProvided {
+		user.AvatarPreset = avatarPreset
+	}
+	if nickname == "" && !avatarPresetProvided {
+		RespondFailure(c, http.StatusBadRequest, "请至少修改昵称或头像")
+		return
+	}
+	if err := h.db.Save(user).Error; err != nil {
+		RespondFailure(c, http.StatusInternalServerError, "更新个人信息失败")
+		return
+	}
+
+	RespondSuccess(c, http.StatusOK, "个人信息已更新", gin.H{"user": userResponse(*user)})
 }
 
 func (h *Handler) changePassword(c *gin.Context) {

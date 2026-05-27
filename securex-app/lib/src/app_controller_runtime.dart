@@ -2,7 +2,18 @@
 
 part of 'app_controller.dart';
 
+const _realtimeForceReconnectCooldown = Duration(seconds: 15);
+
 extension AppControllerRuntimeActions on AppController {
+  void _updateRealtimeStatusMessage(String message) {
+    if (_statusMessage == message) {
+      return;
+    }
+    _statusMessage = message;
+    _markChatChanged();
+    notifyListeners();
+  }
+
   Future<void> _runPendingChatPollingTick() async {
     if (_token == null || _user == null || _vaultKey == null) {
       _stopPendingChatPolling();
@@ -66,14 +77,10 @@ extension AppControllerRuntimeActions on AppController {
         );
         return;
       case 'reconnecting':
-        _statusMessage = '网络切换中，正在自动恢复实时加密通道。';
-        _markChatChanged();
-        notifyListeners();
+        _updateRealtimeStatusMessage('网络切换中，正在自动恢复实时加密通道。');
         return;
       case 'disconnected':
-        _statusMessage = '实时通道暂时断开，已切换到自动重连。';
-        _markChatChanged();
-        notifyListeners();
+        _updateRealtimeStatusMessage('实时通道暂时断开，已切换到自动重连。');
         _ensurePendingChatPolling();
         unawaited(_runPendingChatPollingTick());
         return;
@@ -87,7 +94,11 @@ extension AppControllerRuntimeActions on AppController {
     required bool refreshConfig,
     required bool forceReconnect,
   }) {
+    final requestId = ++_latestRealtimeResumeRequestId;
     _realtimeResumeTask = _realtimeResumeTask.then((_) async {
+      if (requestId != _latestRealtimeResumeRequestId) {
+        return;
+      }
       if (!_initialized ||
           _token == null ||
           _user == null ||
@@ -102,13 +113,25 @@ extension AppControllerRuntimeActions on AppController {
             token: _token!,
           );
         }
-        await _ensureRealtimeChatConnected(forceReconnect: forceReconnect);
+        var shouldForceReconnect = forceReconnect;
+        final now = DateTime.now();
+        if (shouldForceReconnect && _realtimeChatService.connected) {
+          final lastForced = _lastRealtimeForceReconnectAt;
+          if (lastForced != null &&
+              now.difference(lastForced) < _realtimeForceReconnectCooldown) {
+            shouldForceReconnect = false;
+          }
+        }
+        if (shouldForceReconnect) {
+          _lastRealtimeForceReconnectAt = now;
+        }
+        await _ensureRealtimeChatConnected(
+          forceReconnect: shouldForceReconnect,
+        );
         await _refreshRealtimePresenceSnapshot();
         _historyRequestedPeerIds.clear();
         await _openRealtimePeersForHistorySync();
-        _statusMessage = reason;
-        _markChatChanged();
-        notifyListeners();
+        _updateRealtimeStatusMessage(reason);
       } catch (error) {
         appLog('移动网络恢复实时通道失败', error);
       }

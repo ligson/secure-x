@@ -144,7 +144,18 @@ extension AppControllerInternalHelpers on AppController {
       return;
     }
 
-    _friends = await _apiClient.listFriends(baseUrl: _baseUrl, token: _token!);
+    final friendResponse = await _apiClient.listFriends(
+      baseUrl: _baseUrl,
+      token: _token!,
+    );
+    _friendRemarks = await _decryptFriendRemarks(friendResponse.aliases);
+    _friends = friendResponse.friends
+        .map(
+          (friend) =>
+              friend.copyWith(remarkName: _friendRemarks[friend.id] ?? ''),
+        )
+        .toList();
+    _applyFriendDisplayInfoToConversations();
     final requests = await _apiClient.listFriendRequests(
       baseUrl: _baseUrl,
       token: _token!,
@@ -155,6 +166,57 @@ extension AppControllerInternalHelpers on AppController {
       userIds: _friends.map((friend) => friend.id).toList(),
     );
     _markFriendsChanged();
+  }
+
+  Future<Map<String, String>> _decryptFriendRemarks(
+    List<FriendAliasRecord> aliases,
+  ) async {
+    if (_vaultKey == null || aliases.isEmpty) {
+      return {};
+    }
+
+    final remarks = <String, String>{};
+    for (final alias in aliases) {
+      if (alias.friendId.isEmpty || alias.payload.isEmpty) {
+        continue;
+      }
+      try {
+        final data = await _cryptoService.decryptJson(
+          alias.payload,
+          _vaultKey!,
+        );
+        final remarkName = (data['remarkName'] as String? ?? '').trim();
+        if (remarkName.isNotEmpty) {
+          remarks[alias.friendId] = remarkName;
+        }
+      } catch (error) {
+        appLog('好友备注解密失败：friendId=${alias.friendId}', error);
+      }
+    }
+    return remarks;
+  }
+
+  void _applyFriendDisplayInfoToConversations() {
+    if (_chatConversations.isEmpty) {
+      return;
+    }
+    final friendById = {for (final friend in _friends) friend.id: friend};
+    _chatConversations = _chatConversations.map((conversation) {
+      final updatedFriend = conversation.friend == null
+          ? null
+          : friendById[conversation.friend!.id] ?? conversation.friend;
+      final updatedMembers = conversation.members
+          .map((member) => friendById[member.id] ?? member)
+          .toList();
+      if (updatedFriend == conversation.friend &&
+          listEquals(updatedMembers, conversation.members)) {
+        return conversation;
+      }
+      return conversation.copyWith(
+        friend: updatedFriend,
+        members: updatedMembers,
+      );
+    }).toList();
   }
 
   Future<void> _loadChatSnapshot() async {
@@ -241,6 +303,81 @@ extension AppControllerInternalHelpers on AppController {
       return getApplicationSupportDirectory();
     }
     return Directory(devDataDir);
+  }
+
+  Future<Directory?> _durableClientPreferenceDirectory() async {
+    final devDataDir = _devDataDir.trim();
+    if (devDataDir.isNotEmpty) {
+      return Directory(devDataDir);
+    }
+    if (Platform.isWindows) {
+      final appData = Platform.environment['APPDATA']?.trim() ?? '';
+      if (appData.isNotEmpty) {
+        return Directory('$appData/secure-x');
+      }
+      final userProfile = Platform.environment['USERPROFILE']?.trim() ?? '';
+      if (userProfile.isNotEmpty) {
+        return Directory('$userProfile/AppData/Roaming/secure-x');
+      }
+      return null;
+    }
+    if (Platform.isMacOS || Platform.isLinux) {
+      final home = Platform.environment['HOME']?.trim() ?? '';
+      if (home.isNotEmpty) {
+        return Directory('$home/.secure-x');
+      }
+      return null;
+    }
+    return null;
+  }
+
+  Future<File?> _durableClientPreferenceFile() async {
+    final directory = await _durableClientPreferenceDirectory();
+    if (directory == null) {
+      return null;
+    }
+    final suffix = _storageNamespace == 'default' ? '' : '-$_storageNamespace';
+    return File('${directory.path}/client-prefs$suffix.json');
+  }
+
+  Future<Map<String, dynamic>> _readDurableClientPreferences() async {
+    final file = await _durableClientPreferenceFile();
+    if (file == null || !await file.exists()) {
+      return const {};
+    }
+    try {
+      final raw = await file.readAsString();
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        return decoded;
+      }
+    } catch (error) {
+      appLog('读取持久客户端配置失败', error);
+    }
+    return const {};
+  }
+
+  Future<void> _writeDurableClientPreferences({
+    required String baseUrl,
+    required String themeId,
+  }) async {
+    final file = await _durableClientPreferenceFile();
+    if (file == null) {
+      return;
+    }
+    try {
+      await file.parent.create(recursive: true);
+      await file.writeAsString(
+        jsonEncode({
+          'version': 1,
+          'baseUrl': baseUrl,
+          'themeId': themeId,
+          'updatedAt': DateTime.now().toIso8601String(),
+        }),
+      );
+    } catch (error) {
+      appLog('写入持久客户端配置失败', error);
+    }
   }
 
   String _storageKey(String key) => 'securex.$_storageNamespace.$key';
@@ -454,6 +591,7 @@ extension AppControllerInternalHelpers on AppController {
         ChatConversation(
           id: entry['id'] as String? ?? '',
           title: entry['title'] as String? ?? '未命名群聊',
+          avatarPreset: entry['avatarPreset'] as String? ?? '',
           members: members,
           adminUserId: entry['adminUserId'] as String? ?? '',
           isGroup: true,
@@ -483,8 +621,8 @@ extension AppControllerInternalHelpers on AppController {
       ChatConversation(
         friend: friend,
         id: entry['id'] as String? ?? '',
-        title: snapshotFriend.username.isNotEmpty
-            ? snapshotFriend.username
+        title: snapshotFriend.displayName.isNotEmpty
+            ? snapshotFriend.displayName
             : null,
         messages: messages,
         archiveVersion: snapshotArchiveVersion,
@@ -498,6 +636,7 @@ extension AppControllerInternalHelpers on AppController {
       return {
         'id': conversation.id,
         'title': conversation.title,
+        'avatarPreset': conversation.avatarPreset,
         'isGroup': conversation.isGroup,
         'friendId': conversation.friend?.id ?? '',
         'friend': conversation.friend?.toJson() ?? <String, dynamic>{},
@@ -806,6 +945,9 @@ extension AppControllerInternalHelpers on AppController {
     final nextIsDissolved = existing.isDissolved || incoming.isDissolved;
     conversations[index] = existing.copyWith(
       title: incoming.title.isEmpty ? existing.title : incoming.title,
+      avatarPreset: incoming.avatarPreset.isEmpty
+          ? existing.avatarPreset
+          : incoming.avatarPreset,
       friend: incoming.friend ?? existing.friend,
       members: incoming.isGroup
           ? _uniqueFriends([...existing.members, ...incoming.members])
@@ -908,6 +1050,7 @@ extension AppControllerInternalHelpers on AppController {
     return {
       'id': conversation.id,
       'title': conversation.title,
+      'avatarPreset': conversation.avatarPreset,
       'isGroup': conversation.isGroup,
       'friendId': conversation.friend?.id ?? '',
       'friend': conversation.friend?.toJson() ?? <String, dynamic>{},
@@ -931,6 +1074,7 @@ extension AppControllerInternalHelpers on AppController {
     return {
       'id': conversation.id,
       'title': conversation.title,
+      'avatarPreset': conversation.avatarPreset,
       'isGroup': conversation.isGroup,
       'friendId': conversation.friend?.id ?? '',
       'friend': conversation.friend?.toJson() ?? <String, dynamic>{},
@@ -994,6 +1138,7 @@ extension AppControllerInternalHelpers on AppController {
 
     for (final group in groups) {
       var title = '未命名群聊';
+      var avatarPreset = secureXDefaultGroupAvatarPreset;
       if (group.snapshotPayload.isNotEmpty) {
         try {
           final data = await _cryptoService.decryptJson(
@@ -1004,6 +1149,10 @@ extension AppControllerInternalHelpers on AppController {
           if (value.isNotEmpty) {
             title = value;
           }
+          avatarPreset = normalizeSecureXAvatarPreset(
+            data['avatarPreset'] as String?,
+            group: true,
+          );
         } catch (error) {
           appLog('服务端群聊快照解密失败：groupId=${group.id}', error);
         }
@@ -1011,6 +1160,7 @@ extension AppControllerInternalHelpers on AppController {
       _ensureGroupConversation(
         id: group.id,
         title: title,
+        avatarPreset: avatarPreset,
         members: group.members
             .where((member) => member.id != _user!.id)
             .toList(),

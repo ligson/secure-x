@@ -172,15 +172,15 @@ extension _FriendsTab on _VaultScreenState {
     final query = _friendSearchController.text.trim().toLowerCase();
     final friends = [...widget.controller.friends]
       ..sort(
-        (a, b) => a.username.toLowerCase().compareTo(b.username.toLowerCase()),
+        (a, b) =>
+            a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()),
       );
     if (query.isEmpty) {
       return friends;
     }
-    return friends.where((friend) {
-      return friend.username.toLowerCase().contains(query) ||
-          friend.email.toLowerCase().contains(query);
-    }).toList();
+    return friends
+        .where((friend) => friend.searchableText.contains(query))
+        .toList();
   }
 
   Map<String, List<PublicUser>> _groupFriends(List<PublicUser> friends) {
@@ -193,8 +193,8 @@ extension _FriendsTab on _VaultScreenState {
   }
 
   String _friendSectionKey(PublicUser friend) {
-    final source = friend.username.trim().isNotEmpty
-        ? friend.username.trim()
+    final source = friend.displayName.trim().isNotEmpty
+        ? friend.displayName.trim()
         : friend.email.trim();
     if (source.isEmpty) {
       return '#';
@@ -281,10 +281,16 @@ class _FriendListTile extends StatelessWidget {
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       leading: _UserAvatar(user: friend),
       title: Text(
-        friend.username.isEmpty ? '(未命名用户)' : friend.username,
+        friend.displayName.isEmpty ? '(未命名用户)' : friend.displayName,
         style: const TextStyle(fontWeight: FontWeight.w800),
       ),
-      subtitle: Text(friend.email),
+      subtitle: Text(
+        friend.remarkName.trim().isNotEmpty &&
+                friend.nickname.trim().isNotEmpty &&
+                friend.remarkName.trim() != friend.nickname.trim()
+            ? '${friend.nickname} · ${friend.email}'
+            : friend.email,
+      ),
       trailing: const Icon(Icons.chevron_right_rounded),
     );
   }
@@ -533,27 +539,10 @@ class _UserAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final source = user.username.trim().isNotEmpty
-        ? user.username.trim()
-        : user.email.trim();
-    final label = source.isNotEmpty ? source[0].toUpperCase() : '?';
-    return Container(
-      width: 46,
-      height: 46,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(colors: context.sx.gradient),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: context.sx.border),
-      ),
-      child: Center(
-        child: Text(
-          label,
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            color: Colors.white,
-            fontWeight: FontWeight.w900,
-          ),
-        ),
-      ),
+    return _PresetAvatar(
+      presetId: user.avatarPreset,
+      size: 46,
+      borderColor: context.sx.border,
     );
   }
 }
@@ -856,7 +845,7 @@ class _RequestTile extends StatelessWidget {
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       leading: _UserAvatar(user: user),
       title: Text(
-        user.username,
+        user.displayName,
         style: const TextStyle(fontWeight: FontWeight.w800),
       ),
       subtitle: Text(request.message.isEmpty ? user.email : request.message),
@@ -888,17 +877,32 @@ class _RequestTile extends StatelessWidget {
   }
 }
 
-class _FriendDetailPage extends StatelessWidget {
+class _FriendDetailPage extends StatefulWidget {
   const _FriendDetailPage({required this.controller, required this.friend});
 
   final AppController controller;
   final PublicUser friend;
 
   @override
+  State<_FriendDetailPage> createState() => _FriendDetailPageState();
+}
+
+class _FriendDetailPageState extends State<_FriendDetailPage> {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(widget.controller.refreshFriendsSilently());
+  }
+
+  @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: controller,
+      animation: widget.controller,
       builder: (context, _) {
+        final currentFriend = widget.controller.friends.firstWhere(
+          (entry) => entry.id == widget.friend.id,
+          orElse: () => widget.friend,
+        );
         return Scaffold(
           appBar: AppBar(title: const Text('好友信息')),
           body: SafeArea(
@@ -913,22 +917,37 @@ class _FriendDetailPage extends StatelessWidget {
                         padding: const EdgeInsets.all(20),
                         child: Row(
                           children: [
-                            _UserAvatar(user: friend),
+                            _UserAvatar(user: currentFriend),
                             const SizedBox(width: 16),
                             Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    friend.username,
+                                    currentFriend.displayName,
                                     style: Theme.of(context)
                                         .textTheme
                                         .headlineSmall
                                         ?.copyWith(fontWeight: FontWeight.w900),
                                   ),
                                   const SizedBox(height: 6),
+                                  if (currentFriend.remarkName
+                                      .trim()
+                                      .isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(bottom: 6),
+                                      child: Text(
+                                        '账号昵称：${currentFriend.nickname.trim().isEmpty ? currentFriend.username : currentFriend.nickname}',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
+                                              color: context.sx.mutedText,
+                                            ),
+                                      ),
+                                    ),
                                   Text(
-                                    friend.email,
+                                    currentFriend.email,
                                     style: Theme.of(context)
                                         .textTheme
                                         .bodyMedium
@@ -953,18 +972,39 @@ class _FriendDetailPage extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        await Navigator.of(context).push<void>(
+                          MaterialPageRoute(
+                            builder: (context) => _FriendRemarkPage(
+                              controller: widget.controller,
+                              friend: currentFriend,
+                            ),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.drive_file_rename_outline),
+                      label: Text(
+                        currentFriend.remarkName.trim().isEmpty
+                            ? '设置备注昵称'
+                            : '修改备注昵称',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
                     FilledButton.icon(
                       onPressed: () async {
-                        unawaited(controller.openChatWith(friend));
+                        unawaited(
+                          widget.controller.openChatWith(currentFriend),
+                        );
                         if (!context.mounted) {
                           return;
                         }
                         await Navigator.of(context).push<void>(
                           MaterialPageRoute(
                             builder: (context) => _ChatRoomPage(
-                              controller: controller,
-                              conversationId: friend.id,
-                              friend: friend,
+                              controller: widget.controller,
+                              conversationId: currentFriend.id,
+                              friend: currentFriend,
                             ),
                           ),
                         );
@@ -974,7 +1014,7 @@ class _FriendDetailPage extends StatelessWidget {
                     ),
                     const SizedBox(height: 12),
                     OutlinedButton.icon(
-                      onPressed: controller.busy
+                      onPressed: widget.controller.busy
                           ? null
                           : () async {
                               final confirmed = await showDialog<bool>(
@@ -982,7 +1022,7 @@ class _FriendDetailPage extends StatelessWidget {
                                 builder: (context) => AlertDialog(
                                   title: const Text('清除聊天记录'),
                                   content: Text(
-                                    '确定清除你与“${friend.username.isEmpty ? friend.email : friend.username}”的聊天记录吗？清除后只有你自己看不到，对方聊天记录不会删除。',
+                                    '确定清除你与“${currentFriend.displayName}”的聊天记录吗？清除后只有你自己看不到，对方聊天记录不会删除。',
                                   ),
                                   actions: [
                                     TextButton(
@@ -1001,13 +1041,17 @@ class _FriendDetailPage extends StatelessWidget {
                               if (confirmed != true) {
                                 return;
                               }
-                              await controller.clearDirectChatHistory(friend);
+                              await widget.controller.clearDirectChatHistory(
+                                currentFriend,
+                              );
                               if (context.mounted &&
-                                  controller.statusMessage != null &&
-                                  controller.statusMessage!.isNotEmpty) {
+                                  widget.controller.statusMessage != null &&
+                                  widget.controller.statusMessage!.isNotEmpty) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
-                                    content: Text(controller.statusMessage!),
+                                    content: Text(
+                                      widget.controller.statusMessage!,
+                                    ),
                                   ),
                                 );
                               }
@@ -1021,14 +1065,16 @@ class _FriendDetailPage extends StatelessWidget {
                     ),
                     const SizedBox(height: 12),
                     OutlinedButton.icon(
-                      onPressed: controller.busy
+                      onPressed: widget.controller.busy
                           ? null
                           : () async {
                               final confirmed = await showDialog<bool>(
                                 context: context,
                                 builder: (context) => AlertDialog(
                                   title: const Text('删除好友'),
-                                  content: Text('确定删除“${friend.username}”吗？'),
+                                  content: Text(
+                                    '确定删除“${currentFriend.displayName}”吗？',
+                                  ),
                                   actions: [
                                     TextButton(
                                       onPressed: () =>
@@ -1046,7 +1092,9 @@ class _FriendDetailPage extends StatelessWidget {
                               if (confirmed != true) {
                                 return;
                               }
-                              await controller.deleteFriend(friend);
+                              await widget.controller.deleteFriend(
+                                currentFriend,
+                              );
                               if (context.mounted) {
                                 Navigator.of(context).pop();
                               }
@@ -1057,6 +1105,135 @@ class _FriendDetailPage extends StatelessWidget {
                         foregroundColor: context.sx.danger,
                         side: BorderSide(color: context.sx.danger),
                       ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _FriendRemarkPage extends StatefulWidget {
+  const _FriendRemarkPage({required this.controller, required this.friend});
+
+  final AppController controller;
+  final PublicUser friend;
+
+  @override
+  State<_FriendRemarkPage> createState() => _FriendRemarkPageState();
+}
+
+class _FriendRemarkPageState extends State<_FriendRemarkPage> {
+  late final TextEditingController _remarkController;
+
+  @override
+  void initState() {
+    super.initState();
+    _remarkController = TextEditingController(text: widget.friend.remarkName);
+  }
+
+  @override
+  void dispose() {
+    _remarkController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: widget.controller,
+      builder: (context, _) {
+        final friend = widget.controller.friends.firstWhere(
+          (entry) => entry.id == widget.friend.id,
+          orElse: () => widget.friend,
+        );
+        return Scaffold(
+          appBar: AppBar(title: const Text('备注昵称')),
+          body: SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 720),
+                child: ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    const _SettingsDetailHeader(
+                      icon: Icons.drive_file_rename_outline,
+                      title: '设置好友备注',
+                    ),
+                    const SizedBox(height: 12),
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '当前好友：${friend.displayName}',
+                              style: Theme.of(context).textTheme.titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.w800),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              '备注昵称只会以密文形式保存到服务端，只有当前账号解锁后才能看到。',
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(color: context.sx.mutedText),
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: _remarkController,
+                              decoration: const InputDecoration(
+                                labelText: '备注昵称',
+                                hintText: '例如：测试环境-小李',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: widget.controller.busy
+                                ? null
+                                : () async {
+                                    _remarkController.clear();
+                                    await widget.controller
+                                        .updateFriendRemarkName(
+                                          friend: friend,
+                                          remarkName: '',
+                                        );
+                                    if (context.mounted) {
+                                      Navigator.of(context).pop();
+                                    }
+                                  },
+                            child: const Text('清除备注'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: FilledButton(
+                            onPressed: widget.controller.busy
+                                ? null
+                                : () async {
+                                    await widget.controller
+                                        .updateFriendRemarkName(
+                                          friend: friend,
+                                          remarkName: _remarkController.text,
+                                        );
+                                    if (context.mounted) {
+                                      Navigator.of(context).pop();
+                                    }
+                                  },
+                            child: const Text('保存'),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),

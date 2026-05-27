@@ -28,7 +28,8 @@ extension _VaultSettingsTab on _VaultScreenState {
                         _SettingsMenuTile(
                           icon: Icons.person_outline,
                           title: '个人信息',
-                          subtitle: widget.controller.user?.username ?? '当前账号',
+                          subtitle:
+                              widget.controller.user?.displayName ?? '当前账号',
                           onTap: _showProfileSettings,
                         ),
                         Divider(height: 1, color: context.sx.border),
@@ -81,39 +82,10 @@ extension _VaultSettingsTab on _VaultScreenState {
   }
 
   Future<void> _showProfileSettings() async {
-    await _openSettingsPage(
-      title: '个人信息',
-      icon: Icons.person_outline,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _SettingsRow(
-            label: '用户名',
-            value: widget.controller.user?.username ?? '-',
-          ),
-          const SizedBox(height: 10),
-          _SettingsRow(
-            label: '邮箱',
-            value: widget.controller.user?.email ?? '-',
-          ),
-          const SizedBox(height: 10),
-          _SettingsRow(label: '当前服务', value: widget.controller.baseUrl),
-          const SizedBox(height: 14),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            decoration: BoxDecoration(
-              color: context.sx.subtle,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Text(
-              '密码、备注、文件都只在客户端加解密。',
-              style: Theme.of(
-                context,
-              ).textTheme.bodyMedium?.copyWith(color: context.sx.mutedText),
-            ),
-          ),
-        ],
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (context) =>
+            _ProfileSettingsPage(controller: widget.controller),
       ),
     );
   }
@@ -281,5 +253,175 @@ extension _VaultSettingsTab on _VaultScreenState {
     final navigator = Navigator.of(context);
     navigator.popUntil((route) => route.isFirst);
     await widget.controller.logout();
+  }
+}
+
+class _ProfileSettingsPage extends StatefulWidget {
+  const _ProfileSettingsPage({required this.controller});
+
+  final AppController controller;
+
+  @override
+  State<_ProfileSettingsPage> createState() => _ProfileSettingsPageState();
+}
+
+class _ProfileSettingsPageState extends State<_ProfileSettingsPage> {
+  late final TextEditingController _nicknameController;
+  late String _avatarPreset;
+
+  @override
+  void initState() {
+    super.initState();
+    _nicknameController = TextEditingController(
+      text: widget.controller.user?.nickname ?? '',
+    );
+    _avatarPreset = normalizeSecureXAvatarPreset(
+      widget.controller.user?.avatarPreset,
+    );
+  }
+
+  @override
+  void dispose() {
+    _nicknameController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: widget.controller,
+      builder: (context, _) {
+        final user = widget.controller.user;
+        if (user == null) {
+          return const SizedBox.shrink();
+        }
+        return Scaffold(
+          appBar: AppBar(title: const Text('个人信息')),
+          body: SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 720),
+                child: ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    const _SettingsDetailHeader(
+                      icon: Icons.person_outline,
+                      title: '个人信息',
+                    ),
+                    const SizedBox(height: 12),
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _SettingsRow(label: '用户名', value: user.username),
+                            const SizedBox(height: 10),
+                            _SettingsRow(label: '邮箱', value: user.email),
+                            const SizedBox(height: 10),
+                            _SettingsRow(
+                              label: '当前服务',
+                              value: widget.controller.baseUrl,
+                            ),
+                            const SizedBox(height: 16),
+                            Row(
+                              children: [
+                                _PresetAvatar(
+                                  presetId: _avatarPreset,
+                                  size: 64,
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Text(
+                                    '选择一个预置头像。好友列表、聊天会话和群成员列表都会显示这个头像。',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium
+                                        ?.copyWith(color: context.sx.mutedText),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: _nicknameController,
+                              decoration: const InputDecoration(
+                                labelText: '昵称',
+                                hintText: '输入展示昵称',
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              '头像预设',
+                              style: Theme.of(context).textTheme.titleSmall
+                                  ?.copyWith(fontWeight: FontWeight.w800),
+                            ),
+                            const SizedBox(height: 12),
+                            _AvatarPresetPicker(
+                              selectedPresetId: _avatarPreset,
+                              onSelected: (value) {
+                                setState(() {
+                                  _avatarPreset = value;
+                                });
+                              },
+                            ),
+                            const SizedBox(height: 14),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 12,
+                              ),
+                              decoration: BoxDecoration(
+                                color: context.sx.subtle,
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Text(
+                                '昵称用于展示，登录账号仍然使用用户名或邮箱。密码、备注、文件都只在客户端加解密。',
+                                style: Theme.of(context).textTheme.bodyMedium
+                                    ?.copyWith(color: context.sx.mutedText),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: FilledButton(
+                        onPressed: widget.controller.busy
+                            ? null
+                            : () async {
+                                final nickname = _nicknameController.text
+                                    .trim();
+                                if (nickname.isEmpty) {
+                                  if (!context.mounted) {
+                                    return;
+                                  }
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('请输入昵称')),
+                                  );
+                                  return;
+                                }
+                                await widget.controller.updateProfile(
+                                  nickname: nickname,
+                                  avatarPreset: _avatarPreset,
+                                );
+                                if (context.mounted) {
+                                  Navigator.of(context).pop();
+                                }
+                              },
+                        child: const Text('保存'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 }

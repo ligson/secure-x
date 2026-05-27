@@ -69,6 +69,23 @@ class ApiClient {
     return UserProfile.fromJson(data['user'] as Map<String, dynamic>);
   }
 
+  Future<UserProfile> updateProfile({
+    required String baseUrl,
+    required String token,
+    required String nickname,
+    required String avatarPreset,
+  }) async {
+    final data = _unwrapMap(
+      await _dio.put<Map<String, dynamic>>(
+        '$baseUrl/api/v1/auth/profile',
+        data: {'nickname': nickname, 'avatarPreset': avatarPreset},
+        options: _authorized(token),
+      ),
+    );
+
+    return UserProfile.fromJson(data['user'] as Map<String, dynamic>);
+  }
+
   Future<void> changePassword({
     required String baseUrl,
     required String token,
@@ -389,7 +406,7 @@ class ApiClient {
     return Uint8List.fromList(base64Decode(data['cipherTextBase64'] as String));
   }
 
-  Future<List<PublicUser>> listFriends({
+  Future<FriendListResponse> listFriends({
     required String baseUrl,
     required String token,
   }) async {
@@ -400,9 +417,15 @@ class ApiClient {
       ),
     );
 
-    return (data['friends'] as List<dynamic>? ?? [])
+    final friends = (data['friends'] as List<dynamic>? ?? [])
         .map((entry) => PublicUser.fromJson(entry as Map<String, dynamic>))
         .toList();
+    final aliases = (data['aliases'] as List<dynamic>? ?? [])
+        .map(
+          (entry) => FriendAliasRecord.fromJson(entry as Map<String, dynamic>),
+        )
+        .toList();
+    return FriendListResponse(friends: friends, aliases: aliases);
   }
 
   Future<Map<String, List<FriendRequestRecord>>> listFriendRequests({
@@ -470,6 +493,31 @@ class ApiClient {
   }) async {
     await _dio.delete<Map<String, dynamic>>(
       '$baseUrl/api/v1/friends/$friendId',
+      options: _authorized(token),
+    );
+  }
+
+  Future<void> upsertFriendAlias({
+    required String baseUrl,
+    required String token,
+    required String friendId,
+    required String payload,
+    required int version,
+  }) async {
+    await _dio.put<Map<String, dynamic>>(
+      '$baseUrl/api/v1/friends/$friendId/alias',
+      data: {'payload': payload, 'version': version},
+      options: _authorized(token),
+    );
+  }
+
+  Future<void> deleteFriendAlias({
+    required String baseUrl,
+    required String token,
+    required String friendId,
+  }) async {
+    await _dio.delete<Map<String, dynamic>>(
+      '$baseUrl/api/v1/friends/$friendId/alias',
       options: _authorized(token),
     );
   }

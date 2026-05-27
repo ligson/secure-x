@@ -31,8 +31,20 @@ func (h *Handler) listFriends(c *gin.Context) {
 		friendIDs = append(friendIDs, friendship.FriendID)
 	}
 
+	var aliases []model.FriendAlias
+	if err := h.db.Where("user_id = ?", userID).Order("updated_at desc").Find(&aliases).Error; err != nil {
+		RespondFailure(c, http.StatusInternalServerError, "加载好友备注失败")
+		return
+	}
+
+	aliasResponses := make([]gin.H, 0, len(aliases))
+	for _, alias := range aliases {
+		aliasResponses = append(aliasResponses, friendAliasResponse(alias))
+	}
+
 	RespondSuccess(c, http.StatusOK, "好友列表已加载", gin.H{
 		"friends": h.publicUsersByID(friendIDs),
+		"aliases": aliasResponses,
 	})
 }
 
@@ -202,9 +214,86 @@ func (h *Handler) deleteFriend(c *gin.Context) {
 		RespondFailure(c, http.StatusInternalServerError, "删除好友失败")
 		return
 	}
+	if err := h.db.
+		Where("(user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)", userID, friendID, friendID, userID).
+		Delete(&model.FriendAlias{}).Error; err != nil {
+		RespondFailure(c, http.StatusInternalServerError, "删除好友备注失败")
+		return
+	}
 	h.notifyFriendshipChanged(userID, friendID, "deleted")
 
 	RespondSuccess(c, http.StatusOK, "好友已删除", gin.H{})
+}
+
+func (h *Handler) upsertFriendAlias(c *gin.Context) {
+	var req friendAliasUpsertRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondFailure(c, http.StatusBadRequest, bindErrorMessage(err))
+		return
+	}
+
+	userID := middleware.CurrentUserID(c)
+	friendID := strings.TrimSpace(c.Param("id"))
+	if friendID == "" || !h.areFriends(userID, friendID) {
+		RespondFailure(c, http.StatusNotFound, "好友不存在")
+		return
+	}
+
+	alias := model.FriendAlias{
+		ID:       uuid.NewString(),
+		UserID:   userID,
+		FriendID: friendID,
+		Payload:  strings.TrimSpace(req.Payload),
+		Version:  normalizeVersion(req.Version),
+	}
+	if alias.Payload == "" {
+		RespondFailure(c, http.StatusBadRequest, "缺少加密负载内容")
+		return
+	}
+
+	var existing model.FriendAlias
+	err := h.db.Where("user_id = ? AND friend_id = ?", userID, friendID).First(&existing).Error
+	if err == nil {
+		existing.Payload = alias.Payload
+		existing.Version = alias.Version
+		if err := h.db.Save(&existing).Error; err != nil {
+			RespondFailure(c, http.StatusInternalServerError, "保存好友备注失败")
+			return
+		}
+		RespondSuccess(c, http.StatusOK, "好友备注已保存", gin.H{
+			"alias": friendAliasResponse(existing),
+		})
+		return
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		RespondFailure(c, http.StatusInternalServerError, "保存好友备注失败")
+		return
+	}
+
+	if err := h.db.Create(&alias).Error; err != nil {
+		RespondFailure(c, http.StatusInternalServerError, "保存好友备注失败")
+		return
+	}
+
+	RespondSuccess(c, http.StatusOK, "好友备注已保存", gin.H{
+		"alias": friendAliasResponse(alias),
+	})
+}
+
+func (h *Handler) deleteFriendAlias(c *gin.Context) {
+	userID := middleware.CurrentUserID(c)
+	friendID := strings.TrimSpace(c.Param("id"))
+	if friendID == "" || !h.areFriends(userID, friendID) {
+		RespondFailure(c, http.StatusNotFound, "好友不存在")
+		return
+	}
+
+	if err := h.db.Where("user_id = ? AND friend_id = ?", userID, friendID).Delete(&model.FriendAlias{}).Error; err != nil {
+		RespondFailure(c, http.StatusInternalServerError, "删除好友备注失败")
+		return
+	}
+
+	RespondSuccess(c, http.StatusOK, "好友备注已清除", gin.H{})
 }
 
 func (h *Handler) notifyFriendshipChanged(userID, friendID, status string) {
@@ -319,8 +408,10 @@ func (h *Handler) friendRequestResponse(request model.FriendRequest) gin.H {
 
 func publicUserResponse(user model.User) gin.H {
 	return gin.H{
-		"id":       user.ID,
-		"username": user.Username,
-		"email":    user.Email,
+		"id":           user.ID,
+		"username":     user.Username,
+		"nickname":     user.Nickname,
+		"avatarPreset": defaultAvatarPreset(user.AvatarPreset),
+		"email":        user.Email,
 	}
 }

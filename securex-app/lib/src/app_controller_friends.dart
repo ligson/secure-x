@@ -129,8 +129,67 @@ extension AppControllerFriendActions on AppController {
         token: _token!,
         friendId: friend.id,
       );
+      _friendRemarks.remove(friend.id);
       await _loadFriendsSnapshot();
       _statusMessage = '好友已删除。';
+    });
+  }
+
+  Future<void> updateFriendRemarkName({
+    required PublicUser friend,
+    required String remarkName,
+  }) async {
+    if (_token == null || _vaultKey == null) {
+      return;
+    }
+
+    await _runBusy(() async {
+      final cleanRemark = remarkName.trim();
+      if (cleanRemark.isEmpty) {
+        await _apiClient.deleteFriendAlias(
+          baseUrl: _baseUrl,
+          token: _token!,
+          friendId: friend.id,
+        );
+        _friendRemarks.remove(friend.id);
+        _friends = _friends
+            .map(
+              (entry) => entry.id == friend.id
+                  ? entry.copyWith(remarkName: '')
+                  : entry,
+            )
+            .toList();
+        _applyFriendDisplayInfoToConversations();
+        _markFriendsChanged();
+        _markChatChanged();
+        _statusMessage = '好友备注已清除。';
+        notifyListeners();
+        return;
+      }
+
+      final payload = await _cryptoService.encryptJson({
+        'remarkName': cleanRemark,
+      }, _vaultKey!);
+      await _apiClient.upsertFriendAlias(
+        baseUrl: _baseUrl,
+        token: _token!,
+        friendId: friend.id,
+        payload: payload,
+        version: 1,
+      );
+      _friendRemarks[friend.id] = cleanRemark;
+      _friends = _friends
+          .map(
+            (entry) => entry.id == friend.id
+                ? entry.copyWith(remarkName: cleanRemark)
+                : entry,
+          )
+          .toList();
+      _applyFriendDisplayInfoToConversations();
+      _markFriendsChanged();
+      _markChatChanged();
+      _statusMessage = '好友备注已更新。';
+      notifyListeners();
     });
   }
 }

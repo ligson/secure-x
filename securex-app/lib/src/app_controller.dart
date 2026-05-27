@@ -127,11 +127,13 @@ class AppController extends ChangeNotifier {
   List<DecryptedLoginItem> _items = [];
   List<DecryptedFileRecord> _files = [];
   List<PublicUser> _friends = [];
+  Map<String, String> _friendRemarks = {};
   List<FriendRequestRecord> _incomingFriendRequests = [];
   List<FriendRequestRecord> _outgoingFriendRequests = [];
   List<ChatConversation> _chatConversations = [];
   ChatIdentityBundle? _chatIdentity;
   final Map<String, bool> _chatFriendOnline = {};
+  final Set<String> _activeConversationIds = {};
   final Set<String> _loadedChatConversationIds = {};
   final Set<String> _loadingChatConversationIds = {};
   final Set<String> _historyRequestedPeerIds = {};
@@ -143,6 +145,8 @@ class AppController extends ChangeNotifier {
   Future<void> _friendsRefreshTask = Future.value();
   Timer? _pendingChatPollTimer;
   Timer? _chatArchiveSyncTimer;
+  int _latestRealtimeResumeRequestId = 0;
+  DateTime? _lastRealtimeForceReconnectAt;
   String? _pendingChatArchivePayload;
   int _pendingChatArchiveVersion = 0;
   final Map<String, int> _pendingChatConversationVersions = {};
@@ -165,6 +169,7 @@ class AppController extends ChangeNotifier {
   List<DecryptedLoginItem> get items => List.unmodifiable(_items);
   List<DecryptedFileRecord> get files => List.unmodifiable(_files);
   List<PublicUser> get friends => List.unmodifiable(_friends);
+  String friendRemarkName(String friendId) => _friendRemarks[friendId] ?? '';
   List<FriendRequestRecord> get incomingFriendRequests =>
       List.unmodifiable(_incomingFriendRequests);
   List<FriendRequestRecord> get outgoingFriendRequests =>

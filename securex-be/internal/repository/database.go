@@ -28,6 +28,7 @@ func Open(databaseDSN string) (*gorm.DB, error) {
 		&model.FileUploadSession{},
 		&model.FriendRequest{},
 		&model.Friendship{},
+		&model.FriendAlias{},
 		&model.GroupRoom{},
 		&model.GroupMembership{},
 		&model.GroupSnapshot{},

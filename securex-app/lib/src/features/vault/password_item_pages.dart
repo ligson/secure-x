@@ -2,12 +2,14 @@ part of '../../../main.dart';
 
 class _PasswordEditorPage extends StatefulWidget {
   const _PasswordEditorPage({
+    required this.controller,
     required this.item,
     required this.folders,
     required this.initialGeneratedPassword,
     required this.onGeneratePassword,
   });
 
+  final AppController controller;
   final DecryptedLoginItem? item;
   final List<DecryptedFolder> folders;
   final String initialGeneratedPassword;
@@ -54,10 +56,10 @@ class _PasswordEditorPageState extends State<_PasswordEditorPage> {
   List<DropdownMenuItem<String>> _folderItems() {
     return [
       const DropdownMenuItem<String>(value: '', child: Text('未分类')),
-      ...widget.folders.map(
+      ...widget.controller.orderedPasswordFolders().map(
         (folder) => DropdownMenuItem<String>(
           value: folder.id,
-          child: Text(folder.name),
+          child: Text(widget.controller.passwordFolderLabel(folder)),
         ),
       ),
     ];

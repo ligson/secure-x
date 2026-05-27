@@ -46,6 +46,7 @@ func NewRouter(
 		authGroup.POST("/register", handler.register)
 		authGroup.POST("/login", handler.login)
 		authGroup.GET("/me", middleware.RequireAuth(tokens), handler.me)
+		authGroup.PUT("/profile", middleware.RequireAuth(tokens), handler.updateProfile)
 		authGroup.PUT("/password", middleware.RequireAuth(tokens), handler.changePassword)
 		authGroup.PUT("/unlock-password", middleware.RequireAuth(tokens), handler.changeUnlockPassword)
 
@@ -58,6 +59,8 @@ func NewRouter(
 
 		protected.GET("/friends", handler.listFriends)
 		protected.DELETE("/friends/:id", handler.deleteFriend)
+		protected.PUT("/friends/:id/alias", handler.upsertFriendAlias)
+		protected.DELETE("/friends/:id/alias", handler.deleteFriendAlias)
 		protected.GET("/friend-requests", handler.listFriendRequests)
 		protected.POST("/friend-requests", handler.createFriendRequest)
 		protected.PUT("/friend-requests/:id/accept", handler.acceptFriendRequest)
