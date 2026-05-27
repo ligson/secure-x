@@ -18,7 +18,8 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Addr string `yaml:"addr"`
+	Addr           string `yaml:"addr"`
+	PublicBasePath string `yaml:"publicBasePath"`
 }
 
 type DatabaseConfig struct {
@@ -42,7 +43,8 @@ type AuthConfig struct {
 func Default() Config {
 	return Config{
 		Server: ServerConfig{
-			Addr: ":8080",
+			Addr:           ":8080",
+			PublicBasePath: "",
 		},
 		Database: DatabaseConfig{
 			DSN: "data/securex.db",

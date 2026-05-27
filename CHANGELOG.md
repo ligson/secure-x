@@ -25,7 +25,17 @@ All notable changes to this project will be documented in this file.
 - `securex-app`: `flutter analyze`
 - `securex-app`: `dart run tool/chat_realtime_smoke.dart`
 
-## [Unreleased]
+## [v1.0.13] - 2026-05-27
+
+### Fixed
+
+- 修复反向代理子路径部署下的实时地址生成：后端 `realtime/config` 现在会优先识别 `X-Forwarded-Prefix`，并支持 `server.publicBasePath` 兜底，避免部署在 `/securex-be` 这类前缀路径时 websocket 连接错地址，导致在线状态不更新、消息退化为待拉取
+- 补强聊天弱网兜底：客户端在实时 websocket 暂时断开后不再停止待收消息补拉，而是继续按固定间隔异步拉取加密消息并刷新在线状态，降低公网代理抖动或移动网络切换时出现“对方在线却要等很久才收到消息”的概率
+
+### Verified
+
+- `securex-be`: `go test ./...`
+- `securex-app`: `flutter analyze`
 
 ## [v1.0.11] - 2026-05-26
 

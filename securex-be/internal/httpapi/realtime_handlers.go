@@ -26,17 +26,47 @@ func (h *Handler) realtimeConfig(c *gin.Context) {
 	}
 	host := c.Request.Host
 	if forwardedHost := strings.TrimSpace(c.GetHeader("X-Forwarded-Host")); forwardedHost != "" {
-		host = forwardedHost
+		host = firstForwardedValue(forwardedHost)
 	}
+	prefix := h.publicBasePath(c)
 
 	RespondSuccess(c, http.StatusOK, "实时服务配置已加载", gin.H{
 		"transport":        "websocket_e2ee",
 		"signalingEnabled": true,
-		"signalingUrl":     scheme + "://" + host + "/api/v1/realtime/ws",
+		"signalingUrl":     scheme + "://" + host + prefix + "/api/v1/realtime/ws",
 		"iceServers":       []string{},
 		"relayMode":        "encrypted_websocket_primary",
 		"messageStorage":   "user_encrypted_archive",
 	})
+}
+
+func (h *Handler) publicBasePath(c *gin.Context) string {
+	if forwardedPrefix := normalizeForwardedPrefix(c.GetHeader("X-Forwarded-Prefix")); forwardedPrefix != "" {
+		return forwardedPrefix
+	}
+	return normalizeForwardedPrefix(h.server.PublicBasePath)
+}
+
+func firstForwardedValue(raw string) string {
+	parts := strings.Split(raw, ",")
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value != "" {
+			return value
+		}
+	}
+	return strings.TrimSpace(raw)
+}
+
+func normalizeForwardedPrefix(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" || value == "/" {
+		return ""
+	}
+	if !strings.HasPrefix(value, "/") {
+		value = "/" + value
+	}
+	return strings.TrimRight(value, "/")
 }
 
 func (h *Handler) realtimePresence(c *gin.Context) {

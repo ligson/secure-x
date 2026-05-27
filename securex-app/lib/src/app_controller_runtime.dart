@@ -3,6 +3,18 @@
 part of 'app_controller.dart';
 
 extension AppControllerRuntimeActions on AppController {
+  Future<void> _runPendingChatPollingTick() async {
+    if (_token == null || _user == null || _vaultKey == null) {
+      _stopPendingChatPolling();
+      return;
+    }
+
+    await _pullPendingChatMessages();
+    if (!_realtimeChatService.connected) {
+      await _refreshRealtimePresenceSnapshot();
+    }
+  }
+
   void _stopPendingChatPolling() {
     _pendingChatPollTimer?.cancel();
     _pendingChatPollTimer = null;
@@ -16,13 +28,10 @@ extension AppControllerRuntimeActions on AppController {
       return;
     }
 
-    // 在线消息优先走 websocket 直推；这里保留较低频的补拉作为弱网兜底。
-    _pendingChatPollTimer = Timer.periodic(const Duration(seconds: 12), (_) {
-      if (_token == null || _user == null || _vaultKey == null) {
-        _stopPendingChatPolling();
-        return;
-      }
-      unawaited(_pullPendingChatMessages());
+    // 在线消息优先走 websocket 直推；弱网或代理抖动时继续定时补拉待收消息，
+    // 避免 websocket 短暂断开后消息和在线状态一起“停住”。
+    _pendingChatPollTimer = Timer.periodic(const Duration(seconds: 8), (_) {
+      unawaited(_runPendingChatPollingTick());
     });
   }
 
@@ -62,13 +71,11 @@ extension AppControllerRuntimeActions on AppController {
         notifyListeners();
         return;
       case 'disconnected':
-        _stopPendingChatPolling();
-        if (_chatFriendOnline.isNotEmpty) {
-          _chatFriendOnline.updateAll((key, value) => false);
-        }
         _statusMessage = '实时通道暂时断开，已切换到自动重连。';
         _markChatChanged();
         notifyListeners();
+        _ensurePendingChatPolling();
+        unawaited(_runPendingChatPollingTick());
         return;
       default:
         return;

@@ -45,7 +45,7 @@ func NewServer(configPath string) (*Server, error) {
 	log.Printf("密文文件目录已准备：%s", cfg.Storage.FileDir)
 
 	tokens := auth.NewTokenManager(cfg.Auth.JWTSecret)
-	router := httpapi.NewRouter(db, tokens, fileStore)
+	router := httpapi.NewRouter(db, tokens, fileStore, cfg.Server)
 
 	return &Server{
 		config: cfg,

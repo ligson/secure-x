@@ -12,6 +12,7 @@ import (
 
 	"github.com/glebarez/sqlite"
 	"github.com/ligson/secure-x/securex-be/internal/auth"
+	"github.com/ligson/secure-x/securex-be/internal/config"
 	"github.com/ligson/secure-x/securex-be/internal/httpapi"
 	"github.com/ligson/secure-x/securex-be/internal/model"
 	"github.com/ligson/secure-x/securex-be/internal/storage"
@@ -305,6 +306,13 @@ func TestDissolveGroupRemovesAdminMembershipButKeepsMembersVisible(t *testing.T)
 }
 
 func newAccessControlRouter(t *testing.T) (http.Handler, *auth.TokenManager, *gorm.DB) {
+	return newAccessControlRouterWithServerConfig(t, config.ServerConfig{})
+}
+
+func newAccessControlRouterWithServerConfig(
+	t *testing.T,
+	serverConfig config.ServerConfig,
+) (http.Handler, *auth.TokenManager, *gorm.DB) {
 	t.Helper()
 
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "securex-test.db")), &gorm.Config{})
@@ -335,7 +343,7 @@ func newAccessControlRouter(t *testing.T) (http.Handler, *auth.TokenManager, *go
 		t.Fatalf("create file store: %v", err)
 	}
 	tokens := auth.NewTokenManager("test-secret")
-	router := httpapi.NewRouter(db, tokens, fileStore)
+	router := httpapi.NewRouter(db, tokens, fileStore, serverConfig)
 
 	return router, tokens, db
 }

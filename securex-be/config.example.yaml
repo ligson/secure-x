@@ -1,5 +1,8 @@
 server:
   addr: ":8080"
+  # 当后端被挂在反向代理子路径下时，可配置外部访问前缀，如 "/securex-be"。
+  # 若代理已透传 X-Forwarded-Prefix，则优先使用代理头。
+  publicBasePath: ""
 
 database:
   dsn: "data/securex.db"

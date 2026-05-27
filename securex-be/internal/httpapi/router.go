@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ligson/secure-x/securex-be/internal/auth"
+	"github.com/ligson/secure-x/securex-be/internal/config"
 	"github.com/ligson/secure-x/securex-be/internal/middleware"
 	"github.com/ligson/secure-x/securex-be/internal/storage"
 	"gorm.io/gorm"
@@ -15,15 +16,22 @@ type Handler struct {
 	tokens      *auth.TokenManager
 	fileStore   *storage.FileStore
 	realtimeHub *realtimeHub
+	server      config.ServerConfig
 }
 
-func NewRouter(db *gorm.DB, tokens *auth.TokenManager, fileStore *storage.FileStore) *gin.Engine {
+func NewRouter(
+	db *gorm.DB,
+	tokens *auth.TokenManager,
+	fileStore *storage.FileStore,
+	server config.ServerConfig,
+) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 
 	handler := &Handler{
 		db:        db,
 		tokens:    tokens,
 		fileStore: fileStore,
+		server:    server,
 	}
 	handler.realtimeHub = newRealtimeHub()
 
