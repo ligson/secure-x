@@ -52,6 +52,20 @@ class _SecuritySettingsPage extends StatelessWidget {
                           );
                         },
                       ),
+                      Divider(height: 1, color: context.sx.border),
+                      _SettingsMenuTile(
+                        icon: Icons.devices_other_outlined,
+                        title: '设备管理',
+                        subtitle: '查看和移除旧聊天设备',
+                        onTap: () {
+                          Navigator.of(context).push<void>(
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  _DeviceManagementPage(controller: controller),
+                            ),
+                          );
+                        },
+                      ),
                     ],
                   ),
                 ),
@@ -62,6 +76,211 @@ class _SecuritySettingsPage extends StatelessWidget {
       ),
     );
   }
+}
+
+class _DeviceManagementPage extends StatefulWidget {
+  const _DeviceManagementPage({required this.controller});
+
+  final AppController controller;
+
+  @override
+  State<_DeviceManagementPage> createState() => _DeviceManagementPageState();
+}
+
+class _DeviceManagementPageState extends State<_DeviceManagementPage> {
+  late Future<List<ChatDeviceRecord>> _devicesFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _devicesFuture = widget.controller.listOwnChatDevices();
+  }
+
+  void _reload() {
+    setState(() {
+      _devicesFuture = widget.controller.listOwnChatDevices();
+    });
+  }
+
+  Future<void> _deleteDevice(ChatDeviceRecord device) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('删除设备'),
+          content: Text(
+            '确定删除设备 ${_shortDeviceId(device.id)} 吗？该设备未拉取的密文消息也会被清理。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('删除'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+    await widget.controller.deleteOwnChatDevice(device.id);
+    if (mounted) {
+      _reload();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: widget.controller,
+      builder: (context, _) {
+        final currentDeviceId = widget.controller.currentChatDeviceId;
+        return Scaffold(
+          appBar: AppBar(title: const Text('设备管理')),
+          body: SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 760),
+                child: RefreshIndicator(
+                  onRefresh: () async => _reload(),
+                  child: ListView(
+                    padding: const EdgeInsets.all(16),
+                    children: [
+                      const _SettingsDetailHeader(
+                        icon: Icons.devices_other_outlined,
+                        title: '设备管理',
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        '设备身份用于端到端加密聊天投递。删除旧设备只影响该设备后续收取消息，不会解密或删除你的保险库数据。',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: context.sx.mutedText,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      FutureBuilder<List<ChatDeviceRecord>>(
+                        future: _devicesFuture,
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState ==
+                              ConnectionState.waiting) {
+                            return const Card(
+                              child: Padding(
+                                padding: EdgeInsets.all(24),
+                                child: Center(
+                                  child: CircularProgressIndicator(),
+                                ),
+                              ),
+                            );
+                          }
+                          final devices = snapshot.data ?? const [];
+                          if (devices.isEmpty) {
+                            return const Card(
+                              child: Padding(
+                                padding: EdgeInsets.all(24),
+                                child: Center(child: Text('暂无设备记录')),
+                              ),
+                            );
+                          }
+                          return Card(
+                            child: Column(
+                              children: [
+                                for (
+                                  var index = 0;
+                                  index < devices.length;
+                                  index++
+                                ) ...[
+                                  _DeviceListTile(
+                                    device: devices[index],
+                                    current:
+                                        devices[index].id == currentDeviceId,
+                                    onDelete:
+                                        devices[index].id == currentDeviceId
+                                        ? null
+                                        : () => _deleteDevice(devices[index]),
+                                  ),
+                                  if (index != devices.length - 1)
+                                    Divider(
+                                      height: 1,
+                                      color: context.sx.border,
+                                    ),
+                                ],
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _DeviceListTile extends StatelessWidget {
+  const _DeviceListTile({
+    required this.device,
+    required this.current,
+    required this.onDelete,
+  });
+
+  final ChatDeviceRecord device;
+  final bool current;
+  final VoidCallback? onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: CircleAvatar(
+        backgroundColor: current ? context.sx.accentSoft : context.sx.subtle,
+        child: Icon(
+          current ? Icons.check_circle_outline : Icons.devices_other_outlined,
+          color: current ? context.sx.primary : context.sx.mutedText,
+        ),
+      ),
+      title: Text(current ? '当前设备' : '聊天设备 ${_shortDeviceId(device.id)}'),
+      subtitle: Text(
+        [
+          '编号 ${_shortDeviceId(device.id)}',
+          if (device.appInstance.isNotEmpty) '实例 ${device.appInstance}',
+          '最近在线 ${_formatDeviceTime(device.lastSeenAt)}',
+        ].join(' · '),
+      ),
+      trailing: current
+          ? const Text('使用中')
+          : IconButton(
+              onPressed: onDelete,
+              icon: const Icon(Icons.delete_outline),
+              tooltip: '删除设备',
+            ),
+    );
+  }
+}
+
+String _shortDeviceId(String value) {
+  final normalized = value.trim();
+  if (normalized.length <= 8) {
+    return normalized;
+  }
+  return '${normalized.substring(0, 8)}...';
+}
+
+String _formatDeviceTime(DateTime? value) {
+  if (value == null) {
+    return '未知';
+  }
+  final local = value.toLocal();
+  String two(int number) => number.toString().padLeft(2, '0');
+  return '${local.year}-${two(local.month)}-${two(local.day)} '
+      '${two(local.hour)}:${two(local.minute)}';
 }
 
 class _ChangePasswordPage extends StatefulWidget {

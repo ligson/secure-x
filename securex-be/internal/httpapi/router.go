@@ -42,11 +42,14 @@ func NewRouter(
 
 	v1 := router.Group("/api/v1")
 	{
+		v1.GET("/avatars/:userID/:filename", handler.serveAvatar)
+
 		authGroup := v1.Group("/auth")
 		authGroup.POST("/register", handler.register)
 		authGroup.POST("/login", handler.login)
 		authGroup.GET("/me", middleware.RequireAuth(tokens), handler.me)
 		authGroup.PUT("/profile", middleware.RequireAuth(tokens), handler.updateProfile)
+		authGroup.POST("/profile/avatar", middleware.RequireAuth(tokens), handler.uploadProfileAvatar)
 		authGroup.PUT("/password", middleware.RequireAuth(tokens), handler.changePassword)
 		authGroup.PUT("/unlock-password", middleware.RequireAuth(tokens), handler.changeUnlockPassword)
 
@@ -78,6 +81,10 @@ func NewRouter(
 		protected.PUT("/chat/archive", handler.upsertChatArchive)
 		protected.GET("/chat/devices/current", handler.getCurrentChatDevice)
 		protected.PUT("/chat/devices/current", handler.upsertCurrentChatDevice)
+		protected.GET("/chat/devices", handler.listOwnChatDevices)
+		protected.DELETE("/chat/devices/:id", handler.deleteOwnChatDevice)
+		protected.GET("/chat/device-recovery", handler.getChatDeviceRecovery)
+		protected.PUT("/chat/device-recovery", handler.upsertChatDeviceRecovery)
 		protected.GET("/chat/users/:id/devices", handler.listUserChatDevices)
 		protected.POST("/chat/messages", handler.dispatchChatMessages)
 		protected.GET("/chat/messages/pending", handler.listPendingChatMessages)

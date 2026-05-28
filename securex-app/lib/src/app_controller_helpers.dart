@@ -11,7 +11,11 @@ extension AppControllerInternalHelpers on AppController {
     try {
       await action();
     } catch (error) {
-      _statusMessage = _friendlyError(error);
+      final message = _friendlyError(error);
+      _statusMessage = message;
+      if (_isUnauthorizedError(error)) {
+        await _clearSessionAfterUnauthorized(message);
+      }
       rethrow;
     } finally {
       _busy = false;
@@ -27,12 +31,55 @@ extension AppControllerInternalHelpers on AppController {
     try {
       return await action();
     } catch (error) {
-      _statusMessage = _friendlyError(error);
+      final message = _friendlyError(error);
+      _statusMessage = message;
+      if (_isUnauthorizedError(error)) {
+        await _clearSessionAfterUnauthorized(message);
+      }
       rethrow;
     } finally {
       _busy = false;
       notifyListeners();
     }
+  }
+
+  bool _isUnauthorizedError(Object error) {
+    return error is DioException && error.response?.statusCode == 401;
+  }
+
+  Future<void> _clearSessionAfterUnauthorized(String message) async {
+    _stopPendingChatPolling();
+    _cancelPendingChatArchiveSync();
+    try {
+      await _realtimeChatService.disconnect();
+    } catch (error) {
+      appLog('会话失效后断开实时连接失败', error);
+    }
+
+    _token = null;
+    _user = null;
+    _vaultKey = null;
+    _folders = [];
+    _fileFolders = [];
+    _items = [];
+    _files = [];
+    _friends = [];
+    _friendRemarks = {};
+    _incomingFriendRequests = [];
+    _outgoingFriendRequests = [];
+    _chatConversations = [];
+    _loadedChatConversationIds.clear();
+    _loadingChatConversationIds.clear();
+    _chatConversationLoadTasks.clear();
+    _chatIdentity = null;
+    _clearChatDeviceRegistrationCache();
+    _chatFriendOnline.clear();
+    _historyRequestedPeerIds.clear();
+    _realtimeConfig = null;
+    await _clearPersistedToken();
+    _statusMessage = message;
+    _markAppShellChanged();
+    notifyListeners();
   }
 
   Stream<Uint8List> _readFileChunks(File file, int chunkSize) async* {
@@ -1235,7 +1282,9 @@ extension AppControllerInternalHelpers on AppController {
     );
   }
 
-  Future<String?> _readEncryptedChatIdentitySeedFallback(String userId) async {
+  Future<_ChatIdentityFallbackRecord?> _readEncryptedChatIdentityFallback(
+    String userId,
+  ) async {
     if (_vaultKey == null) {
       return null;
     }
@@ -1249,19 +1298,26 @@ extension AppControllerInternalHelpers on AppController {
         return null;
       }
       final data = await _cryptoService.decryptJson(encrypted, _vaultKey!);
+      final deviceId = (data['deviceId'] as String? ?? '').trim();
       final seed = (data['seedBase64'] as String? ?? '').trim();
-      return seed.isEmpty ? null : seed;
+      if (seed.isEmpty) {
+        return null;
+      }
+      return _ChatIdentityFallbackRecord(deviceId: deviceId, seedBase64: seed);
     } catch (error) {
-      appLog('读取聊天身份种子本地加密兜底失败：userId=$userId', error);
+      appLog('读取聊天身份本地加密兜底失败：userId=$userId', error);
       return null;
     }
   }
 
-  Future<void> _writeEncryptedChatIdentitySeedFallback(
+  Future<void> _writeEncryptedChatIdentityFallback(
     String userId,
+    String deviceId,
     String seedBase64,
   ) async {
-    if (_vaultKey == null || seedBase64.trim().isEmpty) {
+    if (_vaultKey == null ||
+        deviceId.trim().isEmpty ||
+        seedBase64.trim().isEmpty) {
       return;
     }
     try {
@@ -1269,11 +1325,73 @@ extension AppControllerInternalHelpers on AppController {
       await file.parent.create(recursive: true);
       final encrypted = await _cryptoService.encryptJson({
         'version': 1,
+        'deviceId': deviceId.trim(),
         'seedBase64': seedBase64.trim(),
+        'updatedAt': DateTime.now().toIso8601String(),
       }, _vaultKey!);
       await file.writeAsString(encrypted);
     } catch (error) {
-      appLog('写入聊天身份种子本地加密兜底失败：userId=$userId', error);
+      appLog('写入聊天身份本地加密兜底失败：userId=$userId', error);
+    }
+  }
+
+  Future<_ChatIdentityFallbackRecord?> _readRemoteChatIdentityFallback(
+    String userId,
+  ) async {
+    final token = _token;
+    if (_vaultKey == null || token == null) {
+      return null;
+    }
+    try {
+      final payload = await _apiClient.getChatDeviceRecovery(
+        baseUrl: _baseUrl,
+        token: token,
+      );
+      if (payload.trim().isEmpty) {
+        return null;
+      }
+      final data = await _cryptoService.decryptJson(payload, _vaultKey!);
+      final deviceId = (data['deviceId'] as String? ?? '').trim();
+      final seed = (data['seedBase64'] as String? ?? '').trim();
+      if (deviceId.isEmpty || seed.isEmpty) {
+        return null;
+      }
+      return _ChatIdentityFallbackRecord(deviceId: deviceId, seedBase64: seed);
+    } catch (error) {
+      appLog('读取聊天身份服务端加密恢复包失败：userId=$userId', error);
+      return null;
+    }
+  }
+
+  Future<void> _writeRemoteChatIdentityFallback(
+    String userId,
+    String deviceId,
+    String seedBase64,
+  ) async {
+    final token = _token;
+    if (_vaultKey == null ||
+        token == null ||
+        userId.trim().isEmpty ||
+        deviceId.trim().isEmpty ||
+        seedBase64.trim().isEmpty) {
+      return;
+    }
+    try {
+      final version = DateTime.now().millisecondsSinceEpoch;
+      final payload = await _cryptoService.encryptJson({
+        'version': 1,
+        'deviceId': deviceId.trim(),
+        'seedBase64': seedBase64.trim(),
+        'updatedAt': DateTime.now().toIso8601String(),
+      }, _vaultKey!);
+      await _apiClient.upsertChatDeviceRecovery(
+        baseUrl: _baseUrl,
+        token: token,
+        payload: payload,
+        version: version,
+      );
+    } catch (error) {
+      appLog('写入聊天身份服务端加密恢复包失败：userId=$userId', error);
     }
   }
 
@@ -1330,8 +1448,12 @@ extension AppControllerInternalHelpers on AppController {
     if (user == null || token == null) {
       return null;
     }
-    if (_chatIdentity != null && !registerOnServer) {
-      return _chatIdentity;
+    if (_chatIdentity != null) {
+      final identity = _chatIdentity!;
+      if (registerOnServer) {
+        await _registerChatDeviceIfNeeded(identity, token);
+      }
+      return identity;
     }
 
     final deviceKey = _chatDeviceStorageKeyForUser(user.id);
@@ -1348,11 +1470,46 @@ extension AppControllerInternalHelpers on AppController {
       allowDebugFallback: false,
       debugFallbackKey: '',
     );
-    final fallbackSeed =
-        existingSeed ?? await _readEncryptedChatIdentitySeedFallback(user.id);
+    final localFallback = await _readEncryptedChatIdentityFallback(user.id);
+    var identityDeviceId = existingDeviceId;
+    var identitySeed = existingSeed;
+    void mergeFallback(_ChatIdentityFallbackRecord? record) {
+      if (record == null) {
+        return;
+      }
+      final recordDeviceId = record.deviceId.trim();
+      final recordSeed = record.seedBase64.trim();
+      if (recordSeed.isEmpty) {
+        return;
+      }
+      if ((identityDeviceId == null || identityDeviceId!.isEmpty) &&
+          (identitySeed == null || identitySeed!.isEmpty)) {
+        identityDeviceId = recordDeviceId.isEmpty ? null : recordDeviceId;
+        identitySeed = recordSeed;
+        return;
+      }
+      if ((identitySeed == null || identitySeed!.isEmpty) &&
+          recordDeviceId.isNotEmpty &&
+          recordDeviceId == identityDeviceId) {
+        identitySeed = recordSeed;
+      }
+      if ((identityDeviceId == null || identityDeviceId!.isEmpty) &&
+          recordDeviceId.isNotEmpty &&
+          recordSeed == identitySeed) {
+        identityDeviceId = recordDeviceId;
+      }
+    }
+
+    mergeFallback(localFallback);
+    if (identityDeviceId == null ||
+        identityDeviceId!.isEmpty ||
+        identitySeed == null ||
+        identitySeed!.isEmpty) {
+      mergeFallback(await _readRemoteChatIdentityFallback(user.id));
+    }
     final identity = await _chatProtocol.createIdentity(
-      existingDeviceId: existingDeviceId,
-      existingSeedBase64: fallbackSeed,
+      existingDeviceId: identityDeviceId,
+      existingSeedBase64: identitySeed,
     );
     _chatIdentity = identity;
 
@@ -1368,7 +1525,7 @@ extension AppControllerInternalHelpers on AppController {
     }
     final seedAlreadyPersisted =
         existingSeed == identity.seedBase64 ||
-        fallbackSeed == identity.seedBase64;
+        identitySeed == identity.seedBase64;
     if (!seedAlreadyPersisted) {
       final seedPersisted = await _writeSecureValue(
         seedKey,
@@ -1376,26 +1533,77 @@ extension AppControllerInternalHelpers on AppController {
         allowDebugFallback: false,
         debugFallbackKey: '',
       );
-      if (!seedPersisted || fallbackSeed != identity.seedBase64) {
-        await _writeEncryptedChatIdentitySeedFallback(
+      if (!seedPersisted || identitySeed != identity.seedBase64) {
+        await _writeEncryptedChatIdentityFallback(
           user.id,
+          identity.deviceId,
           identity.seedBase64,
         );
       }
     }
+    await _writeEncryptedChatIdentityFallback(
+      user.id,
+      identity.deviceId,
+      identity.seedBase64,
+    );
+    await _writeRemoteChatIdentityFallback(
+      user.id,
+      identity.deviceId,
+      identity.seedBase64,
+    );
 
     if (registerOnServer) {
-      await _apiClient.upsertCurrentChatDevice(
-        baseUrl: _baseUrl,
-        token: token,
-        deviceId: identity.deviceId,
-        protocol: _chatProtocol.protocolId,
-        protocolVersion: SecureXChatProtocolV1.schemaVersion,
-        publicKey: identity.publicKeyBase64,
-        appInstance: _storageNamespace,
-      );
+      await _registerChatDeviceIfNeeded(identity, token);
     }
     return identity;
+  }
+
+  Future<void> _registerChatDeviceIfNeeded(
+    ChatIdentityBundle identity,
+    String token,
+  ) async {
+    if (!_shouldRegisterChatDevice(identity)) {
+      return;
+    }
+    await _apiClient.upsertCurrentChatDevice(
+      baseUrl: _baseUrl,
+      token: token,
+      deviceId: identity.deviceId,
+      protocol: _chatProtocol.protocolId,
+      protocolVersion: SecureXChatProtocolV1.schemaVersion,
+      publicKey: identity.publicKeyBase64,
+      appInstance: _storageNamespace,
+    );
+    _lastChatDeviceRegisteredAt = DateTime.now();
+    _lastRegisteredChatDeviceId = identity.deviceId;
+    _lastRegisteredChatPublicKey = identity.publicKeyBase64;
+    final user = _user;
+    if (user != null) {
+      await _writeRemoteChatIdentityFallback(
+        user.id,
+        identity.deviceId,
+        identity.seedBase64,
+      );
+    }
+  }
+
+  bool _shouldRegisterChatDevice(ChatIdentityBundle identity) {
+    if (_lastRegisteredChatDeviceId != identity.deviceId ||
+        _lastRegisteredChatPublicKey != identity.publicKeyBase64) {
+      return true;
+    }
+    final lastRegisteredAt = _lastChatDeviceRegisteredAt;
+    if (lastRegisteredAt == null) {
+      return true;
+    }
+    return DateTime.now().difference(lastRegisteredAt) >
+        const Duration(minutes: 5);
+  }
+
+  void _clearChatDeviceRegistrationCache() {
+    _lastChatDeviceRegisteredAt = null;
+    _lastRegisteredChatDeviceId = null;
+    _lastRegisteredChatPublicKey = null;
   }
 
   String _normalizeBaseUrl(String value) {
@@ -1471,4 +1679,14 @@ extension AppControllerInternalHelpers on AppController {
         return message;
     }
   }
+}
+
+class _ChatIdentityFallbackRecord {
+  const _ChatIdentityFallbackRecord({
+    required this.deviceId,
+    required this.seedBase64,
+  });
+
+  final String deviceId;
+  final String seedBase64;
 }

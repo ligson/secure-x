@@ -971,6 +971,7 @@ class _ChatMessageBubble extends StatelessWidget {
                 email: 'secure-x.local',
                 nickname: '我',
                 avatarPreset: controller.user?.avatarPreset ?? '',
+                avatarUrl: controller.user?.avatarUrl ?? '',
               ),
             ),
           ],
@@ -1011,6 +1012,7 @@ class _ChatAvatar extends StatelessWidget {
     return _PresetAvatar(
       presetId: user.avatarPreset,
       size: 46,
+      imageUrl: user.avatarUrl,
       borderColor: isMine ? context.sx.primary : context.sx.border,
     );
   }

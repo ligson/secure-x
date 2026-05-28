@@ -22,6 +22,7 @@ func userResponse(user model.User) gin.H {
 		"username":            user.Username,
 		"nickname":            user.Nickname,
 		"avatarPreset":        defaultAvatarPreset(user.AvatarPreset),
+		"avatarUrl":           user.AvatarURL,
 		"email":               user.Email,
 		"kdfAlgorithm":        user.KDFAlgorithm,
 		"masterKeySalt":       user.MasterKeySalt,

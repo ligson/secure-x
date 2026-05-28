@@ -66,7 +66,10 @@ class ApiClient {
       ),
     );
 
-    return UserProfile.fromJson(data['user'] as Map<String, dynamic>);
+    return UserProfile.fromJson(
+      _resolveRelativeAvatarUrls(data['user'] as Map<String, dynamic>, baseUrl)
+          as Map<String, dynamic>,
+    );
   }
 
   Future<UserProfile> updateProfile({
@@ -83,7 +86,32 @@ class ApiClient {
       ),
     );
 
-    return UserProfile.fromJson(data['user'] as Map<String, dynamic>);
+    return UserProfile.fromJson(
+      _resolveRelativeAvatarUrls(data['user'] as Map<String, dynamic>, baseUrl)
+          as Map<String, dynamic>,
+    );
+  }
+
+  Future<UserProfile> uploadProfileAvatar({
+    required String baseUrl,
+    required String token,
+    required Uint8List bytes,
+    required String filename,
+  }) async {
+    final data = _unwrapMap(
+      await _dio.post<Map<String, dynamic>>(
+        '$baseUrl/api/v1/auth/profile/avatar',
+        data: FormData.fromMap({
+          'avatar': MultipartFile.fromBytes(bytes, filename: filename),
+        }),
+        options: _authorized(token),
+      ),
+    );
+
+    return UserProfile.fromJson(
+      _resolveRelativeAvatarUrls(data['user'] as Map<String, dynamic>, baseUrl)
+          as Map<String, dynamic>,
+    );
   }
 
   Future<void> changePassword({
@@ -120,7 +148,10 @@ class ApiClient {
       ),
     );
 
-    return UserProfile.fromJson(data['user'] as Map<String, dynamic>);
+    return UserProfile.fromJson(
+      _resolveRelativeAvatarUrls(data['user'] as Map<String, dynamic>, baseUrl)
+          as Map<String, dynamic>,
+    );
   }
 
   Future<Map<String, dynamic>> exportVault({
@@ -418,7 +449,12 @@ class ApiClient {
     );
 
     final friends = (data['friends'] as List<dynamic>? ?? [])
-        .map((entry) => PublicUser.fromJson(entry as Map<String, dynamic>))
+        .map(
+          (entry) => PublicUser.fromJson(
+            _resolveRelativeAvatarUrls(entry as Map<String, dynamic>, baseUrl)
+                as Map<String, dynamic>,
+          ),
+        )
         .toList();
     final aliases = (data['aliases'] as List<dynamic>? ?? [])
         .map(
@@ -442,8 +478,10 @@ class ApiClient {
     List<FriendRequestRecord> parse(String key) {
       return (data[key] as List<dynamic>? ?? [])
           .map(
-            (entry) =>
-                FriendRequestRecord.fromJson(entry as Map<String, dynamic>),
+            (entry) => FriendRequestRecord.fromJson(
+              _resolveRelativeAvatarUrls(entry as Map<String, dynamic>, baseUrl)
+                  as Map<String, dynamic>,
+            ),
           )
           .toList();
     }
@@ -670,6 +708,62 @@ class ApiClient {
         .toList();
   }
 
+  Future<List<ChatDeviceRecord>> listOwnChatDevices({
+    required String baseUrl,
+    required String token,
+  }) async {
+    final data = _unwrapMap(
+      await _dio.get<Map<String, dynamic>>(
+        '$baseUrl/api/v1/chat/devices',
+        options: _authorized(token),
+      ),
+    );
+    return (data['devices'] as List<dynamic>? ?? const [])
+        .map(
+          (entry) => ChatDeviceRecord.fromJson(entry as Map<String, dynamic>),
+        )
+        .toList();
+  }
+
+  Future<void> deleteOwnChatDevice({
+    required String baseUrl,
+    required String token,
+    required String deviceId,
+  }) async {
+    await _dio.delete<Map<String, dynamic>>(
+      '$baseUrl/api/v1/chat/devices/$deviceId',
+      options: _authorized(token),
+    );
+  }
+
+  Future<String> getChatDeviceRecovery({
+    required String baseUrl,
+    required String token,
+  }) async {
+    final data = _unwrapMap(
+      await _dio.get<Map<String, dynamic>>(
+        '$baseUrl/api/v1/chat/device-recovery',
+        options: _authorized(token),
+      ),
+    );
+    final recovery =
+        data['recovery'] as Map<String, dynamic>? ?? <String, dynamic>{};
+    return recovery['payload'] as String? ?? '';
+  }
+
+  Future<void> upsertChatDeviceRecovery({
+    required String baseUrl,
+    required String token,
+    required String payload,
+    required int version,
+  }) async {
+    await _dio.put<Map<String, dynamic>>(
+      '$baseUrl/api/v1/chat/device-recovery',
+      data: {'payload': payload, 'version': version},
+      options: _authorized(token),
+    );
+  }
+
   Future<int> dispatchChatMessages({
     required String baseUrl,
     required String token,
@@ -691,11 +785,16 @@ class ApiClient {
     required String baseUrl,
     required String token,
     required String deviceId,
+    String senderUserId = '',
   }) async {
     final data = _unwrapMap(
       await _dio.get<Map<String, dynamic>>(
         '$baseUrl/api/v1/chat/messages/pending',
-        queryParameters: {'deviceId': deviceId},
+        queryParameters: {
+          'deviceId': deviceId,
+          if (senderUserId.trim().isNotEmpty)
+            'senderUserId': senderUserId.trim(),
+        },
         options: _authorized(token),
       ),
     );
@@ -760,7 +859,12 @@ class ApiClient {
     );
 
     return (data['groups'] as List<dynamic>? ?? [])
-        .map((entry) => GroupRecord.fromJson(entry as Map<String, dynamic>))
+        .map(
+          (entry) => GroupRecord.fromJson(
+            _resolveRelativeAvatarUrls(entry as Map<String, dynamic>, baseUrl)
+                as Map<String, dynamic>,
+          ),
+        )
         .toList();
   }
 
@@ -786,7 +890,11 @@ class ApiClient {
     );
 
     return GroupRecord.fromJson(
-      data['group'] as Map<String, dynamic>? ?? <String, dynamic>{},
+      _resolveRelativeAvatarUrls(
+            data['group'] as Map<String, dynamic>? ?? <String, dynamic>{},
+            baseUrl,
+          )
+          as Map<String, dynamic>,
     );
   }
 
@@ -813,7 +921,11 @@ class ApiClient {
     );
 
     return GroupRecord.fromJson(
-      data['group'] as Map<String, dynamic>? ?? <String, dynamic>{},
+      _resolveRelativeAvatarUrls(
+            data['group'] as Map<String, dynamic>? ?? <String, dynamic>{},
+            baseUrl,
+          )
+          as Map<String, dynamic>,
     );
   }
 
@@ -887,5 +999,34 @@ class ApiClient {
       responseType: responseType,
       headers: {'Authorization': 'Bearer $token'},
     );
+  }
+
+  Object? _resolveRelativeAvatarUrls(Object? value, String baseUrl) {
+    if (value is List) {
+      return value
+          .map((entry) => _resolveRelativeAvatarUrls(entry, baseUrl))
+          .toList();
+    }
+    if (value is Map<String, dynamic>) {
+      final resolved = <String, dynamic>{};
+      for (final entry in value.entries) {
+        resolved[entry.key] = _resolveRelativeAvatarUrls(entry.value, baseUrl);
+      }
+      final avatarUrl = resolved['avatarUrl'] as String? ?? '';
+      if (avatarUrl.trim().isNotEmpty) {
+        resolved['avatarUrl'] = _absoluteUrl(baseUrl, avatarUrl);
+      }
+      return resolved;
+    }
+    return value;
+  }
+
+  String _absoluteUrl(String baseUrl, String value) {
+    final trimmed = value.trim();
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return trimmed;
+    }
+    final normalizedBase = baseUrl.endsWith('/') ? baseUrl : '$baseUrl/';
+    return Uri.parse(normalizedBase).resolve(trimmed).toString();
   }
 }

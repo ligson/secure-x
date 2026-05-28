@@ -30,6 +30,7 @@ class UserProfile {
     required this.username,
     required this.nickname,
     required String avatarPreset,
+    this.avatarUrl = '',
     required this.email,
     required this.kdfAlgorithm,
     required this.masterKeySalt,
@@ -41,6 +42,7 @@ class UserProfile {
   final String username;
   final String nickname;
   final String avatarPreset;
+  final String avatarUrl;
   final String email;
   final String kdfAlgorithm;
   final String masterKeySalt;
@@ -61,6 +63,7 @@ class UserProfile {
     String? username,
     String? nickname,
     String? avatarPreset,
+    String? avatarUrl,
     String? email,
     String? kdfAlgorithm,
     String? masterKeySalt,
@@ -72,6 +75,7 @@ class UserProfile {
       username: username ?? this.username,
       nickname: nickname ?? this.nickname,
       avatarPreset: avatarPreset ?? this.avatarPreset,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
       email: email ?? this.email,
       kdfAlgorithm: kdfAlgorithm ?? this.kdfAlgorithm,
       masterKeySalt: masterKeySalt ?? this.masterKeySalt,
@@ -86,6 +90,7 @@ class UserProfile {
       username: json['username'] as String,
       nickname: json['nickname'] as String? ?? '',
       avatarPreset: json['avatarPreset'] as String? ?? '',
+      avatarUrl: json['avatarUrl'] as String? ?? '',
       email: json['email'] as String,
       kdfAlgorithm: json['kdfAlgorithm'] as String,
       masterKeySalt: json['masterKeySalt'] as String,
@@ -276,6 +281,7 @@ class PublicUser {
     required this.email,
     this.nickname = '',
     String avatarPreset = '',
+    this.avatarUrl = '',
     this.remarkName = '',
   }) : avatarPreset = normalizeSecureXAvatarPreset(avatarPreset);
 
@@ -283,6 +289,7 @@ class PublicUser {
   final String username;
   final String nickname;
   final String avatarPreset;
+  final String avatarUrl;
   final String email;
   final String remarkName;
 
@@ -306,6 +313,7 @@ class PublicUser {
     String? username,
     String? nickname,
     String? avatarPreset,
+    String? avatarUrl,
     String? email,
     String? remarkName,
   }) {
@@ -314,6 +322,7 @@ class PublicUser {
       username: username ?? this.username,
       nickname: nickname ?? this.nickname,
       avatarPreset: avatarPreset ?? this.avatarPreset,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
       email: email ?? this.email,
       remarkName: remarkName ?? this.remarkName,
     );
@@ -325,6 +334,7 @@ class PublicUser {
       username: json['username'] as String? ?? '',
       nickname: json['nickname'] as String? ?? '',
       avatarPreset: json['avatarPreset'] as String? ?? '',
+      avatarUrl: json['avatarUrl'] as String? ?? '',
       email: json['email'] as String? ?? '',
       remarkName: json['remarkName'] as String? ?? '',
     );
@@ -336,6 +346,7 @@ class PublicUser {
       'username': username,
       'nickname': nickname,
       'avatarPreset': avatarPreset,
+      'avatarUrl': avatarUrl,
       'email': email,
       'remarkName': remarkName,
     };

@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	realtimeWriteWait = 10 * time.Second
-	realtimePongWait  = 75 * time.Second
-	realtimePingEvery = 25 * time.Second
+	realtimeWriteWait  = 10 * time.Second
+	realtimePongWait   = 75 * time.Second
+	realtimePingEvery  = 25 * time.Second
+	realtimeSendBuffer = 128
 )
 
 func (h *Handler) realtimeConfig(c *gin.Context) {
@@ -144,7 +145,7 @@ func (h *Handler) realtimeWebSocket(c *gin.Context) {
 		userID:   userID,
 		deviceID: strings.TrimSpace(c.Query("deviceId")),
 		conn:     conn,
-		send:     make(chan realtimeSignal, 16),
+		send:     make(chan realtimeSignal, realtimeSendBuffer),
 		hub:      h.realtimeHub,
 	}
 	h.realtimeHub.add(client)

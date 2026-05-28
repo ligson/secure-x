@@ -1,5 +1,18 @@
 part of '../../main.dart';
 
+PageRoute<T> _slidePageRoute<T>(Widget page) {
+  return PageRouteBuilder<T>(
+    pageBuilder: (context, animation, secondaryAnimation) => page,
+    transitionsBuilder: (context, animation, secondaryAnimation, child) {
+      final tween = Tween(
+        begin: const Offset(1, 0),
+        end: Offset.zero,
+      ).chain(CurveTween(curve: Curves.easeOutCubic));
+      return SlideTransition(position: animation.drive(tween), child: child);
+    },
+  );
+}
+
 class _SecureXAvatarPreset {
   const _SecureXAvatarPreset({
     required this.id,
@@ -77,17 +90,11 @@ const _secureXAvatarPresets = <_SecureXAvatarPreset>[
   ),
 ];
 
-String _normalizeAvatarPreset(
-  String? value, {
-  bool group = false,
-}) {
+String _normalizeAvatarPreset(String? value, {bool group = false}) {
   return normalizeSecureXAvatarPreset(value, group: group);
 }
 
-_SecureXAvatarPreset _avatarPresetById(
-  String? value, {
-  bool group = false,
-}) {
+_SecureXAvatarPreset _avatarPresetById(String? value, {bool group = false}) {
   final normalized = _normalizeAvatarPreset(value, group: group);
   for (final preset in _secureXAvatarPresets) {
     if (preset.id == normalized) {
@@ -103,16 +110,19 @@ class _PresetAvatar extends StatelessWidget {
     required this.size,
     this.group = false,
     this.borderColor,
+    this.imageUrl = '',
   });
 
   final String presetId;
   final double size;
   final bool group;
   final Color? borderColor;
+  final String imageUrl;
 
   @override
   Widget build(BuildContext context) {
     final preset = _avatarPresetById(presetId, group: group);
+    final cleanImageUrl = imageUrl.trim();
     return Container(
       width: size,
       height: size,
@@ -132,11 +142,17 @@ class _PresetAvatar extends StatelessWidget {
           ),
         ],
       ),
-      child: Icon(
-        preset.icon,
-        color: Colors.white,
-        size: size * 0.5,
-      ),
+      clipBehavior: Clip.antiAlias,
+      child: cleanImageUrl.isEmpty
+          ? Icon(preset.icon, color: Colors.white, size: size * 0.5)
+          : Image.network(
+              cleanImageUrl,
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+              errorBuilder: (context, _, _) =>
+                  Icon(preset.icon, color: Colors.white, size: size * 0.5),
+            ),
     );
   }
 }
@@ -167,10 +183,14 @@ class _AvatarPresetPicker extends StatelessWidget {
               width: 92,
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
               decoration: BoxDecoration(
-                color: selected == preset.id ? context.sx.accentSoft : context.sx.card,
+                color: selected == preset.id
+                    ? context.sx.accentSoft
+                    : context.sx.card,
                 borderRadius: BorderRadius.circular(18),
                 border: Border.all(
-                  color: selected == preset.id ? context.sx.primary : context.sx.border,
+                  color: selected == preset.id
+                      ? context.sx.primary
+                      : context.sx.border,
                 ),
               ),
               child: Column(
@@ -180,14 +200,18 @@ class _AvatarPresetPicker extends StatelessWidget {
                     presetId: preset.id,
                     size: 46,
                     group: group,
-                    borderColor: selected == preset.id ? context.sx.primary : context.sx.border,
+                    borderColor: selected == preset.id
+                        ? context.sx.primary
+                        : context.sx.border,
                   ),
                   const SizedBox(height: 8),
                   Text(
                     preset.label,
                     style: Theme.of(context).textTheme.labelMedium?.copyWith(
                       fontWeight: FontWeight.w800,
-                      color: selected == preset.id ? context.sx.primary : context.sx.text,
+                      color: selected == preset.id
+                          ? context.sx.primary
+                          : context.sx.text,
                     ),
                   ),
                 ],

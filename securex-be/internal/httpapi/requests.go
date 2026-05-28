@@ -121,6 +121,11 @@ type chatDeviceUpsertRequest struct {
 	AppInstance     string `json:"appInstance"`
 }
 
+type chatDeviceRecoveryUpsertRequest struct {
+	Payload string `json:"payload" binding:"required"`
+	Version int    `json:"version"`
+}
+
 type chatMessageDispatchRequest struct {
 	Messages []chatEnvelopeDispatchRequest `json:"messages" binding:"required"`
 }

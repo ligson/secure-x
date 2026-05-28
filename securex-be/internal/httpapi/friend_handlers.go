@@ -412,6 +412,7 @@ func publicUserResponse(user model.User) gin.H {
 		"username":     user.Username,
 		"nickname":     user.Nickname,
 		"avatarPreset": defaultAvatarPreset(user.AvatarPreset),
+		"avatarUrl":    user.AvatarURL,
 		"email":        user.Email,
 	}
 }

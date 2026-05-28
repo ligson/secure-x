@@ -1,8 +1,13 @@
 package httpapi
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -12,6 +17,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
+
+const maxProfileAvatarBytes = 1024 * 1024
 
 func (h *Handler) register(c *gin.Context) {
 	var req registerRequest
@@ -84,6 +91,10 @@ func (h *Handler) login(c *gin.Context) {
 	var user model.User
 	err := h.db.Where("username = ? OR email = ?", req.Identifier, strings.ToLower(req.Identifier)).First(&user).Error
 	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			RespondFailure(c, http.StatusInternalServerError, "登录服务暂时不可用，请稍后重试")
+			return
+		}
 		RespondFailure(c, http.StatusUnauthorized, "用户名、邮箱或登录密码不正确")
 		return
 	}
@@ -108,6 +119,10 @@ func (h *Handler) login(c *gin.Context) {
 func (h *Handler) me(c *gin.Context) {
 	user, err := h.findUserByID(middleware.CurrentUserID(c))
 	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			RespondFailure(c, http.StatusInternalServerError, "加载用户信息失败，请稍后重试")
+			return
+		}
 		RespondFailure(c, http.StatusNotFound, "用户不存在")
 		return
 	}
@@ -124,6 +139,10 @@ func (h *Handler) updateProfile(c *gin.Context) {
 
 	user, err := h.findUserByID(middleware.CurrentUserID(c))
 	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			RespondFailure(c, http.StatusInternalServerError, "加载用户信息失败，请稍后重试")
+			return
+		}
 		RespondFailure(c, http.StatusNotFound, "用户不存在")
 		return
 	}
@@ -140,6 +159,7 @@ func (h *Handler) updateProfile(c *gin.Context) {
 	}
 	if avatarPresetProvided {
 		user.AvatarPreset = avatarPreset
+		user.AvatarURL = ""
 	}
 	if nickname == "" && !avatarPresetProvided {
 		RespondFailure(c, http.StatusBadRequest, "请至少修改昵称或头像")
@@ -153,6 +173,127 @@ func (h *Handler) updateProfile(c *gin.Context) {
 	RespondSuccess(c, http.StatusOK, "个人信息已更新", gin.H{"user": userResponse(*user)})
 }
 
+func (h *Handler) uploadProfileAvatar(c *gin.Context) {
+	user, err := h.findUserByID(middleware.CurrentUserID(c))
+	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			RespondFailure(c, http.StatusInternalServerError, "加载用户信息失败，请稍后重试")
+			return
+		}
+		RespondFailure(c, http.StatusNotFound, "用户不存在")
+		return
+	}
+
+	fileHeader, err := c.FormFile("avatar")
+	if err != nil {
+		RespondFailure(c, http.StatusBadRequest, "请选择要上传的头像图片")
+		return
+	}
+	if fileHeader.Size <= 0 || fileHeader.Size > maxProfileAvatarBytes {
+		RespondFailure(c, http.StatusBadRequest, "头像图片不能超过 1MB")
+		return
+	}
+
+	ext := normalizedAvatarExt(fileHeader.Filename, fileHeader.Header.Get("Content-Type"))
+	if ext == "" {
+		RespondFailure(c, http.StatusBadRequest, "头像仅支持 jpg、png 或 webp 图片")
+		return
+	}
+
+	source, err := fileHeader.Open()
+	if err != nil {
+		RespondFailure(c, http.StatusInternalServerError, "读取头像文件失败")
+		return
+	}
+	defer source.Close()
+	content, err := io.ReadAll(source)
+	if err != nil {
+		RespondFailure(c, http.StatusInternalServerError, "读取头像文件失败")
+		return
+	}
+	if len(content) == 0 || len(content) > maxProfileAvatarBytes {
+		RespondFailure(c, http.StatusBadRequest, "头像图片不能超过 1MB")
+		return
+	}
+	ext = normalizedAvatarExt(fileHeader.Filename, http.DetectContentType(content))
+	if ext == "" {
+		RespondFailure(c, http.StatusBadRequest, "头像仅支持 jpg、png 或 webp 图片")
+		return
+	}
+
+	fileName := fmt.Sprintf("%s%s", uuid.NewString(), ext)
+	relativePath := filepath.Join("avatars", user.ID, fileName)
+	if _, _, err := h.fileStore.Save(relativePath, bytes.NewReader(content)); err != nil {
+		RespondFailure(c, http.StatusInternalServerError, "保存头像文件失败")
+		return
+	}
+
+	oldAvatarURL := user.AvatarURL
+	user.AvatarURL = path.Join("api/v1/avatars", user.ID, fileName)
+	if user.AvatarPreset == "" {
+		user.AvatarPreset = defaultAvatarPreset("")
+	}
+	if err := h.db.Save(user).Error; err != nil {
+		_ = h.fileStore.Delete(h.fileStore.Resolve(relativePath))
+		RespondFailure(c, http.StatusInternalServerError, "更新头像失败")
+		return
+	}
+	if oldRelativePath := avatarStoragePathFromURL(user.ID, oldAvatarURL); oldRelativePath != "" {
+		_ = h.fileStore.Delete(h.fileStore.Resolve(oldRelativePath))
+	}
+
+	RespondSuccess(c, http.StatusOK, "头像已更新", gin.H{"user": userResponse(*user)})
+}
+
+func (h *Handler) serveAvatar(c *gin.Context) {
+	userID := strings.TrimSpace(c.Param("userID"))
+	filename := strings.TrimSpace(c.Param("filename"))
+	if userID == "" || filename == "" || filename != filepath.Base(filename) {
+		RespondFailure(c, http.StatusBadRequest, "头像路径不正确")
+		return
+	}
+	if normalizedAvatarExt(filename, "") == "" {
+		RespondFailure(c, http.StatusBadRequest, "头像格式不正确")
+		return
+	}
+
+	c.Header("Cache-Control", "public, max-age=86400")
+	c.File(h.fileStore.Resolve(filepath.Join("avatars", userID, filename)))
+}
+
+func normalizedAvatarExt(filename string, contentType string) string {
+	switch strings.ToLower(strings.TrimSpace(contentType)) {
+	case "image/jpeg", "image/jpg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/webp":
+		return ".webp"
+	}
+	ext := strings.ToLower(filepath.Ext(filename))
+	switch ext {
+	case ".jpg", ".jpeg":
+		return ".jpg"
+	case ".png", ".webp":
+		return ext
+	default:
+		return ""
+	}
+}
+
+func avatarStoragePathFromURL(userID string, avatarURL string) string {
+	cleanURL := strings.Trim(strings.TrimSpace(avatarURL), "/")
+	prefix := path.Join("api/v1/avatars", userID)
+	if cleanURL == "" || !strings.HasPrefix(cleanURL, prefix+"/") {
+		return ""
+	}
+	filename := path.Base(cleanURL)
+	if filename == "." || filename == "/" || filename == "" || filename != filepath.Base(filename) {
+		return ""
+	}
+	return filepath.Join("avatars", userID, filename)
+}
+
 func (h *Handler) changePassword(c *gin.Context) {
 	var req changePasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -162,6 +303,10 @@ func (h *Handler) changePassword(c *gin.Context) {
 
 	user, err := h.findUserByID(middleware.CurrentUserID(c))
 	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			RespondFailure(c, http.StatusInternalServerError, "加载用户信息失败，请稍后重试")
+			return
+		}
 		RespondFailure(c, http.StatusNotFound, "用户不存在")
 		return
 	}
@@ -206,6 +351,10 @@ func (h *Handler) changeUnlockPassword(c *gin.Context) {
 
 	user, err := h.findUserByID(middleware.CurrentUserID(c))
 	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			RespondFailure(c, http.StatusInternalServerError, "加载用户信息失败，请稍后重试")
+			return
+		}
 		RespondFailure(c, http.StatusNotFound, "用户不存在")
 		return
 	}

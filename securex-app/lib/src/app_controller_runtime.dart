@@ -41,7 +41,7 @@ extension AppControllerRuntimeActions on AppController {
 
     // 在线消息优先走 websocket 直推；弱网或代理抖动时继续定时补拉待收消息，
     // 避免 websocket 短暂断开后消息和在线状态一起“停住”。
-    _pendingChatPollTimer = Timer.periodic(const Duration(seconds: 8), (_) {
+    _pendingChatPollTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       unawaited(_runPendingChatPollingTick());
     });
   }

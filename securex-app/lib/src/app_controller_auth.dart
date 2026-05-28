@@ -162,10 +162,7 @@ extension AppControllerAuthActions on AppController {
     });
   }
 
-  Future<void> updateProfile({
-    required String nickname,
-    required String avatarPreset,
-  }) async {
+  Future<void> updateProfile({String? nickname, String? avatarPreset}) async {
     if (_token == null || _user == null) {
       return;
     }
@@ -174,10 +171,30 @@ extension AppControllerAuthActions on AppController {
       _user = await _apiClient.updateProfile(
         baseUrl: _baseUrl,
         token: _token!,
-        nickname: nickname.trim(),
-        avatarPreset: avatarPreset.trim(),
+        nickname: nickname?.trim() ?? '',
+        avatarPreset: avatarPreset?.trim() ?? '',
       );
       _statusMessage = '个人信息已更新。';
+      _markAppShellChanged();
+    });
+  }
+
+  Future<void> uploadProfileAvatar({
+    required Uint8List bytes,
+    required String filename,
+  }) async {
+    if (_token == null || _user == null) {
+      return;
+    }
+
+    await _runBusy(() async {
+      _user = await _apiClient.uploadProfileAvatar(
+        baseUrl: _baseUrl,
+        token: _token!,
+        bytes: bytes,
+        filename: filename,
+      );
+      _statusMessage = '头像已更新。';
       _markAppShellChanged();
     });
   }

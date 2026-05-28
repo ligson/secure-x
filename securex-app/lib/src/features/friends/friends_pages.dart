@@ -542,6 +542,7 @@ class _UserAvatar extends StatelessWidget {
     return _PresetAvatar(
       presetId: user.avatarPreset,
       size: 46,
+      imageUrl: user.avatarUrl,
       borderColor: context.sx.border,
     );
   }

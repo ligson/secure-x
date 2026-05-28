@@ -2,6 +2,9 @@
 
 part of 'app_controller.dart';
 
+const _chatSendSoftTimeout = Duration(seconds: 9);
+const _chatDispatchChunkSize = 200;
+
 extension AppControllerChatActions on AppController {
   Future<void> activateConversation(String conversationId) async {
     final id = conversationId.trim();
@@ -567,6 +570,7 @@ extension AppControllerChatActions on AppController {
     );
     _replaceConversationMessages(friend, (messages) => [...messages, message]);
     notifyListeners();
+    await _persistChatSnapshot();
 
     final deliveredToChannel = await _sendRealtimeMessage(friend, message);
     _replaceMessage(
@@ -618,6 +622,7 @@ extension AppControllerChatActions on AppController {
       (messages) => [...messages, message],
     );
     notifyListeners();
+    await _persistChatSnapshot();
 
     final sentPeerIds = await _sendRealtimeGroupMessage(latest, message);
     _replaceMessageByConversationId(latest.id, message.id, (current) {
@@ -657,6 +662,7 @@ extension AppControllerChatActions on AppController {
           .toList(),
     );
     notifyListeners();
+    await _persistChatSnapshot();
 
     final updated = _findMessage(friend.id, message.id) ?? message;
     final deliveredToChannel = await _sendRealtimeMessage(friend, updated);
@@ -707,6 +713,7 @@ extension AppControllerChatActions on AppController {
           .toList(),
     );
     notifyListeners();
+    await _persistChatSnapshot();
 
     final updated =
         _findMessageInConversation(conversation.id, message.id) ?? message;
@@ -864,7 +871,14 @@ extension AppControllerChatActions on AppController {
       return false;
     }
     try {
-      return _dispatchDirectMessage(friend: friend, message: message);
+      return await _dispatchDirectMessage(
+        friend: friend,
+        message: message,
+      ).timeout(_chatSendSoftTimeout);
+    } on TimeoutException catch (error) {
+      appLog('实时单聊发送超过 9 秒，转入后台重试', error);
+      unawaited(_flushPendingRealtimeMessages(friend.id));
+      return false;
     } catch (error) {
       appLog('实时单聊发送失败', error);
       return false;
@@ -884,8 +898,13 @@ extension AppControllerChatActions on AppController {
         await _dispatchGroupMessage(
           conversation: conversation,
           message: message,
-        ),
+        ).timeout(_chatSendSoftTimeout),
       );
+    } on TimeoutException catch (error) {
+      appLog('实时群聊发送超过 9 秒，转入后台重试', error);
+      for (final member in conversation.members) {
+        unawaited(_flushPendingRealtimeMessages(member.id));
+      }
     } catch (error) {
       appLog('实时群聊发送失败', error);
     }
@@ -1077,6 +1096,22 @@ extension AppControllerChatActions on AppController {
     );
   }
 
+  void _sendDeliveryAckInBackground({
+    required String recipientUserId,
+    required String messageId,
+    String groupId = '',
+  }) {
+    unawaited(
+      _dispatchDeliveryAck(
+        recipientUserId: recipientUserId,
+        messageId: messageId,
+        groupId: groupId,
+      ).timeout(_chatSendSoftTimeout).catchError((Object error) {
+        appLog('发送送达确认失败，后续待同步拉取会继续兜底', error);
+      }),
+    );
+  }
+
   Future<Map<String, int>> _dispatchEncryptedPayloads({
     required List<String> recipientUserIds,
     required String kind,
@@ -1096,22 +1131,32 @@ extension AppControllerChatActions on AppController {
       return const {};
     }
 
-    final outgoing = <ChatOutgoingEnvelope>[];
-    final queuedByUser = <String, int>{};
-    for (final recipientUserId in cleanUserIds) {
-      final devices = await _apiClient.listUserChatDevices(
-        baseUrl: _baseUrl,
-        token: token,
-        userId: recipientUserId,
-      );
-      final supportedDevices = devices.where((device) {
+    final deviceResults = await Future.wait(
+      cleanUserIds.map((recipientUserId) async {
+        try {
+          final devices = await _apiClient.listUserChatDevices(
+            baseUrl: _baseUrl,
+            token: token,
+            userId: recipientUserId,
+          );
+          return MapEntry(recipientUserId, devices);
+        } catch (error) {
+          appLog('加载聊天接收设备失败：recipientUserId=$recipientUserId', error);
+          return MapEntry(recipientUserId, <ChatDeviceRecord>[]);
+        }
+      }),
+    );
+
+    final encryptionTasks = <Future<ChatOutgoingEnvelope>>[];
+    for (final entry in deviceResults) {
+      final supportedDevices = entry.value.where((device) {
         return device.id.isNotEmpty &&
             device.publicKey.isNotEmpty &&
             device.protocol == _chatProtocol.protocolId;
       }).toList();
       for (final device in supportedDevices) {
-        outgoing.add(
-          await _chatProtocol.encryptForDevice(
+        encryptionTasks.add(
+          _chatProtocol.encryptForDevice(
             senderIdentity: identity,
             senderUserId: user.id,
             recipientDevice: device,
@@ -1120,20 +1165,52 @@ extension AppControllerChatActions on AppController {
           ),
         );
       }
-      if (supportedDevices.isNotEmpty) {
-        queuedByUser[recipientUserId] = supportedDevices.length;
+    }
+
+    if (encryptionTasks.isEmpty) {
+      return const {};
+    }
+
+    final outgoing = await Future.wait(encryptionTasks);
+    final outgoingByUser = <String, List<ChatOutgoingEnvelope>>{};
+    for (final envelope in outgoing) {
+      outgoingByUser
+          .putIfAbsent(envelope.recipientUserId, () => <ChatOutgoingEnvelope>[])
+          .add(envelope);
+    }
+
+    final queuedEntries = await Future.wait(
+      outgoingByUser.entries.map((entry) async {
+        var queuedCount = 0;
+        for (
+          var start = 0;
+          start < entry.value.length;
+          start += _chatDispatchChunkSize
+        ) {
+          final end = (start + _chatDispatchChunkSize).clamp(
+            0,
+            entry.value.length,
+          );
+          try {
+            queuedCount += await _apiClient.dispatchChatMessages(
+              baseUrl: _baseUrl,
+              token: token,
+              messages: entry.value.sublist(start, end),
+            );
+          } catch (error) {
+            appLog('聊天消息入队失败：recipientUserId=${entry.key}', error);
+          }
+        }
+        return MapEntry(entry.key, queuedCount);
+      }),
+    );
+
+    final queuedByUser = <String, int>{};
+    for (final entry in queuedEntries) {
+      if (entry.value > 0) {
+        queuedByUser[entry.key] = entry.value;
       }
     }
-
-    if (outgoing.isEmpty) {
-      return queuedByUser;
-    }
-
-    await _apiClient.dispatchChatMessages(
-      baseUrl: _baseUrl,
-      token: token,
-      messages: outgoing,
-    );
     return queuedByUser;
   }
 
@@ -1156,6 +1233,7 @@ extension AppControllerChatActions on AppController {
           baseUrl: _baseUrl,
           token: token,
           deviceId: identity.deviceId,
+          senderUserId: senderUserId,
         );
         if (pending.isEmpty) {
           return;
@@ -1174,6 +1252,14 @@ extension AppControllerChatActions on AppController {
           deviceId: identity.deviceId,
           messageIds: ackIds,
         );
+        if (pending.length >= 500) {
+          unawaited(
+            _pullPendingChatMessages(
+              expectedDeviceId: identity.deviceId,
+              senderUserId: senderUserId,
+            ),
+          );
+        }
       } catch (error) {
         appLog('拉取待同步聊天消息失败', error);
       }
@@ -1280,7 +1366,7 @@ extension AppControllerChatActions on AppController {
         if (!handled) {
           return false;
         }
-        await _dispatchDeliveryAck(
+        _sendDeliveryAckInBackground(
           recipientUserId: decrypted.senderUserId,
           messageId: messageId,
         );
@@ -1312,7 +1398,7 @@ extension AppControllerChatActions on AppController {
         if (!handled) {
           return false;
         }
-        await _dispatchDeliveryAck(
+        _sendDeliveryAckInBackground(
           recipientUserId: decrypted.senderUserId,
           messageId: messageId,
           groupId: groupId,

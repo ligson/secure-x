@@ -7,6 +7,7 @@ type User struct {
 	Username            string    `gorm:"uniqueIndex;size:64;not null" json:"username"`
 	Nickname            string    `gorm:"size:64;not null;default:''" json:"nickname"`
 	AvatarPreset        string    `gorm:"size:32;not null;default:''" json:"avatarPreset"`
+	AvatarURL           string    `gorm:"size:255;not null;default:''" json:"avatarUrl"`
 	Email               string    `gorm:"uniqueIndex;size:128;not null" json:"email"`
 	PasswordHash        string    `gorm:"size:255;not null" json:"-"`
 	KDFAlgorithm        string    `gorm:"size:32;not null" json:"kdfAlgorithm"`
@@ -149,24 +150,32 @@ type ChatArchiveConversation struct {
 
 type ChatDevice struct {
 	ID              string    `gorm:"primaryKey;size:64" json:"id"`
-	UserID          string    `gorm:"index;size:36;not null" json:"userId"`
+	UserID          string    `gorm:"index;index:idx_chat_devices_user_seen,priority:1;size:36;not null" json:"userId"`
 	Protocol        string    `gorm:"size:64;not null" json:"protocol"`
 	ProtocolVersion int       `gorm:"not null;default:1" json:"protocolVersion"`
 	PublicKey       string    `gorm:"type:text;not null" json:"publicKey"`
 	AppInstance     string    `gorm:"size:128" json:"appInstance"`
-	LastSeenAt      time.Time `json:"lastSeenAt"`
+	LastSeenAt      time.Time `gorm:"index:idx_chat_devices_user_seen,priority:2" json:"lastSeenAt"`
 	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	UpdatedAt       time.Time `gorm:"index:idx_chat_devices_user_seen,priority:3" json:"updatedAt"`
+}
+
+type ChatDeviceRecovery struct {
+	UserID    string    `gorm:"primaryKey;size:36" json:"userId"`
+	Payload   string    `gorm:"type:text;not null" json:"payload"`
+	Version   int       `gorm:"not null;default:1" json:"version"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 type ChatQueuedEnvelope struct {
 	ID                string    `gorm:"primaryKey;size:36" json:"id"`
-	RecipientUserID   string    `gorm:"index;size:36;not null" json:"recipientUserId"`
-	RecipientDeviceID string    `gorm:"index;size:64;not null" json:"recipientDeviceId"`
-	SenderUserID      string    `gorm:"index;size:36;not null" json:"senderUserId"`
+	RecipientUserID   string    `gorm:"index;index:idx_chat_envelopes_recipient_device,priority:1;index:idx_chat_envelopes_recipient_sender,priority:1;size:36;not null" json:"recipientUserId"`
+	RecipientDeviceID string    `gorm:"index;index:idx_chat_envelopes_recipient_device,priority:2;index:idx_chat_envelopes_recipient_sender,priority:2;size:64;not null" json:"recipientDeviceId"`
+	SenderUserID      string    `gorm:"index;index:idx_chat_envelopes_recipient_sender,priority:3;size:36;not null" json:"senderUserId"`
 	SenderDeviceID    string    `gorm:"size:64;not null" json:"senderDeviceId"`
 	Protocol          string    `gorm:"size:64;not null" json:"protocol"`
 	Payload           string    `gorm:"type:text;not null" json:"payload"`
 	CreatedAt         time.Time `json:"createdAt"`
-	ExpiresAt         time.Time `json:"expiresAt"`
+	ExpiresAt         time.Time `gorm:"index:idx_chat_envelopes_recipient_device,priority:3;index:idx_chat_envelopes_recipient_sender,priority:4" json:"expiresAt"`
 }

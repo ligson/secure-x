@@ -34,6 +34,7 @@ extension AppControllerSessionActions on AppController {
     _loadingChatConversationIds.clear();
     _chatConversationLoadTasks.clear();
     _chatIdentity = null;
+    _clearChatDeviceRegistrationCache();
     _chatFriendOnline.clear();
     _historyRequestedPeerIds.clear();
     _realtimeConfig = null;
@@ -61,6 +62,7 @@ extension AppControllerSessionActions on AppController {
     _loadingChatConversationIds.clear();
     _chatConversationLoadTasks.clear();
     _chatIdentity = null;
+    _clearChatDeviceRegistrationCache();
     _chatFriendOnline.clear();
     _historyRequestedPeerIds.clear();
     _realtimeConfig = null;
@@ -68,6 +70,36 @@ extension AppControllerSessionActions on AppController {
     await _clearPersistedToken();
     _markAppShellChanged();
     notifyListeners();
+  }
+
+  Future<List<ChatDeviceRecord>> listOwnChatDevices() async {
+    final token = _token;
+    if (token == null) {
+      return const [];
+    }
+    await _ensureChatIdentity(registerOnServer: true);
+    return _apiClient.listOwnChatDevices(baseUrl: _baseUrl, token: token);
+  }
+
+  Future<void> deleteOwnChatDevice(String deviceId) async {
+    final token = _token;
+    final normalizedDeviceId = deviceId.trim();
+    if (token == null || normalizedDeviceId.isEmpty) {
+      return;
+    }
+    if (normalizedDeviceId == currentChatDeviceId) {
+      _statusMessage = '当前正在使用的设备不能删除。';
+      notifyListeners();
+      return;
+    }
+    await _runBusy(() async {
+      await _apiClient.deleteOwnChatDevice(
+        baseUrl: _baseUrl,
+        token: token,
+        deviceId: normalizedDeviceId,
+      );
+      _statusMessage = '设备已删除。';
+    });
   }
 
   String folderNameById(String? folderId) {

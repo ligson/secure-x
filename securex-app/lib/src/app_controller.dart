@@ -147,6 +147,9 @@ class AppController extends ChangeNotifier {
   Timer? _chatArchiveSyncTimer;
   int _latestRealtimeResumeRequestId = 0;
   DateTime? _lastRealtimeForceReconnectAt;
+  DateTime? _lastChatDeviceRegisteredAt;
+  String? _lastRegisteredChatDeviceId;
+  String? _lastRegisteredChatPublicKey;
   String? _pendingChatArchivePayload;
   int _pendingChatArchiveVersion = 0;
   final Map<String, int> _pendingChatConversationVersions = {};
@@ -177,6 +180,7 @@ class AppController extends ChangeNotifier {
   List<ChatConversation> get chatConversations =>
       List.unmodifiable(_chatConversations);
   RealtimeConfig? get realtimeConfig => _realtimeConfig;
+  String get currentChatDeviceId => _chatIdentity?.deviceId ?? '';
   List<FileUploadTask> get uploadTasks => List.unmodifiable(_uploadTasks);
   Listenable get appShellListenable => _appShellRevision;
   Listenable get themeListenable => _themeRevision;
