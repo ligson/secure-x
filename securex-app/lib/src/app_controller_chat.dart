@@ -4,6 +4,8 @@ part of 'app_controller.dart';
 
 const _chatSendSoftTimeout = Duration(seconds: 9);
 const _chatDispatchChunkSize = 200;
+const _chatAttachmentMaxBytes = 2 * 1024 * 1024;
+const _chatVideoAttachmentMaxBytes = 20 * 1024 * 1024;
 
 extension AppControllerChatActions on AppController {
   Future<void> activateConversation(String conversationId) async {
@@ -548,6 +550,22 @@ extension AppControllerChatActions on AppController {
     });
   }
 
+  Future<String> saveChatAttachment(ChatMessage message) async {
+    if (!message.hasAttachment) {
+      throw StateError('message has no attachment');
+    }
+    final bytes = base64Decode(message.attachmentDataBase64);
+    final directory = await getApplicationDocumentsDirectory();
+    final folder = Directory('${directory.path}/secure-x-chat');
+    await folder.create(recursive: true);
+    final fileName = _safeChatAttachmentName(message.attachmentName);
+    final output = File('${folder.path}/$fileName');
+    await output.writeAsBytes(bytes, flush: true);
+    _statusMessage = '附件已保存到：${output.path}';
+    notifyListeners();
+    return output.path;
+  }
+
   Future<void> sendLocalChatMessage({
     required PublicUser friend,
     required String text,
@@ -586,6 +604,119 @@ extension AppControllerChatActions on AppController {
     notifyListeners();
 
     await _persistChatSnapshot();
+    notifyListeners();
+  }
+
+  Future<void> sendLocalChatAttachment({
+    required PublicUser friend,
+    required Uint8List bytes,
+    required String name,
+    required String mimeType,
+    required bool image,
+    String attachmentType = '',
+  }) async {
+    if (bytes.isEmpty) {
+      return;
+    }
+    final type = attachmentType.isEmpty
+        ? (image ? 'image' : 'file')
+        : attachmentType;
+    final maxBytes = type == 'video'
+        ? _chatVideoAttachmentMaxBytes
+        : _chatAttachmentMaxBytes;
+    if (bytes.length > maxBytes) {
+      _statusMessage = type == 'video'
+          ? '聊天视频不能超过 20MB；更大的视频请先使用文件模块加密上传。'
+          : '聊天附件不能超过 2MB；大文件请先使用文件模块加密上传。';
+      notifyListeners();
+      return;
+    }
+    await _ensureChatConversationLoaded(friend.id);
+
+    final safeName = _safeChatAttachmentName(name, image: image);
+    final label = _chatAttachmentLabel(type);
+    final message = ChatMessage(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      friendId: friend.id,
+      text: '[$label] $safeName',
+      sentByMe: true,
+      createdAt: DateTime.now(),
+      status: _realtimeConfig?.signalingEnabled == true
+          ? 'pending'
+          : 'localOnly',
+      attachmentType: type,
+      attachmentName: safeName,
+      attachmentMimeType: _safeChatMimeType(mimeType, image: image),
+      attachmentSize: bytes.length,
+      attachmentDataBase64: base64Encode(bytes),
+    );
+    _replaceConversationMessages(friend, (messages) => [...messages, message]);
+    notifyListeners();
+    await _persistChatSnapshot();
+
+    final deliveredToChannel = await _sendRealtimeMessage(friend, message);
+    _replaceMessage(
+      friend,
+      message.id,
+      (current) => current.copyWith(
+        status: deliveredToChannel ? 'sent' : current.status,
+      ),
+    );
+    _statusMessage = deliveredToChannel
+        ? '附件已通过端到端加密通道发送。'
+        : '好友当前暂无可用设备，附件已加密缓存在本机，并等待同步到服务端归档。';
+    notifyListeners();
+
+    await _persistChatSnapshot();
+    notifyListeners();
+  }
+
+  Future<bool> sendChatCallSignal({
+    required PublicUser friend,
+    required String callId,
+    required String action,
+    required String media,
+    Map<String, dynamic> payload = const {},
+  }) async {
+    await _ensureRealtimeChatConnected();
+    if (_realtimeConfig?.signalingEnabled != true) {
+      _statusMessage = '实时通道暂未建立，无法发起通话。';
+      notifyListeners();
+      return false;
+    }
+    final ok = await _realtimeChatService.sendCallSignal(
+      friend: friend,
+      callId: callId,
+      action: action,
+      media: media,
+      payload: payload,
+    );
+    _statusMessage = ok
+        ? (action == 'invite'
+              ? '${media == 'video' ? '视频' : '语音'}通话邀请已发送。'
+              : '通话状态已同步。')
+        : '通话信令发送失败，请确认好友在线。';
+    notifyListeners();
+    return ok;
+  }
+
+  void _handleRealtimeCallSignal(RealtimeCallSignal signal) {
+    _lastCallSignal = signal;
+    _markCallChanged();
+    final friend = _friendById(signal.friendId);
+    final name = friend?.displayName ?? '好友';
+    final mediaLabel = signal.media == 'video' ? '视频' : '语音';
+    final actionLabel = switch (signal.action) {
+      'invite' => '发起了$mediaLabel通话邀请',
+      'accept' => '已接听$mediaLabel通话',
+      'reject' => '拒绝了$mediaLabel通话',
+      'cancel' => '取消了$mediaLabel通话',
+      'end' => '结束了$mediaLabel通话',
+      'offer' => '正在建立$mediaLabel通话',
+      'answer' => '正在接通$mediaLabel通话',
+      _ => '发送了$mediaLabel通话状态',
+    };
+    _statusMessage = '$name $actionLabel';
     notifyListeners();
   }
 
@@ -634,6 +765,80 @@ extension AppControllerChatActions on AppController {
     _statusMessage = sentPeerIds.isNotEmpty
         ? '群消息已通过端到端加密通道发送给 ${sentPeerIds.length} 个在线成员。'
         : '群成员当前暂无可用设备，消息已加密缓存在本机，并等待同步到服务端归档。';
+    notifyListeners();
+
+    await _persistChatSnapshot();
+    notifyListeners();
+  }
+
+  Future<void> sendGroupChatAttachment({
+    required ChatConversation conversation,
+    required Uint8List bytes,
+    required String name,
+    required String mimeType,
+    required bool image,
+    String attachmentType = '',
+  }) async {
+    if (bytes.isEmpty || !conversation.isGroup) {
+      return;
+    }
+    await _ensureChatConversationLoaded(conversation.id);
+
+    final latest = _conversationById(conversation.id) ?? conversation;
+    if (latest.isDissolved) {
+      _statusMessage = '群聊已解散，无法继续发送附件。';
+      notifyListeners();
+      return;
+    }
+    final type = attachmentType.isEmpty
+        ? (image ? 'image' : 'file')
+        : attachmentType;
+    final maxBytes = type == 'video'
+        ? _chatVideoAttachmentMaxBytes
+        : _chatAttachmentMaxBytes;
+    if (bytes.length > maxBytes) {
+      _statusMessage = type == 'video'
+          ? '聊天视频不能超过 20MB；更大的视频请先使用文件模块加密上传。'
+          : '聊天附件不能超过 2MB；大文件请先使用文件模块加密上传。';
+      notifyListeners();
+      return;
+    }
+    final safeName = _safeChatAttachmentName(name, image: image);
+    final label = _chatAttachmentLabel(type);
+    final message = ChatMessage(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      friendId: latest.id,
+      text: '[$label] $safeName',
+      sentByMe: true,
+      createdAt: DateTime.now(),
+      status: _realtimeConfig?.signalingEnabled == true
+          ? 'pending'
+          : 'localOnly',
+      senderId: _user?.id ?? '',
+      senderName: _user?.displayName ?? '',
+      attachmentType: type,
+      attachmentName: safeName,
+      attachmentMimeType: _safeChatMimeType(mimeType, image: image),
+      attachmentSize: bytes.length,
+      attachmentDataBase64: base64Encode(bytes),
+    );
+    _replaceConversationMessagesById(
+      latest.id,
+      (messages) => [...messages, message],
+    );
+    notifyListeners();
+    await _persistChatSnapshot();
+
+    final sentPeerIds = await _sendRealtimeGroupMessage(latest, message);
+    _replaceMessageByConversationId(latest.id, message.id, (current) {
+      final updated = current.copyWith(
+        sentPeerIds: _uniqueIds([...current.sentPeerIds, ...sentPeerIds]),
+      );
+      return updated.copyWith(status: _groupMessageStatus(latest, updated));
+    });
+    _statusMessage = sentPeerIds.isNotEmpty
+        ? '群附件已通过端到端加密通道发送给 ${sentPeerIds.length} 个在线成员。'
+        : '群成员当前暂无可用设备，附件已加密缓存在本机，并等待同步到服务端归档。';
     notifyListeners();
 
     await _persistChatSnapshot();
@@ -988,7 +1193,7 @@ extension AppControllerChatActions on AppController {
     final recipientMap = await _dispatchEncryptedPayloads(
       recipientUserIds: [friend.id],
       kind: 'direct-message',
-      body: {'messageId': message.id, 'text': message.text},
+      body: _chatMessagePayload(message),
     );
     return (recipientMap[friend.id] ?? 0) > 0;
   }
@@ -1010,8 +1215,7 @@ extension AppControllerChatActions on AppController {
       recipientUserIds: memberIds,
       kind: 'group-message',
       body: {
-        'messageId': message.id,
-        'text': message.text,
+        ..._chatMessagePayload(message),
         'groupId': conversation.id,
         'groupName': conversation.title,
         'groupAvatarPreset': conversation.avatarPreset,
@@ -1023,6 +1227,49 @@ extension AppControllerChatActions on AppController {
         .where((entry) => entry.value > 0)
         .map((entry) => entry.key)
         .toList();
+  }
+
+  Map<String, dynamic> _chatMessagePayload(ChatMessage message) {
+    return {
+      'messageId': message.id,
+      'text': message.text,
+      if (message.hasAttachment) ...{
+        'attachmentType': message.attachmentType,
+        'attachmentName': message.attachmentName,
+        'attachmentMimeType': message.attachmentMimeType,
+        'attachmentSize': message.attachmentSize,
+        'attachmentDataBase64': message.attachmentDataBase64,
+      },
+    };
+  }
+
+  String _safeChatAttachmentName(String value, {bool image = false}) {
+    final trimmed = value.trim();
+    final fallback = image ? 'secure-x-image.jpg' : 'secure-x-file';
+    final name = trimmed.isEmpty ? fallback : trimmed;
+    final safe = name.replaceAll(RegExp(r'[\\/:*?"<>|\x00-\x1F]'), '-');
+    return safe.length > 120 ? safe.substring(safe.length - 120) : safe;
+  }
+
+  String _chatAttachmentLabel(String type) {
+    if (type == 'image') {
+      return '图片';
+    }
+    if (type == 'audio') {
+      return '语音';
+    }
+    if (type == 'video') {
+      return '视频';
+    }
+    return '文件';
+  }
+
+  String _safeChatMimeType(String value, {required bool image}) {
+    final trimmed = value.trim().toLowerCase();
+    if (trimmed.isNotEmpty && !trimmed.contains('\n')) {
+      return trimmed;
+    }
+    return image ? 'image/jpeg' : 'application/octet-stream';
   }
 
   Future<void> _dispatchGroupControl({
@@ -1361,6 +1608,14 @@ extension AppControllerChatActions on AppController {
             friendId: decrypted.senderUserId,
             messageId: messageId,
             text: text,
+            attachmentType: decrypted.body['attachmentType'] as String? ?? '',
+            attachmentName: decrypted.body['attachmentName'] as String? ?? '',
+            attachmentMimeType:
+                decrypted.body['attachmentMimeType'] as String? ?? '',
+            attachmentSize:
+                (decrypted.body['attachmentSize'] as num?)?.toInt() ?? 0,
+            attachmentDataBase64:
+                decrypted.body['attachmentDataBase64'] as String? ?? '',
           ),
         );
         if (!handled) {
@@ -1393,6 +1648,14 @@ extension AppControllerChatActions on AppController {
                     .where((entry) => entry.isNotEmpty)
                     .toList(),
             adminUserId: decrypted.body['adminUserId'] as String? ?? '',
+            attachmentType: decrypted.body['attachmentType'] as String? ?? '',
+            attachmentName: decrypted.body['attachmentName'] as String? ?? '',
+            attachmentMimeType:
+                decrypted.body['attachmentMimeType'] as String? ?? '',
+            attachmentSize:
+                (decrypted.body['attachmentSize'] as num?)?.toInt() ?? 0,
+            attachmentDataBase64:
+                decrypted.body['attachmentDataBase64'] as String? ?? '',
           ),
         );
         if (!handled) {
@@ -1498,6 +1761,11 @@ extension AppControllerChatActions on AppController {
           isRead: _activeConversationIds.contains(messageFriend.id),
           senderId: messageFriend.id,
           senderName: messageFriend.displayName,
+          attachmentType: incoming.attachmentType,
+          attachmentName: incoming.attachmentName,
+          attachmentMimeType: incoming.attachmentMimeType,
+          attachmentSize: incoming.attachmentSize,
+          attachmentDataBase64: incoming.attachmentDataBase64,
         ),
       ],
     );
@@ -1585,6 +1853,11 @@ extension AppControllerChatActions on AppController {
           isRead: _activeConversationIds.contains(incoming.groupId),
           senderId: messageSender.id,
           senderName: messageSender.displayName,
+          attachmentType: incoming.attachmentType,
+          attachmentName: incoming.attachmentName,
+          attachmentMimeType: incoming.attachmentMimeType,
+          attachmentSize: incoming.attachmentSize,
+          attachmentDataBase64: incoming.attachmentDataBase64,
         ),
       ],
     );

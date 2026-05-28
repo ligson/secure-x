@@ -3,6 +3,13 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- 用于判断网络状态，便于后续给出更友好的中文连接提示。 -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- 聊天语音消息需要麦克风权限；录音只由用户主动点击触发。 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <!-- 视频通话需要摄像头权限；只在用户主动发起视频通话时请求。 -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <!-- WebRTC 通话需要调整音频路由，用于扬声器、听筒和蓝牙设备切换。 -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <!-- Android 更新 APK 时需要用户授权“安装未知应用”，这里只用于用户主动点击版本更新。 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
 

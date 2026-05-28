@@ -660,6 +660,11 @@ class ChatMessage {
     this.senderName = '',
     this.sentPeerIds = const [],
     this.deliveredPeerIds = const [],
+    this.attachmentType = '',
+    this.attachmentName = '',
+    this.attachmentMimeType = '',
+    this.attachmentSize = 0,
+    this.attachmentDataBase64 = '',
   });
 
   final String id;
@@ -673,6 +678,20 @@ class ChatMessage {
   final String senderName;
   final List<String> sentPeerIds;
   final List<String> deliveredPeerIds;
+  final String attachmentType;
+  final String attachmentName;
+  final String attachmentMimeType;
+  final int attachmentSize;
+  final String attachmentDataBase64;
+
+  bool get hasAttachment =>
+      attachmentType.isNotEmpty && attachmentDataBase64.isNotEmpty;
+
+  bool get isImageAttachment => attachmentType == 'image';
+
+  bool get isAudioAttachment => attachmentType == 'audio';
+
+  bool get isVideoAttachment => attachmentType == 'video';
 
   ChatMessage copyWith({
     String? id,
@@ -686,6 +705,11 @@ class ChatMessage {
     String? senderName,
     List<String>? sentPeerIds,
     List<String>? deliveredPeerIds,
+    String? attachmentType,
+    String? attachmentName,
+    String? attachmentMimeType,
+    int? attachmentSize,
+    String? attachmentDataBase64,
   }) {
     return ChatMessage(
       id: id ?? this.id,
@@ -699,6 +723,11 @@ class ChatMessage {
       senderName: senderName ?? this.senderName,
       sentPeerIds: sentPeerIds ?? this.sentPeerIds,
       deliveredPeerIds: deliveredPeerIds ?? this.deliveredPeerIds,
+      attachmentType: attachmentType ?? this.attachmentType,
+      attachmentName: attachmentName ?? this.attachmentName,
+      attachmentMimeType: attachmentMimeType ?? this.attachmentMimeType,
+      attachmentSize: attachmentSize ?? this.attachmentSize,
+      attachmentDataBase64: attachmentDataBase64 ?? this.attachmentDataBase64,
     );
   }
 
@@ -715,6 +744,11 @@ class ChatMessage {
       'senderName': senderName,
       'sentPeerIds': sentPeerIds,
       'deliveredPeerIds': deliveredPeerIds,
+      'attachmentType': attachmentType,
+      'attachmentName': attachmentName,
+      'attachmentMimeType': attachmentMimeType,
+      'attachmentSize': attachmentSize,
+      'attachmentDataBase64': attachmentDataBase64,
     };
   }
 
@@ -739,6 +773,11 @@ class ChatMessage {
           .map((entry) => entry.toString())
           .where((entry) => entry.isNotEmpty)
           .toList(),
+      attachmentType: json['attachmentType'] as String? ?? '',
+      attachmentName: json['attachmentName'] as String? ?? '',
+      attachmentMimeType: json['attachmentMimeType'] as String? ?? '',
+      attachmentSize: (json['attachmentSize'] as num?)?.toInt() ?? 0,
+      attachmentDataBase64: json['attachmentDataBase64'] as String? ?? '',
     );
   }
 }

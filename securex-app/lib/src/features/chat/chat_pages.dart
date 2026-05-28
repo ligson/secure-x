@@ -2,6 +2,9 @@
 
 part of '../../../main.dart';
 
+const _chatUiAttachmentMaxBytes = 2 * 1024 * 1024;
+const _chatUiVideoAttachmentMaxBytes = 20 * 1024 * 1024;
+
 class _ChatRouteResult {
   static const leftGroup = 'left-group';
   static const dissolvedGroup = 'dissolved-group';
@@ -480,20 +483,36 @@ class _ChatRoomPage extends StatefulWidget {
 
 class _ChatRoomPageState extends State<_ChatRoomPage> {
   final _inputController = TextEditingController();
-  bool _showTools = false;
+  String _composerPanel = '';
+  bool _hasComposerText = false;
 
   @override
   void initState() {
     super.initState();
     _inputController.clear();
+    _inputController.addListener(_handleComposerTextChanged);
     unawaited(widget.controller.activateConversation(widget.conversationId));
   }
 
   @override
   void dispose() {
     widget.controller.deactivateConversation(widget.conversationId);
+    _inputController.removeListener(_handleComposerTextChanged);
     _inputController.dispose();
     super.dispose();
+  }
+
+  void _handleComposerTextChanged() {
+    final hasText = _inputController.text.trim().isNotEmpty;
+    if (hasText == _hasComposerText) {
+      return;
+    }
+    setState(() {
+      _hasComposerText = hasText;
+      if (hasText) {
+        _composerPanel = '';
+      }
+    });
   }
 
   @override
@@ -680,10 +699,29 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
                     conversation: conversation,
                     friend: friend,
                     textController: _inputController,
-                    showTools: _showTools,
+                    hasText: _hasComposerText,
+                    showTools: _composerPanel == 'tools',
+                    showEmoji: _composerPanel == 'emoji',
+                    onToggleEmoji: () {
+                      setState(() {
+                        _composerPanel = _composerPanel == 'emoji'
+                            ? ''
+                            : 'emoji';
+                      });
+                    },
                     onToggleTools: () {
                       setState(() {
-                        _showTools = !_showTools;
+                        _composerPanel = _composerPanel == 'tools'
+                            ? ''
+                            : 'tools';
+                      });
+                    },
+                    onClosePanel: () {
+                      if (_composerPanel.isEmpty) {
+                        return;
+                      }
+                      setState(() {
+                        _composerPanel = '';
                       });
                     },
                   ),
@@ -942,13 +980,11 @@ class _ChatMessageBubble extends StatelessWidget {
                       ),
                     ],
                   ),
-                  child: Text(
-                    message.text,
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: foreground,
-                      height: 1.35,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  child: _ChatMessageContent(
+                    controller: controller,
+                    message: message,
+                    foreground: foreground,
+                    sentByMe: isMine,
                   ),
                 ),
                 const SizedBox(height: 7),
@@ -2177,16 +2213,24 @@ class _ChatComposer extends StatelessWidget {
     required this.conversation,
     required this.friend,
     required this.textController,
+    required this.hasText,
     required this.showTools,
+    required this.showEmoji,
+    required this.onToggleEmoji,
     required this.onToggleTools,
+    required this.onClosePanel,
   });
 
   final AppController controller;
   final ChatConversation? conversation;
   final PublicUser? friend;
   final TextEditingController textController;
+  final bool hasText;
   final bool showTools;
+  final bool showEmoji;
+  final VoidCallback onToggleEmoji;
   final VoidCallback onToggleTools;
+  final VoidCallback onClosePanel;
 
   @override
   Widget build(BuildContext context) {
@@ -2239,15 +2283,26 @@ class _ChatComposer extends StatelessWidget {
               child: Row(
                 children: [
                   _ComposerIconButton(
-                    tooltip: '语音输入',
-                    icon: Icons.keyboard_voice_outlined,
-                    onPressed: null,
+                    tooltip: showEmoji ? '收起表情' : '表情',
+                    icon: showEmoji
+                        ? Icons.keyboard_alt_outlined
+                        : Icons.mood_outlined,
+                    onPressed: composerDisabled ? null : onToggleEmoji,
+                  ),
+                  const SizedBox(width: 8),
+                  _VoiceInputButton(
+                    controller: controller,
+                    conversation: conversation,
+                    friend: friend,
+                    disabled: composerDisabled,
+                    onClosePanel: onClosePanel,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: TextField(
                       controller: textController,
                       readOnly: composerDisabled,
+                      onTap: onClosePanel,
                       minLines: 1,
                       maxLines: 4,
                       style: Theme.of(context).textTheme.bodyLarge?.copyWith(
@@ -2269,50 +2324,48 @@ class _ChatComposer extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  _ComposerIconButton(
-                    tooltip: '更多',
-                    icon: showTools
-                        ? Icons.keyboard_arrow_down
-                        : Icons.add_circle_outline,
-                    onPressed: composerDisabled ? null : onToggleTools,
-                  ),
-                  const SizedBox(width: 10),
-                  FilledButton(
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 22,
-                        vertical: 15,
+                  if (hasText)
+                    FilledButton(
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 13,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(18),
+                        ),
                       ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(20),
-                      ),
+                      onPressed: composerDisabled ? null : _sendTextMessage,
+                      child: const Text('发送'),
+                    )
+                  else
+                    _ComposerIconButton(
+                      tooltip: showTools ? '收起更多' : '更多',
+                      icon: showTools
+                          ? Icons.keyboard_arrow_down
+                          : Icons.add_circle_outline,
+                      onPressed: composerDisabled ? null : onToggleTools,
                     ),
-                    onPressed: composerDisabled
-                        ? null
-                        : () async {
-                            final text = textController.text;
-                            textController.clear();
-                            if (conversation?.isGroup == true) {
-                              await controller.sendGroupChatMessage(
-                                conversation: conversation!,
-                                text: text,
-                              );
-                              return;
-                            }
-                            final directFriend = friend;
-                            if (directFriend == null) {
-                              return;
-                            }
-                            await controller.sendLocalChatMessage(
-                              friend: directFriend,
-                              text: text,
-                            );
-                          },
-                    child: const Text('发送'),
-                  ),
                 ],
               ),
             ),
+            if (showEmoji && !composerDisabled)
+              _ChatEmojiPanel(
+                onSelected: (emoji) {
+                  final selection = textController.selection;
+                  final text = textController.text;
+                  final start = selection.start < 0
+                      ? text.length
+                      : selection.start;
+                  final end = selection.end < 0 ? text.length : selection.end;
+                  textController.value = TextEditingValue(
+                    text: text.replaceRange(start, end, emoji),
+                    selection: TextSelection.collapsed(
+                      offset: start + emoji.length,
+                    ),
+                  );
+                },
+              ),
             if (showTools && !composerDisabled)
               Padding(
                 padding: const EdgeInsets.fromLTRB(18, 6, 18, 18),
@@ -2324,14 +2377,24 @@ class _ChatComposer extends StatelessWidget {
                   mainAxisSpacing: 12,
                   crossAxisSpacing: 12,
                   physics: const NeverScrollableScrollPhysics(),
-                  children: const [
-                    _ChatToolButton(icon: Icons.image_outlined, label: '图片'),
+                  children: [
+                    _ChatToolButton(
+                      icon: Icons.image_outlined,
+                      label: '相册',
+                      onTap: () => _pickAndSendMedia(context),
+                    ),
                     _ChatToolButton(
                       icon: Icons.insert_drive_file_outlined,
                       label: '文件',
+                      onTap: () =>
+                          _pickAndSendAttachment(context, image: false),
                     ),
-                    _ChatToolButton(icon: Icons.videocam_outlined, label: '视频'),
                     _ChatToolButton(
+                      icon: Icons.videocam_outlined,
+                      label: '视频通话',
+                      onTap: () => _showCallOptions(context),
+                    ),
+                    const _ChatToolButton(
                       icon: Icons.location_on_outlined,
                       label: '位置',
                     ),
@@ -2343,6 +2406,247 @@ class _ChatComposer extends StatelessWidget {
       ),
     );
   }
+
+  Future<void> _sendTextMessage() async {
+    final text = textController.text;
+    if (text.trim().isEmpty) {
+      return;
+    }
+    textController.clear();
+    onClosePanel();
+    if (conversation?.isGroup == true) {
+      await controller.sendGroupChatMessage(
+        conversation: conversation!,
+        text: text,
+      );
+      return;
+    }
+    final directFriend = friend;
+    if (directFriend == null) {
+      return;
+    }
+    await controller.sendLocalChatMessage(friend: directFriend, text: text);
+  }
+
+  Future<void> _pickAndSendAttachment(
+    BuildContext context, {
+    required bool image,
+  }) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: image ? FileType.image : FileType.any,
+      allowMultiple: false,
+      withData: true,
+    );
+    final picked = result?.files.single;
+    if (picked == null) {
+      return;
+    }
+    Uint8List? bytes = picked.bytes;
+    if (bytes == null && picked.path != null) {
+      bytes = await File(picked.path!).readAsBytes();
+    }
+    if (bytes == null || bytes.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('文件读取失败')));
+      }
+      return;
+    }
+    final sendBytes = image ? _prepareChatImage(bytes) : bytes;
+    if (sendBytes.length > _chatUiAttachmentMaxBytes) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('聊天附件不能超过 2MB，大文件请使用文件模块。')),
+        );
+      }
+      return;
+    }
+    final name = image ? _imageAttachmentName(picked.name) : picked.name;
+    final mimeType = image ? 'image/jpeg' : _guessMimeType(picked.name);
+    if (conversation?.isGroup == true) {
+      await controller.sendGroupChatAttachment(
+        conversation: conversation!,
+        bytes: sendBytes,
+        name: name,
+        mimeType: mimeType,
+        image: image,
+      );
+      return;
+    }
+    final directFriend = friend;
+    if (directFriend == null) {
+      return;
+    }
+    await controller.sendLocalChatAttachment(
+      friend: directFriend,
+      bytes: sendBytes,
+      name: name,
+      mimeType: mimeType,
+      image: image,
+    );
+  }
+
+  Future<void> _pickAndSendMedia(BuildContext context) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.media,
+      allowMultiple: false,
+      withData: true,
+    );
+    final picked = result?.files.single;
+    if (picked == null) {
+      return;
+    }
+    Uint8List? bytes = picked.bytes;
+    if (bytes == null && picked.path != null) {
+      bytes = await File(picked.path!).readAsBytes();
+    }
+    if (bytes == null || bytes.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('媒体文件读取失败')));
+      }
+      return;
+    }
+    final video = _isVideoFile(picked.name);
+    final sendBytes = video ? bytes : _prepareChatImage(bytes);
+    final maxBytes = video
+        ? _chatUiVideoAttachmentMaxBytes
+        : _chatUiAttachmentMaxBytes;
+    if (sendBytes.length > maxBytes) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              video ? '聊天视频不能超过 20MB，大视频请使用文件模块。' : '聊天图片不能超过 2MB。',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    final name = video ? picked.name : _imageAttachmentName(picked.name);
+    final mimeType = video ? _guessMimeType(picked.name) : 'image/jpeg';
+    final attachmentType = video ? 'video' : 'image';
+    if (conversation?.isGroup == true) {
+      await controller.sendGroupChatAttachment(
+        conversation: conversation!,
+        bytes: sendBytes,
+        name: name,
+        mimeType: mimeType,
+        image: !video,
+        attachmentType: attachmentType,
+      );
+      return;
+    }
+    final directFriend = friend;
+    if (directFriend == null) {
+      return;
+    }
+    await controller.sendLocalChatAttachment(
+      friend: directFriend,
+      bytes: sendBytes,
+      name: name,
+      mimeType: mimeType,
+      image: !video,
+      attachmentType: attachmentType,
+    );
+  }
+
+  Future<void> _showCallOptions(BuildContext context) async {
+    final directFriend = friend;
+    if (directFriend == null || conversation?.isGroup == true) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('当前仅支持单聊发起通话。')));
+      return;
+    }
+    final media = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _ChatCallOptionSheet(friend: directFriend),
+    );
+    if (!context.mounted || media == null || media.isEmpty) {
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _ChatCallPage(
+          controller: controller,
+          friend: directFriend,
+          initialVideo: media == 'video',
+        ),
+      ),
+    );
+  }
+
+  Uint8List _prepareChatImage(Uint8List source) {
+    final decoded = img.decodeImage(source);
+    if (decoded == null) {
+      return source;
+    }
+    final resized = decoded.width > 1280 || decoded.height > 1280
+        ? img.copyResize(
+            decoded,
+            width: decoded.width >= decoded.height ? 1280 : null,
+            height: decoded.height > decoded.width ? 1280 : null,
+            interpolation: img.Interpolation.average,
+          )
+        : decoded;
+    return Uint8List.fromList(img.encodeJpg(resized, quality: 82));
+  }
+
+  String _imageAttachmentName(String name) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) {
+      return 'secure-x-image.jpg';
+    }
+    final base = trimmed.replaceAll(RegExp(r'\.[^.]+$'), '');
+    return '${base.isEmpty ? 'secure-x-image' : base}.jpg';
+  }
+
+  String _guessMimeType(String name) {
+    final lower = name.toLowerCase();
+    if (lower.endsWith('.png')) {
+      return 'image/png';
+    }
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+      return 'image/jpeg';
+    }
+    if (lower.endsWith('.webp')) {
+      return 'image/webp';
+    }
+    if (lower.endsWith('.pdf')) {
+      return 'application/pdf';
+    }
+    if (lower.endsWith('.txt')) {
+      return 'text/plain';
+    }
+    if (lower.endsWith('.mp4')) {
+      return 'video/mp4';
+    }
+    if (lower.endsWith('.mov')) {
+      return 'video/quicktime';
+    }
+    if (lower.endsWith('.m4v')) {
+      return 'video/x-m4v';
+    }
+    if (lower.endsWith('.webm')) {
+      return 'video/webm';
+    }
+    return 'application/octet-stream';
+  }
+
+  bool _isVideoFile(String name) {
+    final lower = name.toLowerCase();
+    return lower.endsWith('.mp4') ||
+        lower.endsWith('.mov') ||
+        lower.endsWith('.m4v') ||
+        lower.endsWith('.webm') ||
+        lower.endsWith('.avi') ||
+        lower.endsWith('.mkv');
+  }
 }
 
 class _ComposerIconButton extends StatelessWidget {
@@ -2350,11 +2654,13 @@ class _ComposerIconButton extends StatelessWidget {
     required this.tooltip,
     required this.icon,
     required this.onPressed,
+    this.active = false,
   });
 
   final String tooltip;
   final IconData icon;
   final VoidCallback? onPressed;
+  final bool active;
 
   @override
   Widget build(BuildContext context) {
@@ -2368,13 +2674,21 @@ class _ComposerIconButton extends StatelessWidget {
           width: 42,
           height: 42,
           decoration: BoxDecoration(
-            color: enabled ? context.sx.accentSoft : context.sx.subtle,
+            color: active
+                ? context.sx.primary
+                : enabled
+                ? context.sx.accentSoft
+                : context.sx.subtle,
             borderRadius: BorderRadius.circular(18),
             border: Border.all(color: context.sx.border),
           ),
           child: Icon(
             icon,
-            color: enabled ? context.sx.primary : context.sx.mutedText,
+            color: active
+                ? Colors.white
+                : enabled
+                ? context.sx.primary
+                : context.sx.mutedText,
             size: 24,
           ),
         ),
@@ -2383,35 +2697,1063 @@ class _ComposerIconButton extends StatelessWidget {
   }
 }
 
-class _ChatToolButton extends StatelessWidget {
-  const _ChatToolButton({required this.icon, required this.label});
+class _ChatCallOptionSheet extends StatelessWidget {
+  const _ChatCallOptionSheet({required this.friend});
 
-  final IconData icon;
-  final String label;
+  final PublicUser friend;
 
   @override
   Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: context.sx.card,
+            borderRadius: BorderRadius.circular(28),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withAlpha(60),
+                blurRadius: 26,
+                offset: const Offset(0, 12),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              _CallSheetAction(
+                icon: Icons.videocam_rounded,
+                label: '视频通话',
+                onTap: () => Navigator.of(context).pop('video'),
+              ),
+              Divider(height: 1, color: context.sx.border),
+              _CallSheetAction(
+                icon: Icons.call_rounded,
+                label: '语音通话',
+                onTap: () => Navigator.of(context).pop('audio'),
+              ),
+              Divider(height: 8, thickness: 8, color: context.sx.subtle),
+              _CallSheetAction(
+                label: '取消',
+                center: true,
+                onTap: () => Navigator.of(context).pop(),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CallSheetAction extends StatelessWidget {
+  const _CallSheetAction({
+    required this.label,
+    required this.onTap,
+    this.icon,
+    this.center = false,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+  final IconData? icon;
+  final bool center;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 22),
+        child: Row(
+          mainAxisAlignment: center
+              ? MainAxisAlignment.center
+              : MainAxisAlignment.start,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, color: context.sx.text, size: 28),
+              const SizedBox(width: 20),
+            ],
+            Text(
+              label,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                color: context.sx.text,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ChatCallPage extends StatefulWidget {
+  const _ChatCallPage({
+    required this.controller,
+    required this.friend,
+    required this.initialVideo,
+    this.incomingCallId,
+  });
+
+  final AppController controller;
+  final PublicUser friend;
+  final bool initialVideo;
+  final String? incomingCallId;
+
+  @override
+  State<_ChatCallPage> createState() => _ChatCallPageState();
+}
+
+class _ChatCallPageState extends State<_ChatCallPage> {
+  final rtc.RTCVideoRenderer _localRenderer = rtc.RTCVideoRenderer();
+  final rtc.RTCVideoRenderer _remoteRenderer = rtc.RTCVideoRenderer();
+  final List<rtc.RTCIceCandidate> _pendingCandidates = [];
+  rtc.MediaStream? _localStream;
+  rtc.RTCPeerConnection? _peerConnection;
+  late final String _callId;
+  bool _microphoneOn = true;
+  bool _speakerOn = true;
+  bool _cameraOn = false;
+  bool _accepted = false;
+  bool _incomingWaiting = false;
+  bool _remoteVideoReady = false;
+  bool _remoteDescriptionSet = false;
+  bool _ended = false;
+  String _notice = '正在准备通话...';
+
+  bool get _isIncoming => widget.incomingCallId != null;
+  String get _media => widget.initialVideo ? 'video' : 'audio';
+
+  @override
+  void initState() {
+    super.initState();
+    _callId =
+        widget.incomingCallId ??
+        DateTime.now().microsecondsSinceEpoch.toString();
+    _cameraOn = widget.initialVideo;
+    _incomingWaiting = _isIncoming;
+    widget.controller.callListenable.addListener(_handleCallSignal);
+    unawaited(_startCall());
+  }
+
+  @override
+  void dispose() {
+    widget.controller.callListenable.removeListener(_handleCallSignal);
+    unawaited(_endCall(sendAction: _accepted ? 'end' : 'cancel'));
+    super.dispose();
+  }
+
+  Future<void> _startCall() async {
+    try {
+      await _localRenderer.initialize();
+      await _remoteRenderer.initialize();
+      if (_isIncoming) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _notice = '邀请你进行${widget.initialVideo ? '视频' : '语音'}通话';
+        });
+        return;
+      }
+      await _openLocalMedia(video: widget.initialVideo);
+      await _ensurePeerConnection();
+      await widget.controller.sendChatCallSignal(
+        friend: widget.friend,
+        callId: _callId,
+        action: 'invite',
+        media: _media,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _notice = '等待对方接受邀请.';
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _notice = '通话启动失败，请检查麦克风或摄像头权限。';
+      });
+    }
+  }
+
+  void _handleCallSignal() {
+    final signal = widget.controller.lastCallSignal;
+    if (signal == null ||
+        signal.callId != _callId ||
+        signal.friendId != widget.friend.id) {
+      return;
+    }
+    unawaited(_handleCallSignalAsync(signal));
+  }
+
+  Future<void> _handleCallSignalAsync(RealtimeCallSignal signal) async {
+    switch (signal.action) {
+      case 'accept':
+        if (_isIncoming) {
+          return;
+        }
+        _accepted = true;
+        _setNotice('对方已接听，正在建立安全通话...');
+        await _ensurePeerConnection();
+        await _sendOffer();
+        break;
+      case 'reject':
+        _setNotice('对方已拒绝通话。');
+        await _closeAfterDelay();
+        break;
+      case 'cancel':
+      case 'end':
+        _setNotice(signal.action == 'cancel' ? '对方已取消通话。' : '通话已结束。');
+        await _closeAfterDelay();
+        break;
+      case 'offer':
+        _accepted = true;
+        await _ensurePeerConnection();
+        await _setRemoteDescription(signal.payload, fallbackType: 'offer');
+        await _drainPendingCandidates();
+        final answer = await _peerConnection!.createAnswer();
+        await _peerConnection!.setLocalDescription(answer);
+        await _sendCallSignal('answer', {
+          'sdp': answer.sdp,
+          'sdpType': answer.type,
+        });
+        _setNotice('正在接通...');
+        break;
+      case 'answer':
+        await _setRemoteDescription(signal.payload, fallbackType: 'answer');
+        await _drainPendingCandidates();
+        _setNotice('正在接通...');
+        break;
+      case 'candidate':
+        await _handleRemoteCandidate(signal.payload);
+        break;
+    }
+  }
+
+  Future<void> _openLocalMedia({required bool video}) async {
+    if (_localStream != null) {
+      return;
+    }
+    final stream = await rtc.navigator.mediaDevices.getUserMedia({
+      'audio': true,
+      'video': video
+          ? {
+              'facingMode': 'user',
+              'width': {'ideal': 640},
+              'height': {'ideal': 960},
+            }
+          : false,
+    });
+    _localStream = stream;
+    _localRenderer.srcObject = stream;
+    _setAudioEnabled(_microphoneOn);
+    _setVideoEnabled(video && _cameraOn);
+  }
+
+  Future<void> _ensurePeerConnection() async {
+    if (_peerConnection != null) {
+      return;
+    }
+    await _openLocalMedia(video: widget.initialVideo);
+    final iceServers = widget.controller.realtimeConfig?.iceServers ?? const [];
+    final connection = await rtc.createPeerConnection({
+      'iceServers': [
+        if (iceServers.isNotEmpty) {'urls': iceServers},
+      ],
+    });
+    _peerConnection = connection;
+    connection.onIceCandidate = (candidate) {
+      final value = candidate.candidate;
+      if (value == null || value.isEmpty || _ended) {
+        return;
+      }
+      unawaited(
+        _sendCallSignal('candidate', {
+          'candidate': value,
+          'sdpMid': candidate.sdpMid,
+          'sdpMLineIndex': candidate.sdpMLineIndex,
+        }),
+      );
+    };
+    connection.onTrack = (event) {
+      final streams = event.streams;
+      if (streams.isEmpty) {
+        return;
+      }
+      _remoteRenderer.srcObject = streams.first;
+      if (mounted) {
+        setState(() {
+          _remoteVideoReady = event.track.kind == 'video';
+          _notice = '通话中';
+        });
+      }
+    };
+    connection.onConnectionState = (state) {
+      if (!mounted) {
+        return;
+      }
+      if (state == rtc.RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+        setState(() => _notice = '通话中');
+      }
+      if (state == rtc.RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
+          state ==
+              rtc.RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
+        setState(() => _notice = '通话连接不稳定，正在等待恢复...');
+      }
+    };
+    final stream = _localStream;
+    if (stream != null) {
+      for (final track in stream.getTracks()) {
+        await connection.addTrack(track, stream);
+      }
+    }
+  }
+
+  Future<void> _sendOffer() async {
+    final connection = _peerConnection;
+    if (connection == null) {
+      return;
+    }
+    final offer = await connection.createOffer();
+    await connection.setLocalDescription(offer);
+    await _sendCallSignal('offer', {'sdp': offer.sdp, 'sdpType': offer.type});
+  }
+
+  Future<void> _setRemoteDescription(
+    Map<String, dynamic> payload, {
+    required String fallbackType,
+  }) async {
+    final connection = _peerConnection;
+    if (connection == null) {
+      return;
+    }
+    await connection.setRemoteDescription(
+      rtc.RTCSessionDescription(
+        payload['sdp'] as String? ?? '',
+        payload['sdpType'] as String? ?? fallbackType,
+      ),
+    );
+    _remoteDescriptionSet = true;
+  }
+
+  Future<void> _handleRemoteCandidate(Map<String, dynamic> payload) async {
+    final candidate = payload['candidate'] as String? ?? '';
+    if (candidate.isEmpty) {
+      return;
+    }
+    final iceCandidate = rtc.RTCIceCandidate(
+      candidate,
+      payload['sdpMid'] as String?,
+      (payload['sdpMLineIndex'] as num?)?.toInt(),
+    );
+    if (!_remoteDescriptionSet || _peerConnection == null) {
+      _pendingCandidates.add(iceCandidate);
+      return;
+    }
+    await _peerConnection!.addCandidate(iceCandidate);
+  }
+
+  Future<void> _drainPendingCandidates() async {
+    final connection = _peerConnection;
+    if (connection == null || _pendingCandidates.isEmpty) {
+      return;
+    }
+    final candidates = [..._pendingCandidates];
+    _pendingCandidates.clear();
+    for (final candidate in candidates) {
+      await connection.addCandidate(candidate);
+    }
+  }
+
+  Future<void> _sendCallSignal(
+    String action, [
+    Map<String, dynamic> payload = const {},
+  ]) {
+    return widget.controller.sendChatCallSignal(
+      friend: widget.friend,
+      callId: _callId,
+      action: action,
+      media: _media,
+      payload: payload,
+    );
+  }
+
+  Future<void> _acceptIncomingCall() async {
+    _incomingWaiting = false;
+    _accepted = true;
+    _setNotice('正在接听...');
+    try {
+      await _openLocalMedia(video: widget.initialVideo);
+      await _ensurePeerConnection();
+      await _sendCallSignal('accept');
+      _setNotice('等待对方建立安全通话...');
+    } catch (_) {
+      _setNotice('接听失败，请检查麦克风或摄像头权限。');
+    }
+  }
+
+  Future<void> _rejectIncomingCall() async {
+    await _sendCallSignal('reject');
+    await _endCall(sendAction: null);
+    if (mounted) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _closeAfterDelay() async {
+    await _endCall(sendAction: null);
+    await Future<void>.delayed(const Duration(milliseconds: 650));
+    if (mounted) {
+      Navigator.of(context).maybePop();
+    }
+  }
+
+  void _setNotice(String value) {
+    if (!mounted) {
+      return;
+    }
+    setState(() => _notice = value);
+  }
+
+  Future<void> _endCall({required String? sendAction}) async {
+    if (_ended) {
+      return;
+    }
+    _ended = true;
+    if (sendAction != null) {
+      await _sendCallSignal(sendAction);
+    }
+    await _peerConnection?.close();
+    await _peerConnection?.dispose();
+    _peerConnection = null;
+    final stream = _localStream;
+    _localStream = null;
+    for (final track in stream?.getTracks() ?? const <rtc.MediaStreamTrack>[]) {
+      await track.stop();
+    }
+    _localRenderer.srcObject = null;
+    _remoteRenderer.srcObject = null;
+    await _localRenderer.dispose();
+    await _remoteRenderer.dispose();
+  }
+
+  void _setAudioEnabled(bool enabled) {
+    for (final track in _localStream?.getAudioTracks() ?? const []) {
+      track.enabled = enabled;
+    }
+  }
+
+  void _setVideoEnabled(bool enabled) {
+    for (final track in _localStream?.getVideoTracks() ?? const []) {
+      track.enabled = enabled;
+    }
+  }
+
+  Future<void> _toggleCamera() async {
+    if (!widget.initialVideo) {
+      return;
+    }
+    setState(() => _cameraOn = !_cameraOn);
+    _setVideoEnabled(_cameraOn);
+  }
+
+  void _toggleMicrophone() {
+    setState(() => _microphoneOn = !_microphoneOn);
+    _setAudioEnabled(_microphoneOn);
+  }
+
+  void _toggleSpeaker() {
+    setState(() => _speakerOn = !_speakerOn);
+    // 桌面和移动端的扬声器路由能力差异较大，先保留 UI 状态和后续接入点。
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final name = widget.friend.displayName.isEmpty
+        ? widget.friend.username
+        : widget.friend.displayName;
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Positioned.fill(child: _buildCallBackground()),
+            Positioned(
+              top: 30,
+              left: 28,
+              child: IconButton(
+                icon: const Icon(Icons.picture_in_picture_alt_outlined),
+                color: Colors.white,
+                onPressed: () => Navigator.of(context).maybePop(),
+              ),
+            ),
+            Align(
+              alignment: const Alignment(0, -0.45),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _CallAvatar(friend: widget.friend),
+                  const SizedBox(height: 18),
+                  Text(
+                    name,
+                    style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Align(
+              alignment: const Alignment(0, 0.42),
+              child: Text(
+                _notice,
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  color: Colors.white.withAlpha(175),
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(26, 0, 26, 34),
+                child: _buildControls(context),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCallBackground() {
+    if (widget.initialVideo && _remoteVideoReady) {
+      return rtc.RTCVideoView(
+        _remoteRenderer,
+        mirror: false,
+        objectFit: rtc.RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+      );
+    }
+    if (widget.initialVideo && _cameraOn && _localStream != null) {
+      return rtc.RTCVideoView(
+        _localRenderer,
+        mirror: true,
+        objectFit: rtc.RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+      );
+    }
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: RadialGradient(
+          center: const Alignment(0, -0.35),
+          radius: 1.1,
+          colors: [Colors.blueGrey.shade900.withAlpha(190), Colors.black],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildControls(BuildContext context) {
+    if (_incomingWaiting) {
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          _CallControlButton(
+            icon: Icons.call_end_rounded,
+            label: '拒绝',
+            danger: true,
+            onTap: () => unawaited(_rejectIncomingCall()),
+          ),
+          _CallControlButton(
+            icon: Icons.call_rounded,
+            label: '接听',
+            success: true,
+            onTap: () => unawaited(_acceptIncomingCall()),
+          ),
+        ],
+      );
+    }
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
-          width: 56,
-          height: 56,
-          decoration: BoxDecoration(
-            color: context.sx.subtle,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: context.sx.border),
-          ),
-          child: Icon(icon, color: context.sx.mutedText),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            _CallControlButton(
+              icon: _microphoneOn ? Icons.mic_rounded : Icons.mic_off_rounded,
+              label: _microphoneOn ? '麦克风已开' : '麦克风已关',
+              onTap: _toggleMicrophone,
+            ),
+            _CallControlButton(
+              icon: _speakerOn
+                  ? Icons.volume_up_rounded
+                  : Icons.volume_off_rounded,
+              label: _speakerOn ? '扬声器已开' : '扬声器已关',
+              onTap: _toggleSpeaker,
+            ),
+            if (widget.initialVideo)
+              _CallControlButton(
+                icon: _cameraOn
+                    ? Icons.videocam_rounded
+                    : Icons.videocam_off_rounded,
+                label: _cameraOn ? '摄像头已开' : '摄像头已关',
+                onTap: _toggleCamera,
+              ),
+          ],
         ),
-        const SizedBox(height: 6),
-        Text(
-          label,
-          style: Theme.of(
-            context,
-          ).textTheme.labelMedium?.copyWith(color: context.sx.mutedText),
+        const SizedBox(height: 32),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            const SizedBox(width: 96),
+            _HangupButton(
+              onTap: () async {
+                await _endCall(sendAction: _accepted ? 'end' : 'cancel');
+                if (context.mounted) {
+                  Navigator.of(context).pop();
+                }
+              },
+            ),
+            if (widget.initialVideo)
+              _CallControlButton(
+                icon: Icons.cameraswitch_rounded,
+                label: '切换摄像头',
+                compact: true,
+                onTap: () async {
+                  final tracks = _localStream?.getVideoTracks() ?? const [];
+                  final videoTrack = tracks.isEmpty ? null : tracks.first;
+                  if (videoTrack != null) {
+                    await rtc.Helper.switchCamera(videoTrack);
+                  }
+                },
+              )
+            else
+              const SizedBox(width: 96),
+          ],
         ),
       ],
+    );
+  }
+}
+
+class _CallAvatar extends StatelessWidget {
+  const _CallAvatar({required this.friend});
+
+  final PublicUser friend;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 122,
+      height: 122,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(28),
+        color: Colors.white.withAlpha(30),
+      ),
+      child: Center(
+        child: Text(
+          (friend.displayName.isNotEmpty ? friend.displayName : friend.username)
+              .characters
+              .take(1)
+              .toString()
+              .toUpperCase(),
+          style: Theme.of(context).textTheme.displayMedium?.copyWith(
+            color: Colors.white,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CallControlButton extends StatelessWidget {
+  const _CallControlButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.compact = false,
+    this.danger = false,
+    this.success = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool compact;
+  final bool danger;
+  final bool success;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = compact ? 58.0 : 88.0;
+    final background = danger
+        ? context.sx.danger
+        : success
+        ? context.sx.success
+        : Colors.white;
+    final foreground = (danger || success) ? Colors.white : Colors.black;
+    return InkWell(
+      borderRadius: BorderRadius.circular(999),
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: size,
+            height: size,
+            decoration: BoxDecoration(
+              color: background,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: foreground, size: compact ? 28 : 38),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: Colors.white.withAlpha(215),
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HangupButton extends StatelessWidget {
+  const _HangupButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(999),
+      onTap: onTap,
+      child: Container(
+        width: 88,
+        height: 88,
+        decoration: BoxDecoration(
+          color: context.sx.danger,
+          shape: BoxShape.circle,
+        ),
+        child: const Icon(
+          Icons.call_end_rounded,
+          color: Colors.white,
+          size: 42,
+        ),
+      ),
+    );
+  }
+}
+
+class _VoiceInputButton extends StatefulWidget {
+  const _VoiceInputButton({
+    required this.controller,
+    required this.conversation,
+    required this.friend,
+    required this.disabled,
+    required this.onClosePanel,
+  });
+
+  final AppController controller;
+  final ChatConversation? conversation;
+  final PublicUser? friend;
+  final bool disabled;
+  final VoidCallback onClosePanel;
+
+  @override
+  State<_VoiceInputButton> createState() => _VoiceInputButtonState();
+}
+
+class _VoiceInputButtonState extends State<_VoiceInputButton> {
+  final record.AudioRecorder _recorder = record.AudioRecorder();
+  bool _recording = false;
+  DateTime? _startedAt;
+  Timer? _maxDurationTimer;
+  String? _recordingPath;
+
+  @override
+  void dispose() {
+    _maxDurationTimer?.cancel();
+    if (_recording) {
+      unawaited(_recorder.cancel());
+    }
+    unawaited(_recorder.dispose());
+    super.dispose();
+  }
+
+  Future<void> _toggleRecording() async {
+    if (widget.disabled) {
+      return;
+    }
+    widget.onClosePanel();
+    if (_recording) {
+      await _stopAndSend();
+      return;
+    }
+    await _startRecording();
+  }
+
+  Future<void> _startRecording() async {
+    final allowed = await _recorder.hasPermission();
+    if (!allowed) {
+      _showSnack('麦克风权限未开启，请到系统设置中允许 secure-x 使用。');
+      return;
+    }
+    final supported = await _recorder.isEncoderSupported(
+      record.AudioEncoder.aacLc,
+    );
+    if (!supported) {
+      _showSnack('当前设备暂不支持语音消息录制。');
+      return;
+    }
+    final directory = await getTemporaryDirectory();
+    final path =
+        '${directory.path}/secure-x-voice-${DateTime.now().microsecondsSinceEpoch}.m4a';
+    try {
+      await _recorder.start(
+        const record.RecordConfig(
+          encoder: record.AudioEncoder.aacLc,
+          bitRate: 64000,
+          sampleRate: 16000,
+          numChannels: 1,
+          autoGain: true,
+          echoCancel: true,
+          noiseSuppress: true,
+        ),
+        path: path,
+      );
+      _recordingPath = path;
+      _startedAt = DateTime.now();
+      _maxDurationTimer?.cancel();
+      _maxDurationTimer = Timer(const Duration(seconds: 60), () {
+        if (mounted && _recording) {
+          unawaited(_stopAndSend(autoStopped: true));
+        }
+      });
+      if (!mounted) {
+        return;
+      }
+      setState(() => _recording = true);
+      _showSnack('正在录音，再点一次麦克风发送语音。');
+    } catch (_) {
+      _showSnack('语音录制启动失败，请检查麦克风是否被占用。');
+    }
+  }
+
+  Future<void> _stopAndSend({bool autoStopped = false}) async {
+    _maxDurationTimer?.cancel();
+    final startedAt = _startedAt;
+    final path = await _recorder.stop();
+    if (mounted) {
+      setState(() => _recording = false);
+    }
+    final outputPath = path ?? _recordingPath;
+    _recordingPath = null;
+    _startedAt = null;
+    if (outputPath == null) {
+      _showSnack('语音录制失败，请重试。');
+      return;
+    }
+    final file = File(outputPath);
+    if (!await file.exists()) {
+      _showSnack('语音文件生成失败，请重试。');
+      return;
+    }
+    final duration = startedAt == null
+        ? Duration.zero
+        : DateTime.now().difference(startedAt);
+    if (duration < const Duration(milliseconds: 700)) {
+      await _deleteTempVoiceFile(file);
+      _showSnack('录音时间太短，未发送。');
+      return;
+    }
+    final bytes = await file.readAsBytes();
+    await _deleteTempVoiceFile(file);
+    if (bytes.length > _chatUiAttachmentMaxBytes) {
+      _showSnack('语音消息不能超过 2MB，请缩短录音时间。');
+      return;
+    }
+    final seconds = duration.inSeconds.clamp(1, 60);
+    final name =
+        'secure-x-voice-${DateTime.now().millisecondsSinceEpoch}-${seconds}s.m4a';
+    if (widget.conversation?.isGroup == true) {
+      await widget.controller.sendGroupChatAttachment(
+        conversation: widget.conversation!,
+        bytes: bytes,
+        name: name,
+        mimeType: 'audio/mp4',
+        image: false,
+        attachmentType: 'audio',
+      );
+    } else {
+      final directFriend = widget.friend;
+      if (directFriend == null) {
+        _showSnack('当前会话不可发送语音。');
+        return;
+      }
+      await widget.controller.sendLocalChatAttachment(
+        friend: directFriend,
+        bytes: bytes,
+        name: name,
+        mimeType: 'audio/mp4',
+        image: false,
+        attachmentType: 'audio',
+      );
+    }
+    if (autoStopped) {
+      _showSnack('已达到最长录音时间，语音已发送。');
+    }
+  }
+
+  Future<void> _deleteTempVoiceFile(File file) async {
+    try {
+      await file.delete();
+    } catch (_) {
+      // 临时录音删除失败不影响消息发送，系统临时目录后续会自行清理。
+    }
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _ComposerIconButton(
+      tooltip: _recording ? '停止并发送语音' : '语音消息',
+      icon: _recording ? Icons.stop_rounded : Icons.mic_none_outlined,
+      onPressed: widget.disabled ? null : _toggleRecording,
+      active: _recording,
+    );
+  }
+}
+
+class _ChatEmojiPanel extends StatelessWidget {
+  const _ChatEmojiPanel({required this.onSelected});
+
+  final ValueChanged<String> onSelected;
+
+  static const _emojis = [
+    '😀',
+    '😄',
+    '😂',
+    '😊',
+    '😍',
+    '😘',
+    '😎',
+    '😢',
+    '😭',
+    '😡',
+    '👍',
+    '🙏',
+    '👏',
+    '💪',
+    '🎉',
+    '❤️',
+    '🔥',
+    '✨',
+    '🌹',
+    '☕',
+    '🍻',
+    '✅',
+    '❌',
+    '❓',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 230,
+      padding: const EdgeInsets.fromLTRB(18, 8, 18, 18),
+      decoration: BoxDecoration(
+        color: context.sx.card,
+        border: Border(top: BorderSide(color: context.sx.border)),
+      ),
+      child: GridView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
+        itemCount: _emojis.length,
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: MediaQuery.sizeOf(context).width < 520 ? 6 : 10,
+          mainAxisSpacing: 10,
+          crossAxisSpacing: 10,
+        ),
+        itemBuilder: (context, index) {
+          final emoji = _emojis[index];
+          return InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () => onSelected(emoji),
+            child: Container(
+              decoration: BoxDecoration(
+                color: context.sx.subtle,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: context.sx.border),
+              ),
+              alignment: Alignment.center,
+              child: Text(emoji, style: const TextStyle(fontSize: 24)),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ChatToolButton extends StatelessWidget {
+  const _ChatToolButton({required this.icon, required this.label, this.onTap});
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onTap != null;
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              color: enabled ? context.sx.accentSoft : context.sx.subtle,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: context.sx.border),
+            ),
+            child: Icon(
+              icon,
+              color: enabled ? context.sx.primary : context.sx.mutedText,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: enabled ? context.sx.primary : context.sx.mutedText,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -2444,6 +3786,421 @@ String _conversationStatusPrefix(ChatMessage message) {
     return '[已发送] ';
   }
   return '';
+}
+
+class _ChatMessageContent extends StatelessWidget {
+  const _ChatMessageContent({
+    required this.controller,
+    required this.message,
+    required this.foreground,
+    required this.sentByMe,
+  });
+
+  final AppController controller;
+  final ChatMessage message;
+  final Color foreground;
+  final bool sentByMe;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!message.hasAttachment) {
+      return _messageText(context);
+    }
+    if (message.isImageAttachment) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _ChatImageAttachment(message: message),
+          if (_cleanCaption.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            _messageText(context),
+          ],
+        ],
+      );
+    }
+    if (message.isAudioAttachment) {
+      return _ChatAudioAttachment(message: message, sentByMe: sentByMe);
+    }
+    if (message.isVideoAttachment) {
+      return _ChatVideoAttachment(
+        controller: controller,
+        message: message,
+        foreground: foreground,
+        sentByMe: sentByMe,
+      );
+    }
+    return _ChatFileAttachment(
+      controller: controller,
+      message: message,
+      foreground: foreground,
+      sentByMe: sentByMe,
+    );
+  }
+
+  String get _cleanCaption {
+    final label = message.attachmentName.trim();
+    final text = message.text.trim();
+    if (text == '[图片] $label' || text == '[文件] $label') {
+      return '';
+    }
+    if (text == '[语音] $label') {
+      return '';
+    }
+    if (text == '[视频] $label') {
+      return '';
+    }
+    return text;
+  }
+
+  Widget _messageText(BuildContext context) {
+    return Text(
+      _cleanCaption.isEmpty ? message.text : _cleanCaption,
+      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+        color: foreground,
+        height: 1.35,
+        fontWeight: FontWeight.w600,
+      ),
+    );
+  }
+}
+
+class _ChatImageAttachment extends StatelessWidget {
+  const _ChatImageAttachment({required this.message});
+
+  final ChatMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    try {
+      final bytes = base64Decode(message.attachmentDataBase64);
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Image.memory(
+          bytes,
+          width: 220,
+          fit: BoxFit.cover,
+          errorBuilder: (context, _, _) => _broken(context),
+        ),
+      );
+    } catch (_) {
+      return _broken(context);
+    }
+  }
+
+  Widget _broken(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.broken_image_outlined, color: context.sx.mutedText),
+        const SizedBox(width: 8),
+        Text(
+          message.attachmentName.isEmpty ? '图片无法显示' : message.attachmentName,
+          style: TextStyle(
+            color: context.sx.mutedText,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ChatAudioAttachment extends StatefulWidget {
+  const _ChatAudioAttachment({required this.message, required this.sentByMe});
+
+  final ChatMessage message;
+  final bool sentByMe;
+
+  @override
+  State<_ChatAudioAttachment> createState() => _ChatAudioAttachmentState();
+}
+
+class _ChatAudioAttachmentState extends State<_ChatAudioAttachment> {
+  final audio.AudioPlayer _player = audio.AudioPlayer();
+  bool _playing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _player.onPlayerComplete.listen((_) {
+      if (mounted) {
+        setState(() => _playing = false);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    unawaited(_player.dispose());
+    super.dispose();
+  }
+
+  Future<void> _togglePlay() async {
+    if (_playing) {
+      await _player.stop();
+      if (mounted) {
+        setState(() => _playing = false);
+      }
+      return;
+    }
+    try {
+      final bytes = base64Decode(widget.message.attachmentDataBase64);
+      await _player.play(
+        audio.BytesSource(
+          Uint8List.fromList(bytes),
+          mimeType: widget.message.attachmentMimeType.isEmpty
+              ? 'audio/mp4'
+              : widget.message.attachmentMimeType,
+        ),
+      );
+      if (mounted) {
+        setState(() => _playing = true);
+      }
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('语音播放失败')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final foreground = widget.sentByMe ? Colors.white : context.sx.text;
+    final background = widget.sentByMe
+        ? Colors.white.withAlpha(24)
+        : context.sx.subtle;
+    final border = widget.sentByMe
+        ? Colors.white.withAlpha(50)
+        : context.sx.border;
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: _togglePlay,
+      child: Container(
+        constraints: const BoxConstraints(minWidth: 168),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: border),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              _playing ? Icons.stop_circle_outlined : Icons.play_circle_outline,
+              color: foreground,
+              size: 30,
+            ),
+            const SizedBox(width: 10),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _voiceDurationLabel(widget.message.attachmentName),
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: foreground,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _playing
+                      ? '正在播放'
+                      : '${_formatAttachmentSize(widget.message.attachmentSize)} · 点击播放',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: foreground.withAlpha(190),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _voiceDurationLabel(String name) {
+    final match = RegExp(r'-(\d+)s\.m4a$').firstMatch(name);
+    final seconds = match?.group(1);
+    if (seconds == null) {
+      return '语音消息';
+    }
+    return '语音消息 $seconds"';
+  }
+}
+
+class _ChatFileAttachment extends StatelessWidget {
+  const _ChatFileAttachment({
+    required this.controller,
+    required this.message,
+    required this.foreground,
+    required this.sentByMe,
+  });
+
+  final AppController controller;
+  final ChatMessage message;
+  final Color foreground;
+  final bool sentByMe;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: () async {
+        final messenger = ScaffoldMessenger.of(context);
+        try {
+          final path = await controller.saveChatAttachment(message);
+          messenger.showSnackBar(SnackBar(content: Text('附件已保存：$path')));
+        } catch (_) {
+          messenger.showSnackBar(const SnackBar(content: Text('附件保存失败')));
+        }
+      },
+      child: Container(
+        constraints: const BoxConstraints(minWidth: 210),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: sentByMe ? Colors.white.withAlpha(24) : context.sx.subtle,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: sentByMe ? Colors.white.withAlpha(50) : context.sx.border,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.insert_drive_file_outlined, color: foreground, size: 30),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    message.attachmentName.isEmpty
+                        ? '未命名文件'
+                        : message.attachmentName,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: foreground,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${_formatAttachmentSize(message.attachmentSize)} · 点击保存',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: foreground.withAlpha(190),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ChatVideoAttachment extends StatelessWidget {
+  const _ChatVideoAttachment({
+    required this.controller,
+    required this.message,
+    required this.foreground,
+    required this.sentByMe,
+  });
+
+  final AppController controller;
+  final ChatMessage message;
+  final Color foreground;
+  final bool sentByMe;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: () async {
+        final messenger = ScaffoldMessenger.of(context);
+        try {
+          final path = await controller.saveChatAttachment(message);
+          messenger.showSnackBar(SnackBar(content: Text('视频已保存：$path')));
+        } catch (_) {
+          messenger.showSnackBar(const SnackBar(content: Text('视频保存失败')));
+        }
+      },
+      child: Container(
+        constraints: const BoxConstraints(minWidth: 220),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: sentByMe ? Colors.white.withAlpha(24) : context.sx.subtle,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: sentByMe ? Colors.white.withAlpha(50) : context.sx.border,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: foreground.withAlpha(30),
+                borderRadius: BorderRadius.circular(15),
+              ),
+              child: Icon(
+                Icons.play_arrow_rounded,
+                color: foreground,
+                size: 34,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    message.attachmentName.isEmpty
+                        ? '视频'
+                        : message.attachmentName,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: foreground,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${_formatAttachmentSize(message.attachmentSize)} · 点击保存',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: foreground.withAlpha(190),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+String _formatAttachmentSize(int size) {
+  if (size < 1024) {
+    return '${size}B';
+  }
+  if (size < 1024 * 1024) {
+    return '${(size / 1024).toStringAsFixed(1)}KB';
+  }
+  return '${(size / 1024 / 1024).toStringAsFixed(1)}MB';
 }
 
 class _ChatMessageStatusBar extends StatelessWidget {

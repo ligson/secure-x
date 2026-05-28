@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -8,11 +9,16 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:image/image.dart' as img;
+import 'package:audioplayers/audioplayers.dart' as audio;
+import 'package:path_provider/path_provider.dart';
+import 'package:record/record.dart' as record;
+import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 
 import 'src/api_client.dart';
 import 'src/app_controller.dart';
 import 'src/crypto_service.dart';
 import 'src/models.dart';
+import 'src/realtime_chat_service.dart';
 import 'src/update_service.dart';
 
 part 'src/ui/theme.dart';
@@ -203,11 +209,13 @@ class _VaultScreenState extends State<VaultScreen> {
   bool _generatorUseDigits = true;
   bool _generatorUseSymbols = true;
   String _generatedPassword = '';
+  final Set<String> _handledIncomingCallIds = {};
 
   @override
   void initState() {
     super.initState();
     _settingsBaseUrlController.text = widget.controller.baseUrl;
+    widget.controller.callListenable.addListener(_handleIncomingCallSignal);
     _regeneratePassword();
   }
 
@@ -221,12 +229,47 @@ class _VaultScreenState extends State<VaultScreen> {
 
   @override
   void dispose() {
+    widget.controller.callListenable.removeListener(_handleIncomingCallSignal);
     _itemSearchController.dispose();
     _fileFolderCreateController.dispose();
     _fileSearchController.dispose();
     _friendSearchController.dispose();
     _settingsBaseUrlController.dispose();
     super.dispose();
+  }
+
+  void _handleIncomingCallSignal() {
+    final signal = widget.controller.lastCallSignal;
+    if (signal == null || signal.action != 'invite' || signal.callId.isEmpty) {
+      return;
+    }
+    final key = '${signal.friendId}:${signal.callId}';
+    if (_handledIncomingCallIds.contains(key)) {
+      return;
+    }
+    _handledIncomingCallIds.add(key);
+    final friend = widget.controller.friends
+        .where((entry) => entry.id == signal.friendId)
+        .firstOrNull;
+    if (friend == null || !mounted) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          fullscreenDialog: true,
+          builder: (_) => _ChatCallPage(
+            controller: widget.controller,
+            friend: friend,
+            initialVideo: signal.media == 'video',
+            incomingCallId: signal.callId,
+          ),
+        ),
+      );
+    });
   }
 
   @override

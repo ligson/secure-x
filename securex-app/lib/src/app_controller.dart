@@ -88,6 +88,7 @@ class AppController extends ChangeNotifier {
     _realtimeChatService.onPeerStatus = _handleRealtimePeerStatus;
     _realtimeChatService.onFriendshipUpdated = _handleRealtimeFriendshipUpdated;
     _realtimeChatService.onSignalingState = _handleRealtimeSignalingState;
+    _realtimeChatService.onCallSignal = _handleRealtimeCallSignal;
   }
 
   static const _baseUrlKey = 'baseUrl';
@@ -110,6 +111,7 @@ class AppController extends ChangeNotifier {
   final ValueNotifier<int> _appShellRevision = ValueNotifier(0);
   final ValueNotifier<int> _themeRevision = ValueNotifier(0);
   final ValueNotifier<int> _chatRevision = ValueNotifier(0);
+  final ValueNotifier<int> _callRevision = ValueNotifier(0);
   final ValueNotifier<int> _friendsRevision = ValueNotifier(0);
   final String _storageNamespace = _resolveStorageNamespace();
   final String _devDataDir = Platform.environment['SECUREX_DEV_DATA_DIR'] ?? '';
@@ -131,6 +133,7 @@ class AppController extends ChangeNotifier {
   List<FriendRequestRecord> _incomingFriendRequests = [];
   List<FriendRequestRecord> _outgoingFriendRequests = [];
   List<ChatConversation> _chatConversations = [];
+  RealtimeCallSignal? _lastCallSignal;
   ChatIdentityBundle? _chatIdentity;
   final Map<String, bool> _chatFriendOnline = {};
   final Set<String> _activeConversationIds = {};
@@ -185,7 +188,9 @@ class AppController extends ChangeNotifier {
   Listenable get appShellListenable => _appShellRevision;
   Listenable get themeListenable => _themeRevision;
   Listenable get chatListenable => _chatRevision;
+  Listenable get callListenable => _callRevision;
   Listenable get friendsListenable => _friendsRevision;
+  RealtimeCallSignal? get lastCallSignal => _lastCallSignal;
 
   String get devInstance => _storageNamespace;
 
@@ -220,6 +225,8 @@ class AppController extends ChangeNotifier {
   void _markThemeChanged() => _bumpRevision(_themeRevision);
 
   void _markChatChanged() => _bumpRevision(_chatRevision);
+
+  void _markCallChanged() => _bumpRevision(_callRevision);
 
   void _markFriendsChanged() => _bumpRevision(_friendsRevision);
 }
