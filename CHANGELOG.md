@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Documentation
+
+- 补充私有部署信息不得写入 tracked 文件的协作规则，并将具体服务器、路径和端口信息改为只允许记录在本机忽略文件中。
+- 将文档中的个人本机绝对路径改为仓库相对路径，并补充团队协作场景下禁止提交个人路径和敏感信息的规则。
+
 ## [v1.0.22] - 2026-05-29
 
 ### Fixed

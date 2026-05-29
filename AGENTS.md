@@ -99,6 +99,31 @@
   - 手机前后台切换、锁屏恢复、网络恢复后的实时强制重连、待发消息补发与历史同步
   - 本地聊天回归冒烟脚本 `securex-app/tool/chat_realtime_smoke.dart`，当前覆盖好友在线状态、单聊/群聊在线直推、多设备同步、设备离线恢复、整用户离线恢复和群解散清理
 
+## 生产发版与私有部署记忆
+
+- 当前最近已发版本：`v1.0.22`，release commit 为 `cf75dbc Release v1.0.22`
+- `v1.0.22` 已推送 `main` 与 tag，GitHub Release workflow 已全部成功
+- `v1.0.22` 主要修复 LiveKit 语音/视频通话稳定性：
+  - 通话信令固定走服务端 WebSocket 加密中继
+  - 发送通话信令前强制刷新实时连接
+  - LiveKit token identity 改为用户设备级身份，避免同账号多设备重复身份断开
+  - LiveKit 取凭证、入房、麦克风和摄像头启用增加超时和中文错误提示
+  - 语音通话页去掉重复通话时长显示
+- 禁止把私有服务器别名、公网 IP、SSH 端口、真实部署目录、生产端口、备份文件名、生产配置内容写入 tracked 文件或 Git 提交
+- 禁止把个人本机绝对路径写入 tracked 文件或 Git 提交，例如用户主目录、个人 workspace 路径、私有下载目录、临时排障路径等
+- 面向团队协作的文档、脚本和示例默认使用仓库相对路径；确实需要说明安装目录时，使用可替换占位符或明确标注为部署示例，不绑定某个开发者机器
+- 如需记录私有部署细节，只能写入 `.dev/private-deploy-notes.md` 这类已被 `.gitignore` 忽略的本地文件
+- 更新私有后端部署的通用流程：
+  - 本地先完成发版：更新 `CHANGELOG.md`，提交 release commit，运行 `./scripts/release-preflight.sh <tag>`，打 tag，先推 `main` 再推 tag
+  - 如需立即更新服务器，可按 GitHub Release workflow 同参数本地构建 `linux-amd64` 后端包，或等待 Release 产物
+  - 上传包到私有部署目录
+  - 远端进入部署目录后先执行生产停止脚本
+  - 替换前必须备份当前二进制
+  - 解包后复制新 `secure-x` 与生产脚本，保留真实生产配置、数据、日志和运行态目录
+  - 给新二进制和脚本补齐执行权限
+  - 执行生产启动脚本、状态脚本和健康检查完成验证
+- `v1.0.22` 已按上述流程在私有后端上线；具体服务器和路径信息见本机忽略文件，不写入 Git
+
 ## 本地测试账号记忆
 
 - 可用于本地联调的测试用户：
@@ -134,7 +159,7 @@
 - 我调试启动、停止、重启前后端或多前端实例时，必须和用户完全使用同一套项目脚本，不允许绕过脚本直接运行底层启动命令
 - 我需要联调时必须先检查用户是否已经通过脚本启动了可用实例；如果已有可用后端或前端实例，优先复用用户当前实例，不随意再启动新进程
 - 只有实例缺失、健康检查失败、进程异常，或明确需要额外多用户隔离前端实例时，才通过同一套脚本启动新的实例
-- 本地联调默认只操作仓库脚本启动的调试实例，不要影响用户安装在 `/Applications/secure-x.app` 的安装版应用；除非用户明确要求排查安装版，否则不要登录、关闭、点击或向安装版注入测试数据
+- 本地联调默认只操作仓库脚本启动的调试实例，不要影响用户系统中已安装的 `secure-x` 安装版应用；除非用户明确要求排查安装版，否则不要登录、关闭、点击或向安装版注入测试数据
 - 后端单独启动/停止使用 `./scripts/start-dev-be.sh` 与 `./scripts/stop-dev-be.sh`
 - 前端单独启动/停止使用 `./scripts/start-dev-app.sh` 与 `./scripts/stop-dev-app.sh`
 - 同时启动/停止使用 `./scripts/start-dev-all.sh` 与 `./scripts/stop-dev-all.sh`
@@ -217,15 +242,15 @@
 
 ## 当前文档清单
 
-- [README.md](/Users/ligson/workspace/work-org/github/secure-x/README.md)
-- [doc/README.md](/Users/ligson/workspace/work-org/github/secure-x/doc/README.md)
-- [doc/01-product-overview.md](/Users/ligson/workspace/work-org/github/secure-x/doc/01-product-overview.md)
-- [doc/02-architecture.md](/Users/ligson/workspace/work-org/github/secure-x/doc/02-architecture.md)
-- [doc/03-crypto-storage.md](/Users/ligson/workspace/work-org/github/secure-x/doc/03-crypto-storage.md)
-- [doc/04-roadmap.md](/Users/ligson/workspace/work-org/github/secure-x/doc/04-roadmap.md)
-- [doc/05-open-questions.md](/Users/ligson/workspace/work-org/github/secure-x/doc/05-open-questions.md)
-- [doc/06-release.md](/Users/ligson/workspace/work-org/github/secure-x/doc/06-release.md)
-- [CHANGELOG.md](/Users/ligson/workspace/work-org/github/secure-x/CHANGELOG.md)
+- [README.md](README.md)
+- [doc/README.md](doc/README.md)
+- [doc/01-product-overview.md](doc/01-product-overview.md)
+- [doc/02-architecture.md](doc/02-architecture.md)
+- [doc/03-crypto-storage.md](doc/03-crypto-storage.md)
+- [doc/04-roadmap.md](doc/04-roadmap.md)
+- [doc/05-open-questions.md](doc/05-open-questions.md)
+- [doc/06-release.md](doc/06-release.md)
+- [CHANGELOG.md](CHANGELOG.md)
 
 ## 待确认事项
 

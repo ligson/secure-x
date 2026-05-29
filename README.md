@@ -98,15 +98,15 @@ Secure X 是一个面向个人与小团队的安全敏感信息存储维护系�
 
 ## 文档导航
 
-- 方案总览：[doc/README.md](/Users/ligson/workspace/work-org/github/secure-x/doc/README.md)
-- 产品需求：[doc/01-product-overview.md](/Users/ligson/workspace/work-org/github/secure-x/doc/01-product-overview.md)
-- 架构设计：[doc/02-architecture.md](/Users/ligson/workspace/work-org/github/secure-x/doc/02-architecture.md)
-- 加密与存储设计：[doc/03-crypto-storage.md](/Users/ligson/workspace/work-org/github/secure-x/doc/03-crypto-storage.md)
-- 迭代计划：[doc/04-roadmap.md](/Users/ligson/workspace/work-org/github/secure-x/doc/04-roadmap.md)
-- 待确认决策：[doc/05-open-questions.md](/Users/ligson/workspace/work-org/github/secure-x/doc/05-open-questions.md)
-- 发布打包：[doc/06-release.md](/Users/ligson/workspace/work-org/github/secure-x/doc/06-release.md)
-- 协作记忆：[AGENTS.md](/Users/ligson/workspace/work-org/github/secure-x/AGENTS.md)
-- 变更记录：[CHANGELOG.md](/Users/ligson/workspace/work-org/github/secure-x/CHANGELOG.md)
+- 方案总览：[doc/README.md](doc/README.md)
+- 产品需求：[doc/01-product-overview.md](doc/01-product-overview.md)
+- 架构设计：[doc/02-architecture.md](doc/02-architecture.md)
+- 加密与存储设计：[doc/03-crypto-storage.md](doc/03-crypto-storage.md)
+- 迭代计划：[doc/04-roadmap.md](doc/04-roadmap.md)
+- 待确认决策：[doc/05-open-questions.md](doc/05-open-questions.md)
+- 发布打包：[doc/06-release.md](doc/06-release.md)
+- 协作记忆：[AGENTS.md](AGENTS.md)
+- 变更记录：[CHANGELOG.md](CHANGELOG.md)
 
 ## 发布打包
 
@@ -188,4 +188,4 @@ flutter run -d macos
 
 - 项目内每次改动都需要同步更新 `CHANGELOG.md`
 - 重要设计决策优先写入 `doc/` 再进入实现
-- 仓库级协作规范以 [AGENTS.md](/Users/ligson/workspace/work-org/github/secure-x/AGENTS.md) 为准
+- 仓库级协作规范以 [AGENTS.md](AGENTS.md) 为准
