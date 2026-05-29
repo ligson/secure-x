@@ -761,7 +761,7 @@ extension AppControllerChatActions on AppController {
     required String media,
     Map<String, dynamic> payload = const {},
   }) async {
-    await _ensureRealtimeChatConnected();
+    await _ensureRealtimeChatConnected(forceReconnect: true);
     if (_realtimeConfig?.signalingEnabled != true) {
       _statusMessage = '实时通道暂未建立，无法发起通话。';
       notifyListeners();
@@ -795,12 +795,19 @@ extension AppControllerChatActions on AppController {
       return null;
     }
     try {
+      final identity = await _ensureChatIdentity(registerOnServer: true);
+      if (identity == null) {
+        _statusMessage = '通话设备初始化失败，请重新登录后再试。';
+        notifyListeners();
+        return null;
+      }
       final credential = await _apiClient.createLiveKitCallToken(
         baseUrl: _baseUrl,
         token: token,
         peerUserId: friend.id,
         callId: callId,
         media: media,
+        deviceId: identity.deviceId,
       );
       if (credential.url.isEmpty || credential.token.isEmpty) {
         _statusMessage = '音视频通话服务暂未配置。';

@@ -1037,11 +1037,17 @@ class ApiClient {
     required String peerUserId,
     required String callId,
     required String media,
+    required String deviceId,
   }) async {
     final data = _unwrapMap(
       await _dio.post<Map<String, dynamic>>(
         '$baseUrl/api/v1/calls/livekit-token',
-        data: {'peerUserId': peerUserId, 'callId': callId, 'media': media},
+        data: {
+          'peerUserId': peerUserId,
+          'callId': callId,
+          'media': media,
+          'deviceId': deviceId,
+        },
         options: _authorized(token),
       ),
     );

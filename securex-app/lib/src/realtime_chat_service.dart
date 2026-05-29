@@ -457,14 +457,8 @@ class RealtimeChatService {
       'controlId': DateTime.now().microsecondsSinceEpoch.toString(),
       'cipherText': cipherText,
     };
-    if (_preferWebRTC && peer.ready) {
-      await peer.channel!.send(
-        RTCDataChannelMessage(
-          jsonEncode({'type': 'call-signal', ...encryptedPayload}),
-        ),
-      );
-      return true;
-    }
+    // 通话信令必须稳定可达。媒体链路已切换到 LiveKit 后，这里固定走
+    // WebSocket 加密中继，避免旧 WebRTC DataChannel 状态影响接听/挂断。
     _sendSignal(friend.id, 'relay-call-signal', encryptedPayload);
     return true;
   }

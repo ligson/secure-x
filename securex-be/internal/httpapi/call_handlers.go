@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 	"regexp"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/ligson/secure-x/securex-be/internal/middleware"
+	"github.com/ligson/secure-x/securex-be/internal/model"
 )
 
 var liveKitRoomNamePattern = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
@@ -36,8 +38,14 @@ func (h *Handler) createLiveKitCallToken(c *gin.Context) {
 		return
 	}
 
+	identity, err := h.liveKitParticipantIdentity(userID, req.DeviceID)
+	if err != nil {
+		RespondFailure(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	roomName := liveKitRoomName(userID, peerUserID, req.CallID)
-	token, err := h.issueLiveKitToken(userID, roomName)
+	token, err := h.issueLiveKitToken(identity, roomName)
 	if err != nil {
 		RespondFailure(c, http.StatusInternalServerError, "生成通话凭证失败")
 		return
@@ -48,6 +56,7 @@ func (h *Handler) createLiveKitCallToken(c *gin.Context) {
 			"url":       strings.TrimSpace(h.realtime.LiveKit.URL),
 			"token":     token,
 			"room":      roomName,
+			"identity":  identity,
 			"turnMode":  strings.TrimSpace(h.realtime.LiveKit.TurnMode),
 			"media":     normalizeCallMedia(req.Media),
 			"expiresIn": 2 * 60 * 60,
@@ -55,11 +64,32 @@ func (h *Handler) createLiveKitCallToken(c *gin.Context) {
 	})
 }
 
-func (h *Handler) issueLiveKitToken(userID string, roomName string) (string, error) {
+func (h *Handler) liveKitParticipantIdentity(userID string, deviceID string) (string, error) {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return userID, nil
+	}
+	var count int64
+	if err := h.db.Model(&model.ChatDevice{}).
+		Where("id = ? AND user_id = ?", deviceID, userID).
+		Count(&count).Error; err != nil {
+		return "", err
+	}
+	if count == 0 {
+		return "", errors.New("通话设备未注册，请重新登录后再试")
+	}
+	identity := liveKitRoomNamePattern.ReplaceAllString(userID+"_"+deviceID, "-")
+	if identity == "" {
+		return userID, nil
+	}
+	return identity, nil
+}
+
+func (h *Handler) issueLiveKitToken(identity string, roomName string) (string, error) {
 	now := time.Now()
 	claims := jwt.MapClaims{
 		"iss": h.realtime.LiveKit.APIKey,
-		"sub": userID,
+		"sub": identity,
 		"nbf": now.Unix(),
 		"exp": now.Add(2 * time.Hour).Unix(),
 		"video": map[string]any{

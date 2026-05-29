@@ -148,6 +148,7 @@ type liveKitCallTokenRequest struct {
 	PeerUserID string `json:"peerUserId" binding:"required"`
 	CallID     string `json:"callId" binding:"required"`
 	Media      string `json:"media"`
+	DeviceID   string `json:"deviceId"`
 }
 
 func bindErrorMessage(err error) string {

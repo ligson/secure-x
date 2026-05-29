@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.22] - 2026-05-29
+
+### Fixed
+
+- 修复通话页语音通话时长在顶部和中间重复显示的问题。
+- 通话控制信令固定走服务端 WebSocket 加密中继，并在发送前强制刷新实时连接，避免旧 WebRTC DataChannel 状态导致接听、挂断等信令丢失。
+- LiveKit 通话接入、取凭证、开启麦克风和摄像头增加超时保护与更明确的中文断开原因，降低移动端长时间卡在“正在获取通话凭证”或系统判定无响应的概率。
+- LiveKit 入房身份改为用户设备级身份，避免同一账号多设备在线时被 LiveKit 判定为重复身份并断开通话。
+
+### Verified
+
+- `securex-be`: `go test ./...`
+- `securex-app`: `flutter analyze`
+- `securex-app`: `flutter test`
+
 ## [v1.0.21] - 2026-05-29
 
 ### Fixed

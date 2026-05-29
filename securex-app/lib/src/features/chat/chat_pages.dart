@@ -2994,17 +2994,19 @@ class _ChatCallPageState extends State<_ChatCallPage> {
     _joiningLiveKit = true;
     _setNotice('正在获取通话凭证...');
     try {
-      final credential = await widget.controller.createLiveKitCallToken(
-        friend: widget.friend,
-        callId: _callId,
-        media: _media,
-      );
+      final credential = await widget.controller
+          .createLiveKitCallToken(
+            friend: widget.friend,
+            callId: _callId,
+            media: _media,
+          )
+          .timeout(const Duration(seconds: 10));
       if (credential == null || credential.url.isEmpty) {
         _setNotice('音视频通话服务暂不可用。');
         return;
       }
       final room = lk.Room(
-        roomOptions: const lk.RoomOptions(adaptiveStream: true, dynacast: true),
+        roomOptions: const lk.RoomOptions(adaptiveStream: false),
       );
       final listener = room.createListener()
         ..on<lk.RoomConnectedEvent>((_) {
@@ -3025,14 +3027,14 @@ class _ChatCallPageState extends State<_ChatCallPage> {
         ..on<lk.RoomReconnectedEvent>((_) {
           _setNotice('通话中');
         })
-        ..on<lk.RoomDisconnectedEvent>((_) {
-          _logLiveKitSnapshot('房间已断开');
+        ..on<lk.RoomDisconnectedEvent>((event) {
+          _logLiveKitSnapshot('房间已断开：${event.reason?.name ?? 'unknown'}');
           if (!mounted || _ended) {
             return;
           }
           setState(() {
             _liveKitConnected = false;
-            _notice = '通话连接已断开。';
+            _notice = _disconnectNotice(event.reason);
           });
         })
         ..on<lk.ParticipantConnectedEvent>((_) {
@@ -3093,30 +3095,70 @@ class _ChatCallPageState extends State<_ChatCallPage> {
         });
       _room = room;
       _roomListener = listener;
-      await room.connect(
-        credential.url,
-        credential.token,
-        connectOptions: const lk.ConnectOptions(autoSubscribe: true),
-        fastConnectOptions: lk.FastConnectOptions(
-          microphone: const lk.TrackOption(enabled: true),
-          camera: lk.TrackOption(enabled: widget.initialVideo && _cameraOn),
-        ),
-      );
-      await room.setSpeakerOn(_speakerOn);
-      await room.startAudio();
-      await room.localParticipant?.setMicrophoneEnabled(_microphoneOn);
-      if (widget.initialVideo) {
-        await room.localParticipant?.setCameraEnabled(_cameraOn);
-      }
+      await room
+          .connect(
+            credential.url,
+            credential.token,
+            connectOptions: const lk.ConnectOptions(autoSubscribe: true),
+          )
+          .timeout(const Duration(seconds: 15));
+      await _enableLiveKitLocalMedia(room);
       _logLiveKitSnapshot('本地媒体已启用');
       _refreshCallTracks(notice: '通话中');
       _scheduleMediaDiagnostics();
+    } on TimeoutException catch (error) {
+      appLog('LiveKit 通话接入超时', error);
+      _setNotice('通话接入超时，请检查网络、音视频服务或稍后重试。');
     } catch (error) {
       appLog('LiveKit 通话接入失败', error);
       _setNotice('通话接入失败，请检查音视频服务、网络或设备权限。');
     } finally {
       _joiningLiveKit = false;
     }
+  }
+
+  Future<void> _enableLiveKitLocalMedia(lk.Room room) async {
+    try {
+      await room.setSpeakerOn(_speakerOn).timeout(const Duration(seconds: 3));
+    } catch (error) {
+      appLog('设置通话扬声器失败', error);
+    }
+    try {
+      await room.startAudio().timeout(const Duration(seconds: 3));
+    } catch (error) {
+      appLog('启动通话音频播放失败', error);
+    }
+    try {
+      await room.localParticipant
+          ?.setMicrophoneEnabled(_microphoneOn)
+          .timeout(const Duration(seconds: 8));
+    } catch (error) {
+      appLog('开启通话麦克风失败', error);
+      _setNotice('麦克风开启失败，请检查系统权限。');
+    }
+    if (!widget.initialVideo) {
+      return;
+    }
+    try {
+      await room.localParticipant
+          ?.setCameraEnabled(_cameraOn)
+          .timeout(const Duration(seconds: 10));
+    } catch (error) {
+      appLog('开启通话摄像头失败', error);
+      setState(() => _cameraOn = false);
+      _setNotice('摄像头开启失败，请检查权限或稍后重试。');
+    }
+  }
+
+  String _disconnectNotice(lk.DisconnectReason? reason) {
+    return switch (reason) {
+      lk.DisconnectReason.duplicateIdentity => '通话连接已断开：同一账号已有设备进入该通话。',
+      lk.DisconnectReason.joinFailure => '通话连接失败：进入音视频房间失败。',
+      lk.DisconnectReason.signalingConnectionFailure => '通话连接已断开：音视频信令网络异常。',
+      lk.DisconnectReason.reconnectAttemptsExceeded => '通话连接已断开：网络重连失败。',
+      lk.DisconnectReason.serverShutdown => '通话连接已断开：音视频服务重启或关闭。',
+      _ => '通话连接已断开。',
+    };
   }
 
   Future<void> _disconnectLiveKit() async {
@@ -3441,19 +3483,6 @@ class _ChatCallPageState extends State<_ChatCallPage> {
                             : Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  if (durationText.isNotEmpty) ...[
-                                    Text(
-                                      durationText,
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .headlineMedium
-                                          ?.copyWith(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                    ),
-                                    const SizedBox(height: 22),
-                                  ],
                                   _CallAvatar(friend: widget.friend),
                                   const SizedBox(height: 18),
                                   Text(
