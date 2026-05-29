@@ -2820,6 +2820,9 @@ class _ChatCallPageState extends State<_ChatCallPage> {
   bool _liveKitConnected = false;
   bool _joiningLiveKit = false;
   bool _ended = false;
+  bool _showLocalVideoAsMain = false;
+  DateTime? _connectedAt;
+  Timer? _callTimer;
   String _notice = '正在准备通话...';
 
   bool get _isIncoming => widget.incomingCallId != null;
@@ -2839,6 +2842,7 @@ class _ChatCallPageState extends State<_ChatCallPage> {
 
   @override
   void dispose() {
+    _callTimer?.cancel();
     widget.controller.callListenable.removeListener(_handleCallSignal);
     unawaited(_endCall(sendAction: _accepted ? 'end' : 'cancel'));
     super.dispose();
@@ -3007,10 +3011,13 @@ class _ChatCallPageState extends State<_ChatCallPage> {
           if (!mounted) {
             return;
           }
+          _logLiveKitSnapshot('房间已连接');
           setState(() {
             _liveKitConnected = true;
+            _connectedAt ??= DateTime.now();
             _notice = '通话中';
           });
+          _startCallTimer();
         })
         ..on<lk.RoomReconnectingEvent>((_) {
           _setNotice('通话网络不稳定，正在自动重连...');
@@ -3019,6 +3026,7 @@ class _ChatCallPageState extends State<_ChatCallPage> {
           _setNotice('通话中');
         })
         ..on<lk.RoomDisconnectedEvent>((_) {
+          _logLiveKitSnapshot('房间已断开');
           if (!mounted || _ended) {
             return;
           }
@@ -3027,28 +3035,82 @@ class _ChatCallPageState extends State<_ChatCallPage> {
             _notice = '通话连接已断开。';
           });
         })
-        ..on<lk.ParticipantConnectedEvent>((_) => _refreshCallTracks())
-        ..on<lk.ParticipantDisconnectedEvent>((_) => _refreshCallTracks())
-        ..on<lk.TrackSubscribedEvent>((_) => _refreshCallTracks())
-        ..on<lk.TrackUnsubscribedEvent>((_) => _refreshCallTracks())
-        ..on<lk.TrackMutedEvent>((_) => _refreshCallTracks())
-        ..on<lk.TrackUnmutedEvent>((_) => _refreshCallTracks());
+        ..on<lk.ParticipantConnectedEvent>((_) {
+          _logLiveKitSnapshot('远端用户进入房间');
+          _refreshCallTracks();
+        })
+        ..on<lk.ParticipantDisconnectedEvent>((_) {
+          _logLiveKitSnapshot('远端用户离开房间');
+          _refreshCallTracks();
+        })
+        ..on<lk.TrackPublishedEvent>((event) {
+          _logLiveKitSnapshot('远端发布轨道：${event.publication.kind.name}');
+          _refreshCallTracks();
+        })
+        ..on<lk.TrackUnpublishedEvent>((event) {
+          _logLiveKitSnapshot('远端取消轨道：${event.publication.kind.name}');
+          _refreshCallTracks();
+        })
+        ..on<lk.LocalTrackPublishedEvent>((event) {
+          _logLiveKitSnapshot('本地发布轨道：${event.publication.kind.name}');
+          _refreshCallTracks();
+        })
+        ..on<lk.LocalTrackUnpublishedEvent>((event) {
+          _logLiveKitSnapshot('本地取消轨道：${event.publication.kind.name}');
+          _refreshCallTracks();
+        })
+        ..on<lk.TrackSubscribedEvent>((event) {
+          _logLiveKitSnapshot('已订阅远端轨道：${event.publication.kind.name}');
+          _refreshCallTracks();
+        })
+        ..on<lk.TrackSubscriptionExceptionEvent>((event) {
+          appLog(
+            'LiveKit 订阅远端轨道失败：sid=${event.sid ?? '-'}, reason=${event.reason.name}',
+          );
+          _setNotice('订阅对方音视频失败，请检查网络或稍后重试。');
+        })
+        ..on<lk.TrackUnsubscribedEvent>((event) {
+          _logLiveKitSnapshot('已取消订阅远端轨道：${event.publication.kind.name}');
+          _refreshCallTracks();
+        })
+        ..on<lk.TrackMutedEvent>((event) {
+          _logLiveKitSnapshot('轨道已静音：${event.publication.kind.name}');
+          _refreshCallTracks();
+        })
+        ..on<lk.TrackUnmutedEvent>((event) {
+          _logLiveKitSnapshot('轨道已恢复：${event.publication.kind.name}');
+          _refreshCallTracks();
+        })
+        ..on<lk.ActiveSpeakersChangedEvent>((event) {
+          if (event.speakers.isNotEmpty) {
+            _refreshCallTracks();
+          }
+        })
+        ..on<lk.AudioPlaybackStatusChanged>((event) {
+          if (!event.isPlaying) {
+            _setNotice('音频播放被系统暂停，请点击扬声器重新开启。');
+          }
+        });
       _room = room;
       _roomListener = listener;
       await room.connect(
         credential.url,
         credential.token,
+        connectOptions: const lk.ConnectOptions(autoSubscribe: true),
         fastConnectOptions: lk.FastConnectOptions(
           microphone: const lk.TrackOption(enabled: true),
           camera: lk.TrackOption(enabled: widget.initialVideo && _cameraOn),
         ),
       );
       await room.setSpeakerOn(_speakerOn);
+      await room.startAudio();
       await room.localParticipant?.setMicrophoneEnabled(_microphoneOn);
       if (widget.initialVideo) {
         await room.localParticipant?.setCameraEnabled(_cameraOn);
       }
+      _logLiveKitSnapshot('本地媒体已启用');
       _refreshCallTracks(notice: '通话中');
+      _scheduleMediaDiagnostics();
     } catch (error) {
       appLog('LiveKit 通话接入失败', error);
       _setNotice('通话接入失败，请检查音视频服务、网络或设备权限。');
@@ -3070,6 +3132,32 @@ class _ChatCallPageState extends State<_ChatCallPage> {
       await room.dispose();
     }
     _liveKitConnected = false;
+    _connectedAt = null;
+    _callTimer?.cancel();
+    _callTimer = null;
+  }
+
+  void _startCallTimer() {
+    _callTimer ??= Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted && _connectedAt != null && !_ended) {
+        setState(() {});
+      }
+    });
+  }
+
+  String _callDurationText() {
+    final startedAt = _connectedAt;
+    if (startedAt == null) {
+      return '';
+    }
+    final elapsed = DateTime.now().difference(startedAt);
+    final hours = elapsed.inHours;
+    final minutes = elapsed.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = elapsed.inSeconds.remainder(60).toString().padLeft(2, '0');
+    if (hours > 0) {
+      return '$hours:$minutes:$seconds';
+    }
+    return '$minutes:$seconds';
   }
 
   void _refreshCallTracks({String? notice}) {
@@ -3079,8 +3167,112 @@ class _ChatCallPageState extends State<_ChatCallPage> {
     setState(() {
       if (notice != null) {
         _notice = notice;
+      } else if (_liveKitConnected && !_ended) {
+        final mediaNotice = _liveKitMediaNotice();
+        if (mediaNotice.isNotEmpty) {
+          _notice = mediaNotice;
+        }
       }
     });
+  }
+
+  void _scheduleMediaDiagnostics() {
+    for (final delay in const [
+      Duration(milliseconds: 800),
+      Duration(seconds: 3),
+      Duration(seconds: 8),
+    ]) {
+      unawaited(
+        Future<void>.delayed(delay, () {
+          if (!mounted || _ended) {
+            return;
+          }
+          _logLiveKitSnapshot('媒体诊断 ${delay.inMilliseconds}ms');
+          _refreshCallTracks();
+        }),
+      );
+    }
+  }
+
+  String _liveKitMediaNotice() {
+    final room = _room;
+    if (room == null || !_liveKitConnected) {
+      return '';
+    }
+    if (room.remoteParticipants.isEmpty) {
+      return '已接通，等待对方进入通话...';
+    }
+    final remoteAudio = _hasRemoteAudioTrack();
+    final remoteVideo = _remoteVideoTrack();
+    if (!remoteAudio) {
+      return '已接通，等待对方麦克风音频...';
+    }
+    if (widget.initialVideo && remoteVideo == null) {
+      return '已接通，等待对方视频画面...';
+    }
+    return '通话中';
+  }
+
+  bool _hasRemoteAudioTrack() {
+    final room = _room;
+    if (room == null) {
+      return false;
+    }
+    for (final participant in room.remoteParticipants.values) {
+      for (final publication in participant.audioTrackPublications) {
+        if (publication.subscribed &&
+            publication.track != null &&
+            !publication.muted) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  void _logLiveKitSnapshot(String reason) {
+    final room = _room;
+    if (room == null) {
+      appLog('LiveKit 通话状态：$reason，room=null');
+      return;
+    }
+    final remoteSummary = room.remoteParticipants.values
+        .map((participant) {
+          final audio = participant.audioTrackPublications
+              .map(
+                (publication) =>
+                    '${publication.kind.name}/sub=${publication.subscribed}/muted=${publication.muted}/track=${publication.track != null}',
+              )
+              .join('|');
+          final video = participant.videoTrackPublications
+              .map(
+                (publication) =>
+                    '${publication.kind.name}/sub=${publication.subscribed}/muted=${publication.muted}/track=${publication.track != null}',
+              )
+              .join('|');
+          return 'remote=${participant.identity}, audio=[$audio], video=[$video]';
+        })
+        .join('; ');
+    final local = room.localParticipant;
+    final localAudio =
+        local?.audioTrackPublications
+            .map(
+              (publication) =>
+                  '${publication.kind.name}/muted=${publication.muted}/track=${publication.track != null}',
+            )
+            .join('|') ??
+        '';
+    final localVideo =
+        local?.videoTrackPublications
+            .map(
+              (publication) =>
+                  '${publication.kind.name}/muted=${publication.muted}/track=${publication.track != null}',
+            )
+            .join('|') ??
+        '';
+    appLog(
+      'LiveKit 通话状态：$reason，connected=$_liveKitConnected，remoteCount=${room.remoteParticipants.length}，localAudio=[$localAudio]，localVideo=[$localVideo]，$remoteSummary',
+    );
   }
 
   Future<void> _toggleCamera() async {
@@ -3113,6 +3305,9 @@ class _ChatCallPageState extends State<_ChatCallPage> {
     setState(() => _speakerOn = enabled);
     try {
       await _room?.setSpeakerOn(enabled);
+      if (enabled) {
+        await _room?.startAudio();
+      }
     } catch (error) {
       appLog('切换扬声器失败', error);
       _setNotice('扬声器切换失败，请检查系统音频输出。');
@@ -3181,45 +3376,101 @@ class _ChatCallPageState extends State<_ChatCallPage> {
     final name = widget.friend.displayName.isEmpty
         ? widget.friend.username
         : widget.friend.displayName;
+    final remoteVideo = _remoteVideoTrack();
+    final localVideo = _localVideoTrack();
+    final hasVideoSurface =
+        widget.initialVideo && (remoteVideo != null || localVideo != null);
+    final durationText = _callDurationText();
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
         child: Stack(
           children: [
-            Positioned.fill(child: _buildCallBackground()),
+            Positioned.fill(
+              child: _buildCallBackground(
+                remoteVideo: remoteVideo,
+                localVideo: localVideo,
+              ),
+            ),
+            if (hasVideoSurface)
+              Positioned(
+                top: 74,
+                right: 18,
+                child: _buildVideoPreview(
+                  remoteVideo: remoteVideo,
+                  localVideo: localVideo,
+                ),
+              ),
             Positioned.fill(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(26, 18, 26, 34),
                 child: Column(
                   children: [
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: IconButton(
-                        icon: const Icon(Icons.picture_in_picture_alt_outlined),
-                        color: Colors.white,
-                        onPressed: () => Navigator.of(context).maybePop(),
+                    SizedBox(
+                      height: 52,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: IconButton(
+                              icon: const Icon(
+                                Icons.picture_in_picture_alt_outlined,
+                              ),
+                              color: Colors.white,
+                              onPressed: () => Navigator.of(context).maybePop(),
+                            ),
+                          ),
+                          if (durationText.isNotEmpty)
+                            Text(
+                              durationText,
+                              style: Theme.of(context).textTheme.headlineSmall
+                                  ?.copyWith(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 0.5,
+                                  ),
+                            ),
+                        ],
                       ),
                     ),
                     Expanded(
                       child: Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _CallAvatar(friend: widget.friend),
-                            const SizedBox(height: 18),
-                            Text(
-                              name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              textAlign: TextAlign.center,
-                              style: Theme.of(context).textTheme.displaySmall
-                                  ?.copyWith(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w500,
+                        child: hasVideoSurface
+                            ? const SizedBox.shrink()
+                            : Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (durationText.isNotEmpty) ...[
+                                    Text(
+                                      durationText,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .headlineMedium
+                                          ?.copyWith(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                    ),
+                                    const SizedBox(height: 22),
+                                  ],
+                                  _CallAvatar(friend: widget.friend),
+                                  const SizedBox(height: 18),
+                                  Text(
+                                    name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    textAlign: TextAlign.center,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .displaySmall
+                                        ?.copyWith(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w500,
+                                        ),
                                   ),
-                            ),
-                          ],
-                        ),
+                                ],
+                              ),
                       ),
                     ),
                     Padding(
@@ -3248,21 +3499,20 @@ class _ChatCallPageState extends State<_ChatCallPage> {
     );
   }
 
-  Widget _buildCallBackground() {
-    final remoteVideo = _remoteVideoTrack();
-    if (widget.initialVideo && remoteVideo != null) {
+  Widget _buildCallBackground({
+    required lk.VideoTrack? remoteVideo,
+    required lk.VideoTrack? localVideo,
+  }) {
+    final mainTrack = _showLocalVideoAsMain
+        ? localVideo ?? remoteVideo
+        : remoteVideo ?? localVideo;
+    if (widget.initialVideo && mainTrack != null) {
       return lk.VideoTrackRenderer(
-        remoteVideo,
+        mainTrack,
         fit: lk.VideoViewFit.cover,
-        mirrorMode: lk.VideoViewMirrorMode.off,
-      );
-    }
-    final localVideo = _localVideoTrack();
-    if (widget.initialVideo && _cameraOn && localVideo != null) {
-      return lk.VideoTrackRenderer(
-        localVideo,
-        fit: lk.VideoViewFit.cover,
-        mirrorMode: lk.VideoViewMirrorMode.mirror,
+        mirrorMode: identical(mainTrack, localVideo)
+            ? lk.VideoViewMirrorMode.mirror
+            : lk.VideoViewMirrorMode.off,
       );
     }
     return DecoratedBox(
@@ -3271,6 +3521,46 @@ class _ChatCallPageState extends State<_ChatCallPage> {
           center: const Alignment(0, -0.35),
           radius: 1.1,
           colors: [Colors.blueGrey.shade900.withAlpha(190), Colors.black],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVideoPreview({
+    required lk.VideoTrack? remoteVideo,
+    required lk.VideoTrack? localVideo,
+  }) {
+    final previewTrack = _showLocalVideoAsMain
+        ? remoteVideo ?? localVideo
+        : localVideo ?? remoteVideo;
+    if (previewTrack == null) {
+      return const SizedBox.shrink();
+    }
+    return GestureDetector(
+      onTap: () =>
+          setState(() => _showLocalVideoAsMain = !_showLocalVideoAsMain),
+      child: Container(
+        width: 116,
+        height: 164,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: Colors.black.withAlpha(120),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: Colors.white.withAlpha(90), width: 1),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withAlpha(90),
+              blurRadius: 24,
+              offset: const Offset(0, 12),
+            ),
+          ],
+        ),
+        child: lk.VideoTrackRenderer(
+          previewTrack,
+          fit: lk.VideoViewFit.cover,
+          mirrorMode: identical(previewTrack, localVideo)
+              ? lk.VideoViewMirrorMode.mirror
+              : lk.VideoViewMirrorMode.off,
         ),
       ),
     );

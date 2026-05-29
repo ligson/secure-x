@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.21] - 2026-05-29
+
+### Fixed
+
+- 通话接通后显式唤起 LiveKit 远端音频播放，降低移动端接通后无声音的概率。
+- 优化语音/视频通话界面：接通后显示通话时长；视频通话默认远端画面为主画面、本地画面为右上角小窗，小窗点击可切换主次画面。
+- 应用启动时显式初始化 LiveKit 底层 WebRTC 插件；通话页增加更多 LiveKit 轨道发布/订阅事件监听和中文诊断日志，远端或本地音视频轨道变化时立即刷新画面。
+
+### Verified
+
+- `securex-be`: `go test ./...`
+- `securex-app`: `flutter analyze`
+- `securex-app`: `flutter test`
+
 ## [v1.0.20] - 2026-05-29
 
 ### Fixed

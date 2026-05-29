@@ -42,8 +42,14 @@ part 'src/features/vault/file_editor_pages.dart';
 part 'src/features/vault/vault_drafts.dart';
 part 'src/widgets/common_widgets.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  try {
+    // LiveKit 要求在调用任何 SDK API 前初始化底层 WebRTC 插件。
+    await lk.LiveKitClient.initialize();
+  } catch (error) {
+    appLog('LiveKit 初始化失败，通话能力可能不可用', error);
+  }
   final controller = AppController(
     apiClient: ApiClient(),
     cryptoService: CryptoService(),
