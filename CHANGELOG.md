@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.19] - 2026-05-29
+
+### Fixed
+
+- 修复 `v1.0.18` 在 GitHub macOS/iOS runner 上因为 `connectivity_plus 7.1.1` 调用 `NWPath.isUltraConstrained` 导致 Swift 编译失败的问题，临时固定到 `connectivity_plus 6.1.5`，同时保留 `livekit_client 2.7.0` 与 `flutter_webrtc 1.4.0` 的 WebRTC SDK 兼容组合。
+
+### Verified
+
+- `securex-be`: `go test ./...`
+- `securex-app`: `flutter analyze`
+- `securex-app`: `flutter build macos --release --build-name 1.0.19 --build-number 10019`
+- `securex-app`: `flutter build ios --release --no-codesign --build-name 1.0.19 --build-number 10019` 已通过 CocoaPods 依赖解析；本机因未安装 iOS 26.5 SDK 停在 Xcode 目标平台检查
+
 ## [v1.0.18] - 2026-05-29
 
 ### Fixed
