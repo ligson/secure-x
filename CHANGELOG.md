@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.18] - 2026-05-29
+
+### Fixed
+
+- 修复 macOS/iOS Release 构建失败：升级 `livekit_client` 并将 `flutter_webrtc` 锁定到兼容版本，使 CocoaPods 解析到一致的 `WebRTC-SDK 144.7559.01`。
+- 修复 iOS Podfile 未显式声明平台版本导致的 CocoaPods 警告，明确使用 `platform :ios, '13.0'`。
+
+### Updated
+
+- GitHub Actions 官方 action 升级到 Node 24 版本，避免继续出现 `Node.js 20 actions are deprecated` 警告。
+- GitHub Actions Flutter action 固定到当前小版本，降低发版构建链路的不确定性。
+
+### Verified
+
+- `securex-be`: `go test ./...`
+- `securex-app`: `flutter analyze`
+- `securex-app`: `flutter build macos --release --build-name 1.0.18 --build-number 10018`
+- `securex-app`: `flutter build ios --release --no-codesign --build-name 1.0.18 --build-number 10018` 已通过 CocoaPods 依赖解析；本机因未安装 iOS 26.5 SDK 停在 Xcode 目标平台检查，GitHub macOS runner 会提供对应 SDK
+
 ## [v1.0.17] - 2026-05-29
 
 ### Fixed
