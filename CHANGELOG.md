@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.20] - 2026-05-29
+
+### Fixed
+
+- 修复 `v1.0.19` 在 GitHub iOS runner 上因为 `device_info_plus 12.4.0` 调用 `NSProcessInfo.isiOSAppOnVision` 导致 Xcode 16.4 编译失败的问题，固定到兼容当前 runner SDK 的 `device_info_plus 12.3.0`。
+
+### Verified
+
+- `securex-be`: `go test ./...`
+- `securex-app`: `flutter analyze`
+- `securex-app`: `flutter build macos --release --build-name 1.0.20 --build-number 10020`
+- `securex-app`: `flutter build ios --release --no-codesign --build-name 1.0.20 --build-number 10020` 已通过 CocoaPods 依赖解析；本机因未安装 iOS 26.5 SDK 停在 Xcode 目标平台检查
+
 ## [v1.0.19] - 2026-05-29
 
 ### Fixed
