@@ -3,6 +3,8 @@ package httpapi_test
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -118,6 +120,30 @@ func TestFriendRequestsRequireApprovalBeforeFriendship(t *testing.T) {
 			t.Fatalf("expected friendship pair %s -> %s", pair[0], pair[1])
 		}
 	}
+}
+
+func TestChatAttachmentDownloadRequiresAllowedUser(t *testing.T) {
+	router, tokens, db := newAccessControlRouter(t)
+	createTestUser(t, db, "user-a", "alice", "alice@example.com")
+	createTestUser(t, db, "user-b", "bob", "bob@example.com")
+	createTestUser(t, db, "user-c", "charlie", "charlie@example.com")
+	createTestFriendship(t, db, "user-a", "user-b")
+	tokenA := issueTestToken(t, tokens, "user-a")
+	tokenB := issueTestToken(t, tokens, "user-b")
+	tokenC := issueTestToken(t, tokens, "user-c")
+
+	attachmentID := uploadChatAttachmentForTest(t, router, tokenA, []string{"user-b"})
+	assertJSONStatus(t, router, http.MethodGet, "/api/v1/chat/attachments/"+attachmentID+"/download", tokenB, nil, http.StatusOK)
+	assertJSONStatus(t, router, http.MethodGet, "/api/v1/chat/attachments/"+attachmentID+"/download", tokenC, nil, http.StatusForbidden)
+}
+
+func TestChatAttachmentUploadRejectsUnrelatedRecipients(t *testing.T) {
+	router, tokens, db := newAccessControlRouter(t)
+	createTestUser(t, db, "user-a", "alice", "alice@example.com")
+	createTestUser(t, db, "user-c", "charlie", "charlie@example.com")
+	tokenA := issueTestToken(t, tokens, "user-a")
+
+	assertMultipartChatAttachmentStatus(t, router, tokenA, []string{"user-c"}, http.StatusForbidden)
 }
 
 func TestRealtimeConfigComesFromHTTP(t *testing.T) {
@@ -313,6 +339,14 @@ func newAccessControlRouterWithServerConfig(
 	t *testing.T,
 	serverConfig config.ServerConfig,
 ) (http.Handler, *auth.TokenManager, *gorm.DB) {
+	return newAccessControlRouterWithConfig(t, serverConfig, config.RealtimeConfig{})
+}
+
+func newAccessControlRouterWithConfig(
+	t *testing.T,
+	serverConfig config.ServerConfig,
+	realtimeConfig config.RealtimeConfig,
+) (http.Handler, *auth.TokenManager, *gorm.DB) {
 	t.Helper()
 
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "securex-test.db")), &gorm.Config{})
@@ -334,6 +368,7 @@ func newAccessControlRouterWithServerConfig(
 		&model.ChatArchive{},
 		&model.ChatDevice{},
 		&model.ChatQueuedEnvelope{},
+		&model.ChatAttachment{},
 	); err != nil {
 		t.Fatalf("migrate sqlite: %v", err)
 	}
@@ -343,7 +378,7 @@ func newAccessControlRouterWithServerConfig(
 		t.Fatalf("create file store: %v", err)
 	}
 	tokens := auth.NewTokenManager("test-secret")
-	router := httpapi.NewRouter(db, tokens, fileStore, serverConfig)
+	router := httpapi.NewRouter(db, tokens, fileStore, serverConfig, realtimeConfig)
 
 	return router, tokens, db
 }
@@ -398,6 +433,24 @@ func createTestGroup(t *testing.T, db *gorm.DB, groupID string, adminUserID stri
 	}
 }
 
+func createTestFriendship(t *testing.T, db *gorm.DB, userID string, friendID string) {
+	t.Helper()
+
+	pairs := [][2]string{{userID, friendID}, {friendID, userID}}
+	for _, pair := range pairs {
+		friendship := model.Friendship{
+			ID:        pair[0] + "-" + pair[1],
+			UserID:    pair[0],
+			FriendID:  pair[1],
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		if err := db.Create(&friendship).Error; err != nil {
+			t.Fatalf("create test friendship: %v", err)
+		}
+	}
+}
+
 func issueTestToken(t *testing.T, tokens *auth.TokenManager, userID string) string {
 	t.Helper()
 
@@ -433,6 +486,71 @@ func assertJSONStatus(
 	if response.Code != expectedStatus {
 		t.Fatalf("expected %d, got %d: %s", expectedStatus, response.Code, response.Body.String())
 	}
+}
+
+func uploadChatAttachmentForTest(
+	t *testing.T,
+	router http.Handler,
+	token string,
+	allowedUserIDs []string,
+) string {
+	t.Helper()
+
+	response := assertMultipartChatAttachmentStatus(t, router, token, allowedUserIDs, http.StatusOK)
+	var decoded struct {
+		Data struct {
+			Attachment struct {
+				ID string `json:"id"`
+			} `json:"attachment"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode upload response: %v", err)
+	}
+	if decoded.Data.Attachment.ID == "" {
+		t.Fatalf("upload response missing attachment id: %s", response.Body.String())
+	}
+	return decoded.Data.Attachment.ID
+}
+
+func assertMultipartChatAttachmentStatus(
+	t *testing.T,
+	router http.Handler,
+	token string,
+	allowedUserIDs []string,
+	expectedStatus int,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	metadata, err := json.Marshal(map[string]any{"allowedUserIds": allowedUserIDs})
+	if err != nil {
+		t.Fatalf("marshal metadata: %v", err)
+	}
+	if err := writer.WriteField("metadata", string(metadata)); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+	part, err := writer.CreateFormFile("cipher_file", "cipher.bin")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := io.Copy(part, bytes.NewReader([]byte("cipher-bytes"))); err != nil {
+		t.Fatalf("write form file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/chat/attachments", &body)
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != expectedStatus {
+		t.Fatalf("upload chat attachment expected %d, got %d: %s", expectedStatus, response.Code, response.Body.String())
+	}
+	return response
 }
 
 func writeTestFile(path string, content []byte) error {

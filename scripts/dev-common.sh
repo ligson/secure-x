@@ -71,6 +71,14 @@ logging:
   accessFile: "access.log"
 auth:
   jwtSecret: "${BACKEND_JWT_SECRET}"
+realtime:
+  iceServers: []
+  livekit:
+    enabled: false
+    url: ""
+    apiKey: ""
+    apiSecret: ""
+    turnMode: ""
 EOF
 }
 

@@ -48,6 +48,7 @@ func Open(databaseDSN string) (*gorm.DB, error) {
 		&model.ChatDevice{},
 		&model.ChatDeviceRecovery{},
 		&model.ChatQueuedEnvelope{},
+		&model.ChatAttachment{},
 	); err != nil {
 		return nil, err
 	}

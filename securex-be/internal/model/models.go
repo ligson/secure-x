@@ -179,3 +179,13 @@ type ChatQueuedEnvelope struct {
 	CreatedAt         time.Time `json:"createdAt"`
 	ExpiresAt         time.Time `gorm:"index:idx_chat_envelopes_recipient_device,priority:3;index:idx_chat_envelopes_recipient_sender,priority:4" json:"expiresAt"`
 }
+
+type ChatAttachment struct {
+	ID             string    `gorm:"primaryKey;size:36" json:"id"`
+	OwnerUserID    string    `gorm:"index;size:36;not null" json:"ownerUserId"`
+	AllowedUserIDs string    `gorm:"type:text;not null" json:"allowedUserIds"`
+	StoragePath    string    `gorm:"uniqueIndex;size:255;not null" json:"-"`
+	CipherSize     int64     `gorm:"not null" json:"cipherSize"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+}

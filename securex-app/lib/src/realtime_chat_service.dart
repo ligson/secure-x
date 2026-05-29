@@ -23,6 +23,8 @@ class RealtimeIncomingMessage {
     this.attachmentMimeType = '',
     this.attachmentSize = 0,
     this.attachmentDataBase64 = '',
+    this.attachmentObjectId = '',
+    this.attachmentKeyBase64 = '',
   });
 
   final String friendId;
@@ -38,6 +40,8 @@ class RealtimeIncomingMessage {
   final String attachmentMimeType;
   final int attachmentSize;
   final String attachmentDataBase64;
+  final String attachmentObjectId;
+  final String attachmentKeyBase64;
 }
 
 class RealtimeGroupControl {
@@ -316,28 +320,32 @@ class RealtimeChatService {
       return false;
     }
 
-    final cipherText = await _encryptText(message.text, peer.sessionKey!);
-    final payload = {
-      'messageId': message.id,
-      'chatKind': conversation?.isGroup == true ? 'group' : 'direct',
-      'groupId': conversation?.isGroup == true ? conversation!.id : '',
-      'groupName': conversation?.isGroup == true ? conversation!.title : '',
-      'groupAvatarPreset': conversation?.isGroup == true
-          ? conversation!.avatarPreset
-          : '',
-      'memberIds': conversation?.isGroup == true
-          ? [_userId, ...conversation!.members.map((member) => member.id)]
-          : const <String>[],
-      'adminUserId': conversation?.isGroup == true
-          ? conversation!.adminUserId
-          : '',
-      'attachmentType': message.attachmentType,
-      'attachmentName': message.attachmentName,
-      'attachmentMimeType': message.attachmentMimeType,
-      'attachmentSize': message.attachmentSize,
-      'attachmentDataBase64': message.attachmentDataBase64,
-      'cipherText': cipherText,
-    };
+    final cipherText = await _encryptText(
+      jsonEncode({
+        'text': message.text,
+        'chatKind': conversation?.isGroup == true ? 'group' : 'direct',
+        'groupId': conversation?.isGroup == true ? conversation!.id : '',
+        'groupName': conversation?.isGroup == true ? conversation!.title : '',
+        'groupAvatarPreset': conversation?.isGroup == true
+            ? conversation!.avatarPreset
+            : '',
+        'memberIds': conversation?.isGroup == true
+            ? [_userId, ...conversation!.members.map((member) => member.id)]
+            : const <String>[],
+        'adminUserId': conversation?.isGroup == true
+            ? conversation!.adminUserId
+            : '',
+        'attachmentType': message.attachmentType,
+        'attachmentName': message.attachmentName,
+        'attachmentMimeType': message.attachmentMimeType,
+        'attachmentSize': message.attachmentSize,
+        'attachmentDataBase64': message.attachmentDataBase64,
+        'attachmentObjectId': message.attachmentObjectId,
+        'attachmentKeyBase64': message.attachmentKeyBase64,
+      }),
+      peer.sessionKey!,
+    );
+    final payload = {'messageId': message.id, 'cipherText': cipherText};
     if (_preferWebRTC && peer.ready) {
       await peer.channel!.send(
         RTCDataChannelMessage(jsonEncode({'type': 'message', ...payload})),
@@ -432,7 +440,8 @@ class RealtimeChatService {
     if (!initiator && !peer.canSendSecurePayloads) {
       _sendSignal(friend.id, 'connect-request', {});
     }
-    if (!peer.canSendSecurePayloads || peer.sessionKey == null) {
+    final ready = await _waitForSecurePayloads(peer);
+    if (!ready) {
       return false;
     }
     final cipherText = await _encryptText(
@@ -477,7 +486,8 @@ class RealtimeChatService {
     Map<String, dynamic> payload,
   ) async {
     final peer = await _ensurePeer(from, initiator: false);
-    if (peer.sessionKey == null) {
+    final ready = await _waitForSecurePayloads(peer);
+    if (!ready) {
       return;
     }
     final clear = await _decryptText(
@@ -514,7 +524,8 @@ class RealtimeChatService {
     if (!initiator && !peer.canSendSecurePayloads) {
       _sendSignal(friend.id, 'connect-request', {});
     }
-    if (!peer.canSendSecurePayloads || peer.sessionKey == null) {
+    final ready = await _waitForSecurePayloads(peer);
+    if (!ready) {
       return false;
     }
 
@@ -731,6 +742,21 @@ class RealtimeChatService {
     return peer;
   }
 
+  Future<bool> _waitForSecurePayloads(_PeerSession peer) async {
+    if (peer.canSendSecurePayloads && peer.sessionKey != null) {
+      return true;
+    }
+    await _sendLocalKey(peer);
+    _sendSignal(peer.friendId, 'connect-request', {});
+    for (var index = 0; index < 40; index++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      if (peer.canSendSecurePayloads && peer.sessionKey != null) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   Future<void> _startOffer(_PeerSession peer) async {
     final connection = peer.connection;
     if (connection == null || peer.offerStarted) {
@@ -888,28 +914,31 @@ class RealtimeChatService {
     }
 
     final messageId = data['messageId'] as String? ?? '';
-    final text = await _decryptText(
+    final clear = await _decryptText(
       data['cipherText'] as String? ?? '',
       peer.sessionKey!,
     );
+    final payload = jsonDecode(clear) as Map<String, dynamic>;
     onMessage?.call(
       RealtimeIncomingMessage(
         friendId: peer.friendId,
         messageId: messageId,
-        text: text,
-        groupId: data['groupId'] as String? ?? '',
-        groupName: data['groupName'] as String? ?? '',
-        groupAvatarPreset: data['groupAvatarPreset'] as String? ?? '',
-        memberIds: (data['memberIds'] as List<dynamic>? ?? const [])
+        text: payload['text'] as String? ?? '',
+        groupId: payload['groupId'] as String? ?? '',
+        groupName: payload['groupName'] as String? ?? '',
+        groupAvatarPreset: payload['groupAvatarPreset'] as String? ?? '',
+        memberIds: (payload['memberIds'] as List<dynamic>? ?? const [])
             .map((entry) => entry.toString())
             .where((entry) => entry.isNotEmpty)
             .toList(),
-        adminUserId: data['adminUserId'] as String? ?? '',
-        attachmentType: data['attachmentType'] as String? ?? '',
-        attachmentName: data['attachmentName'] as String? ?? '',
-        attachmentMimeType: data['attachmentMimeType'] as String? ?? '',
-        attachmentSize: (data['attachmentSize'] as num?)?.toInt() ?? 0,
-        attachmentDataBase64: data['attachmentDataBase64'] as String? ?? '',
+        adminUserId: payload['adminUserId'] as String? ?? '',
+        attachmentType: payload['attachmentType'] as String? ?? '',
+        attachmentName: payload['attachmentName'] as String? ?? '',
+        attachmentMimeType: payload['attachmentMimeType'] as String? ?? '',
+        attachmentSize: (payload['attachmentSize'] as num?)?.toInt() ?? 0,
+        attachmentDataBase64: payload['attachmentDataBase64'] as String? ?? '',
+        attachmentObjectId: payload['attachmentObjectId'] as String? ?? '',
+        attachmentKeyBase64: payload['attachmentKeyBase64'] as String? ?? '',
       ),
     );
     await peer.channel?.send(
@@ -928,28 +957,31 @@ class RealtimeChatService {
       return;
     }
     final messageId = payload['messageId'] as String? ?? '';
-    final text = await _decryptText(
+    final clear = await _decryptText(
       payload['cipherText'] as String? ?? '',
       peer.sessionKey!,
     );
+    final data = jsonDecode(clear) as Map<String, dynamic>;
     onMessage?.call(
       RealtimeIncomingMessage(
         friendId: from,
         messageId: messageId,
-        text: text,
-        groupId: payload['groupId'] as String? ?? '',
-        groupName: payload['groupName'] as String? ?? '',
-        groupAvatarPreset: payload['groupAvatarPreset'] as String? ?? '',
-        memberIds: (payload['memberIds'] as List<dynamic>? ?? const [])
+        text: data['text'] as String? ?? '',
+        groupId: data['groupId'] as String? ?? '',
+        groupName: data['groupName'] as String? ?? '',
+        groupAvatarPreset: data['groupAvatarPreset'] as String? ?? '',
+        memberIds: (data['memberIds'] as List<dynamic>? ?? const [])
             .map((entry) => entry.toString())
             .where((entry) => entry.isNotEmpty)
             .toList(),
-        adminUserId: payload['adminUserId'] as String? ?? '',
-        attachmentType: payload['attachmentType'] as String? ?? '',
-        attachmentName: payload['attachmentName'] as String? ?? '',
-        attachmentMimeType: payload['attachmentMimeType'] as String? ?? '',
-        attachmentSize: (payload['attachmentSize'] as num?)?.toInt() ?? 0,
-        attachmentDataBase64: payload['attachmentDataBase64'] as String? ?? '',
+        adminUserId: data['adminUserId'] as String? ?? '',
+        attachmentType: data['attachmentType'] as String? ?? '',
+        attachmentName: data['attachmentName'] as String? ?? '',
+        attachmentMimeType: data['attachmentMimeType'] as String? ?? '',
+        attachmentSize: (data['attachmentSize'] as num?)?.toInt() ?? 0,
+        attachmentDataBase64: data['attachmentDataBase64'] as String? ?? '',
+        attachmentObjectId: data['attachmentObjectId'] as String? ?? '',
+        attachmentKeyBase64: data['attachmentKeyBase64'] as String? ?? '',
       ),
     );
     _sendSignal(from, 'relay-ack', {'messageId': messageId});

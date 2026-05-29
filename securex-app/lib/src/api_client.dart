@@ -437,6 +437,52 @@ class ApiClient {
     return Uint8List.fromList(base64Decode(data['cipherTextBase64'] as String));
   }
 
+  Future<Map<String, dynamic>> uploadChatAttachment({
+    required String baseUrl,
+    required String token,
+    required Uint8List cipherBytes,
+    required List<String> allowedUserIds,
+  }) async {
+    final formData = FormData.fromMap({
+      'metadata': jsonEncode({'allowedUserIds': allowedUserIds}),
+      'cipher_file': MultipartFile.fromBytes(
+        cipherBytes,
+        filename: 'chat-attachment.bin',
+      ),
+    });
+    final data = _unwrapMap(
+      await _dio.post<Map<String, dynamic>>(
+        '$baseUrl/api/v1/chat/attachments',
+        data: formData,
+        options: _authorized(token).copyWith(
+          sendTimeout: const Duration(seconds: 60),
+          receiveTimeout: const Duration(seconds: 60),
+        ),
+      ),
+    );
+    return data['attachment'] as Map<String, dynamic>? ?? <String, dynamic>{};
+  }
+
+  Future<Uint8List> downloadChatAttachment({
+    required String baseUrl,
+    required String token,
+    required String attachmentId,
+  }) async {
+    final data = _unwrapMap(
+      await _dio.get<Map<String, dynamic>>(
+        '$baseUrl/api/v1/chat/attachments/$attachmentId/download',
+        options: _authorized(
+          token,
+        ).copyWith(receiveTimeout: const Duration(seconds: 60)),
+      ),
+    );
+    final attachment =
+        data['attachment'] as Map<String, dynamic>? ?? <String, dynamic>{};
+    return Uint8List.fromList(
+      base64Decode(attachment['cipherTextBase64'] as String? ?? ''),
+    );
+  }
+
   Future<FriendListResponse> listFriends({
     required String baseUrl,
     required String token,
@@ -983,6 +1029,25 @@ class ApiClient {
     );
 
     return RealtimeConfig.fromJson(data);
+  }
+
+  Future<LiveKitCallToken> createLiveKitCallToken({
+    required String baseUrl,
+    required String token,
+    required String peerUserId,
+    required String callId,
+    required String media,
+  }) async {
+    final data = _unwrapMap(
+      await _dio.post<Map<String, dynamic>>(
+        '$baseUrl/api/v1/calls/livekit-token',
+        data: {'peerUserId': peerUserId, 'callId': callId, 'media': media},
+        options: _authorized(token),
+      ),
+    );
+    return LiveKitCallToken.fromJson(
+      data['livekit'] as Map<String, dynamic>? ?? const {},
+    );
   }
 
   Map<String, dynamic> _unwrapMap(Response<Map<String, dynamic>> response) {

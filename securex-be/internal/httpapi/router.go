@@ -17,6 +17,7 @@ type Handler struct {
 	fileStore   *storage.FileStore
 	realtimeHub *realtimeHub
 	server      config.ServerConfig
+	realtime    config.RealtimeConfig
 }
 
 func NewRouter(
@@ -24,6 +25,7 @@ func NewRouter(
 	tokens *auth.TokenManager,
 	fileStore *storage.FileStore,
 	server config.ServerConfig,
+	realtime config.RealtimeConfig,
 ) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 
@@ -32,6 +34,7 @@ func NewRouter(
 		tokens:    tokens,
 		fileStore: fileStore,
 		server:    server,
+		realtime:  realtime,
 	}
 	handler.realtimeHub = newRealtimeHub()
 
@@ -86,9 +89,12 @@ func NewRouter(
 		protected.GET("/chat/device-recovery", handler.getChatDeviceRecovery)
 		protected.PUT("/chat/device-recovery", handler.upsertChatDeviceRecovery)
 		protected.GET("/chat/users/:id/devices", handler.listUserChatDevices)
+		protected.POST("/chat/attachments", handler.uploadChatAttachment)
+		protected.GET("/chat/attachments/:id/download", handler.downloadChatAttachment)
 		protected.POST("/chat/messages", handler.dispatchChatMessages)
 		protected.GET("/chat/messages/pending", handler.listPendingChatMessages)
 		protected.POST("/chat/messages/ack", handler.ackChatMessages)
+		protected.POST("/calls/livekit-token", handler.createLiveKitCallToken)
 
 		protected.GET("/folders", handler.listFolders)
 		protected.POST("/folders", handler.createFolder)

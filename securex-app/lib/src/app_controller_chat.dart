@@ -554,7 +554,7 @@ extension AppControllerChatActions on AppController {
     if (!message.hasAttachment) {
       throw StateError('message has no attachment');
     }
-    final bytes = base64Decode(message.attachmentDataBase64);
+    final bytes = await loadChatAttachmentBytes(message);
     final directory = await getApplicationDocumentsDirectory();
     final folder = Directory('${directory.path}/secure-x-chat');
     await folder.create(recursive: true);
@@ -564,6 +564,77 @@ extension AppControllerChatActions on AppController {
     _statusMessage = '附件已保存到：${output.path}';
     notifyListeners();
     return output.path;
+  }
+
+  Future<Uint8List> loadChatAttachmentBytes(ChatMessage message) {
+    if (!message.hasAttachment) {
+      return Future<Uint8List>.error(StateError('message has no attachment'));
+    }
+    final cacheKey = _chatAttachmentCacheKey(message);
+    final cached = _chatAttachmentPlainBytesCache[cacheKey];
+    if (cached != null) {
+      return Future.value(cached);
+    }
+    return _chatAttachmentBytesCache.putIfAbsent(cacheKey, () async {
+      if (message.attachmentDataBase64.isNotEmpty) {
+        final bytes = Uint8List.fromList(
+          base64Decode(message.attachmentDataBase64),
+        );
+        _chatAttachmentPlainBytesCache[cacheKey] = bytes;
+        return bytes;
+      }
+      final token = _token;
+      if (token == null) {
+        throw StateError('not authenticated');
+      }
+      final cipherBytes = await _apiClient.downloadChatAttachment(
+        baseUrl: _baseUrl,
+        token: token,
+        attachmentId: message.attachmentObjectId,
+      );
+      final bytes = await _cryptoService.decryptBinary(
+        cipherBytes,
+        Uint8List.fromList(base64Decode(message.attachmentKeyBase64)),
+      );
+      _chatAttachmentPlainBytesCache[cacheKey] = bytes;
+      return bytes;
+    });
+  }
+
+  Uint8List? cachedChatAttachmentBytes(ChatMessage message) {
+    if (!message.hasAttachment) {
+      return null;
+    }
+    return _chatAttachmentPlainBytesCache[_chatAttachmentCacheKey(message)];
+  }
+
+  String _chatAttachmentCacheKey(ChatMessage message) {
+    return message.attachmentObjectId.isNotEmpty
+        ? 'remote:${message.attachmentObjectId}:${message.attachmentKeyBase64}'
+        : 'inline:${message.id}:${message.attachmentDataBase64.hashCode}';
+  }
+
+  Future<({String objectId, String keyBase64})?> _uploadChatAttachmentCipher({
+    required Uint8List bytes,
+    required List<String> allowedUserIds,
+  }) async {
+    final token = _token;
+    if (token == null) {
+      return null;
+    }
+    final key = _cryptoService.randomKey();
+    final cipherBytes = await _cryptoService.encryptBinary(bytes, key);
+    final attachment = await _apiClient.uploadChatAttachment(
+      baseUrl: _baseUrl,
+      token: token,
+      cipherBytes: cipherBytes,
+      allowedUserIds: _uniqueIds(allowedUserIds),
+    );
+    final objectId = attachment['id'] as String? ?? '';
+    if (objectId.isEmpty) {
+      return null;
+    }
+    return (objectId: objectId, keyBase64: base64Encode(key));
   }
 
   Future<void> sendLocalChatMessage({
@@ -632,6 +703,17 @@ extension AppControllerChatActions on AppController {
       return;
     }
     await _ensureChatConversationLoaded(friend.id);
+    _statusMessage = '正在加密上传聊天附件...';
+    notifyListeners();
+    final uploaded = await _uploadChatAttachmentCipher(
+      bytes: bytes,
+      allowedUserIds: [friend.id],
+    );
+    if (uploaded == null) {
+      _statusMessage = '聊天附件上传失败，请稍后重试。';
+      notifyListeners();
+      return;
+    }
 
     final safeName = _safeChatAttachmentName(name, image: image);
     final label = _chatAttachmentLabel(type);
@@ -648,7 +730,8 @@ extension AppControllerChatActions on AppController {
       attachmentName: safeName,
       attachmentMimeType: _safeChatMimeType(mimeType, image: image),
       attachmentSize: bytes.length,
-      attachmentDataBase64: base64Encode(bytes),
+      attachmentObjectId: uploaded.objectId,
+      attachmentKeyBase64: uploaded.keyBase64,
     );
     _replaceConversationMessages(friend, (messages) => [...messages, message]);
     notifyListeners();
@@ -698,6 +781,39 @@ extension AppControllerChatActions on AppController {
         : '通话信令发送失败，请确认好友在线。';
     notifyListeners();
     return ok;
+  }
+
+  Future<LiveKitCallToken?> createLiveKitCallToken({
+    required PublicUser friend,
+    required String callId,
+    required String media,
+  }) async {
+    final token = _token;
+    if (token == null) {
+      _statusMessage = '请先登录后再发起通话。';
+      notifyListeners();
+      return null;
+    }
+    try {
+      final credential = await _apiClient.createLiveKitCallToken(
+        baseUrl: _baseUrl,
+        token: token,
+        peerUserId: friend.id,
+        callId: callId,
+        media: media,
+      );
+      if (credential.url.isEmpty || credential.token.isEmpty) {
+        _statusMessage = '音视频通话服务暂未配置。';
+        notifyListeners();
+        return null;
+      }
+      return credential;
+    } catch (error) {
+      appLog('生成 LiveKit 通话凭证失败', error);
+      _statusMessage = '生成通话凭证失败，请稍后重试。';
+      notifyListeners();
+      return null;
+    }
   }
 
   void _handleRealtimeCallSignal(RealtimeCallSignal signal) {
@@ -803,6 +919,17 @@ extension AppControllerChatActions on AppController {
       notifyListeners();
       return;
     }
+    _statusMessage = '正在加密上传群聊附件...';
+    notifyListeners();
+    final uploaded = await _uploadChatAttachmentCipher(
+      bytes: bytes,
+      allowedUserIds: latest.members.map((member) => member.id).toList(),
+    );
+    if (uploaded == null) {
+      _statusMessage = '群聊附件上传失败，请稍后重试。';
+      notifyListeners();
+      return;
+    }
     final safeName = _safeChatAttachmentName(name, image: image);
     final label = _chatAttachmentLabel(type);
     final message = ChatMessage(
@@ -820,7 +947,8 @@ extension AppControllerChatActions on AppController {
       attachmentName: safeName,
       attachmentMimeType: _safeChatMimeType(mimeType, image: image),
       attachmentSize: bytes.length,
-      attachmentDataBase64: base64Encode(bytes),
+      attachmentObjectId: uploaded.objectId,
+      attachmentKeyBase64: uploaded.keyBase64,
     );
     _replaceConversationMessagesById(
       latest.id,
@@ -1239,6 +1367,8 @@ extension AppControllerChatActions on AppController {
         'attachmentMimeType': message.attachmentMimeType,
         'attachmentSize': message.attachmentSize,
         'attachmentDataBase64': message.attachmentDataBase64,
+        'attachmentObjectId': message.attachmentObjectId,
+        'attachmentKeyBase64': message.attachmentKeyBase64,
       },
     };
   }
@@ -1616,6 +1746,10 @@ extension AppControllerChatActions on AppController {
                 (decrypted.body['attachmentSize'] as num?)?.toInt() ?? 0,
             attachmentDataBase64:
                 decrypted.body['attachmentDataBase64'] as String? ?? '',
+            attachmentObjectId:
+                decrypted.body['attachmentObjectId'] as String? ?? '',
+            attachmentKeyBase64:
+                decrypted.body['attachmentKeyBase64'] as String? ?? '',
           ),
         );
         if (!handled) {
@@ -1656,6 +1790,10 @@ extension AppControllerChatActions on AppController {
                 (decrypted.body['attachmentSize'] as num?)?.toInt() ?? 0,
             attachmentDataBase64:
                 decrypted.body['attachmentDataBase64'] as String? ?? '',
+            attachmentObjectId:
+                decrypted.body['attachmentObjectId'] as String? ?? '',
+            attachmentKeyBase64:
+                decrypted.body['attachmentKeyBase64'] as String? ?? '',
           ),
         );
         if (!handled) {
@@ -1766,6 +1904,8 @@ extension AppControllerChatActions on AppController {
           attachmentMimeType: incoming.attachmentMimeType,
           attachmentSize: incoming.attachmentSize,
           attachmentDataBase64: incoming.attachmentDataBase64,
+          attachmentObjectId: incoming.attachmentObjectId,
+          attachmentKeyBase64: incoming.attachmentKeyBase64,
         ),
       ],
     );
@@ -1858,6 +1998,8 @@ extension AppControllerChatActions on AppController {
           attachmentMimeType: incoming.attachmentMimeType,
           attachmentSize: incoming.attachmentSize,
           attachmentDataBase64: incoming.attachmentDataBase64,
+          attachmentObjectId: incoming.attachmentObjectId,
+          attachmentKeyBase64: incoming.attachmentKeyBase64,
         ),
       ],
     );

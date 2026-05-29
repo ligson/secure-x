@@ -35,10 +35,31 @@ func (h *Handler) realtimeConfig(c *gin.Context) {
 		"transport":        "websocket_e2ee",
 		"signalingEnabled": true,
 		"signalingUrl":     scheme + "://" + host + prefix + "/api/v1/realtime/ws",
-		"iceServers":       []string{},
+		"iceServers":       h.realtime.ICEServers,
 		"relayMode":        "encrypted_websocket_primary",
 		"messageStorage":   "user_encrypted_archive",
+		"rtc": gin.H{
+			"provider": h.rtcProvider(),
+			"enabled":  h.liveKitEnabled(),
+			"url":      h.realtime.LiveKit.URL,
+			"turnMode": strings.TrimSpace(h.realtime.LiveKit.TurnMode),
+		},
 	})
+}
+
+func (h *Handler) rtcProvider() string {
+	if h.liveKitEnabled() {
+		return "livekit"
+	}
+	return "none"
+}
+
+func (h *Handler) liveKitEnabled() bool {
+	liveKit := h.realtime.LiveKit
+	return liveKit.Enabled &&
+		strings.TrimSpace(liveKit.URL) != "" &&
+		strings.TrimSpace(liveKit.APIKey) != "" &&
+		strings.TrimSpace(liveKit.APISecret) != ""
 }
 
 func (h *Handler) publicBasePath(c *gin.Context) string {

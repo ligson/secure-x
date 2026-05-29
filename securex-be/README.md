@@ -57,7 +57,18 @@ logging:
 
 auth:
   jwtSecret: "replace-with-a-long-random-secret"
+
+realtime:
+  iceServers: []
+  livekit:
+    enabled: false
+    url: ""
+    apiKey: ""
+    apiSecret: ""
+    turnMode: ""
 ```
+
+语音/视频通话建议部署自托管 LiveKit。开启后，后端会用 `apiKey/apiSecret` 为已授权的好友或共同群成员签发短期房间 token；客户端通过 `/api/v1/realtime/config` 获取 LiveKit 地址，不需要在 App 中硬编码 RTC 端口。
 
 ## 生产部署脚本
 

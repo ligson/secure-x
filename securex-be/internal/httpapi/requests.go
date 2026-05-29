@@ -144,6 +144,12 @@ type chatMessageAckRequest struct {
 	MessageIDs []string `json:"messageIds" binding:"required"`
 }
 
+type liveKitCallTokenRequest struct {
+	PeerUserID string `json:"peerUserId" binding:"required"`
+	CallID     string `json:"callId" binding:"required"`
+	Media      string `json:"media"`
+}
+
 func bindErrorMessage(err error) string {
 	var validationErrors validator.ValidationErrors
 	if errors.As(err, &validationErrors) {

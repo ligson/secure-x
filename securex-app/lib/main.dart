@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -12,10 +11,11 @@ import 'package:image/image.dart' as img;
 import 'package:audioplayers/audioplayers.dart' as audio;
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart' as record;
-import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
+import 'package:livekit_client/livekit_client.dart' as lk;
 
 import 'src/api_client.dart';
 import 'src/app_controller.dart';
+import 'src/app_logger.dart';
 import 'src/crypto_service.dart';
 import 'src/models.dart';
 import 'src/realtime_chat_service.dart';

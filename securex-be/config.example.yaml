@@ -17,3 +17,16 @@ logging:
 
 auth:
   jwtSecret: "replace-with-a-long-random-secret"
+
+realtime:
+  # 图文聊天默认使用 WebSocket + 应用层端到端加密。
+  iceServers: []
+  livekit:
+    # 语音/视频通话媒体链路。未部署 LiveKit 时保持 false。
+    enabled: false
+    # 示例："wss://rtc.example.com"
+    url: ""
+    apiKey: ""
+    apiSecret: ""
+    # 可填写 "turn_tls_443" 记录部署模式，客户端仅用于展示/诊断。
+    turnMode: ""

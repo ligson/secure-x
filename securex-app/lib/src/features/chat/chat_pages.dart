@@ -2809,19 +2809,16 @@ class _ChatCallPage extends StatefulWidget {
 }
 
 class _ChatCallPageState extends State<_ChatCallPage> {
-  final rtc.RTCVideoRenderer _localRenderer = rtc.RTCVideoRenderer();
-  final rtc.RTCVideoRenderer _remoteRenderer = rtc.RTCVideoRenderer();
-  final List<rtc.RTCIceCandidate> _pendingCandidates = [];
-  rtc.MediaStream? _localStream;
-  rtc.RTCPeerConnection? _peerConnection;
+  lk.Room? _room;
+  lk.EventsListener<lk.RoomEvent>? _roomListener;
   late final String _callId;
   bool _microphoneOn = true;
   bool _speakerOn = true;
   bool _cameraOn = false;
   bool _accepted = false;
   bool _incomingWaiting = false;
-  bool _remoteVideoReady = false;
-  bool _remoteDescriptionSet = false;
+  bool _liveKitConnected = false;
+  bool _joiningLiveKit = false;
   bool _ended = false;
   String _notice = '正在准备通话...';
 
@@ -2849,8 +2846,6 @@ class _ChatCallPageState extends State<_ChatCallPage> {
 
   Future<void> _startCall() async {
     try {
-      await _localRenderer.initialize();
-      await _remoteRenderer.initialize();
       if (_isIncoming) {
         if (!mounted) {
           return;
@@ -2860,19 +2855,18 @@ class _ChatCallPageState extends State<_ChatCallPage> {
         });
         return;
       }
-      await _openLocalMedia(video: widget.initialVideo);
-      await _ensurePeerConnection();
-      await widget.controller.sendChatCallSignal(
-        friend: widget.friend,
-        callId: _callId,
-        action: 'invite',
-        media: _media,
-      );
+      if (widget.controller.realtimeConfig?.rtc.liveKitReady != true) {
+        setState(() {
+          _notice = '音视频服务暂未配置，请先检查服务器 LiveKit 配置。';
+        });
+        return;
+      }
+      final invited = await _sendCallSignal('invite', {'provider': 'livekit'});
       if (!mounted) {
         return;
       }
       setState(() {
-        _notice = '等待对方接受邀请.';
+        _notice = invited ? '等待对方接受邀请...' : '通话邀请发送失败，请稍后重试。';
       });
     } catch (_) {
       if (!mounted) {
@@ -2901,9 +2895,8 @@ class _ChatCallPageState extends State<_ChatCallPage> {
           return;
         }
         _accepted = true;
-        _setNotice('对方已接听，正在建立安全通话...');
-        await _ensurePeerConnection();
-        await _sendOffer();
+        _setNotice('对方已接听，正在接入音视频通道...');
+        await _joinLiveKitRoom();
         break;
       case 'reject':
         _setNotice('对方已拒绝通话。');
@@ -2915,165 +2908,14 @@ class _ChatCallPageState extends State<_ChatCallPage> {
         await _closeAfterDelay();
         break;
       case 'offer':
-        _accepted = true;
-        await _ensurePeerConnection();
-        await _setRemoteDescription(signal.payload, fallbackType: 'offer');
-        await _drainPendingCandidates();
-        final answer = await _peerConnection!.createAnswer();
-        await _peerConnection!.setLocalDescription(answer);
-        await _sendCallSignal('answer', {
-          'sdp': answer.sdp,
-          'sdpType': answer.type,
-        });
-        _setNotice('正在接通...');
-        break;
       case 'answer':
-        await _setRemoteDescription(signal.payload, fallbackType: 'answer');
-        await _drainPendingCandidates();
-        _setNotice('正在接通...');
-        break;
       case 'candidate':
-        await _handleRemoteCandidate(signal.payload);
+        // 旧版自研 WebRTC 通话信令仅为兼容历史客户端保留，新版媒体链路走 LiveKit。
         break;
     }
   }
 
-  Future<void> _openLocalMedia({required bool video}) async {
-    if (_localStream != null) {
-      return;
-    }
-    final stream = await rtc.navigator.mediaDevices.getUserMedia({
-      'audio': true,
-      'video': video
-          ? {
-              'facingMode': 'user',
-              'width': {'ideal': 640},
-              'height': {'ideal': 960},
-            }
-          : false,
-    });
-    _localStream = stream;
-    _localRenderer.srcObject = stream;
-    _setAudioEnabled(_microphoneOn);
-    _setVideoEnabled(video && _cameraOn);
-  }
-
-  Future<void> _ensurePeerConnection() async {
-    if (_peerConnection != null) {
-      return;
-    }
-    await _openLocalMedia(video: widget.initialVideo);
-    final iceServers = widget.controller.realtimeConfig?.iceServers ?? const [];
-    final connection = await rtc.createPeerConnection({
-      'iceServers': [
-        if (iceServers.isNotEmpty) {'urls': iceServers},
-      ],
-    });
-    _peerConnection = connection;
-    connection.onIceCandidate = (candidate) {
-      final value = candidate.candidate;
-      if (value == null || value.isEmpty || _ended) {
-        return;
-      }
-      unawaited(
-        _sendCallSignal('candidate', {
-          'candidate': value,
-          'sdpMid': candidate.sdpMid,
-          'sdpMLineIndex': candidate.sdpMLineIndex,
-        }),
-      );
-    };
-    connection.onTrack = (event) {
-      final streams = event.streams;
-      if (streams.isEmpty) {
-        return;
-      }
-      _remoteRenderer.srcObject = streams.first;
-      if (mounted) {
-        setState(() {
-          _remoteVideoReady = event.track.kind == 'video';
-          _notice = '通话中';
-        });
-      }
-    };
-    connection.onConnectionState = (state) {
-      if (!mounted) {
-        return;
-      }
-      if (state == rtc.RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
-        setState(() => _notice = '通话中');
-      }
-      if (state == rtc.RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
-          state ==
-              rtc.RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
-        setState(() => _notice = '通话连接不稳定，正在等待恢复...');
-      }
-    };
-    final stream = _localStream;
-    if (stream != null) {
-      for (final track in stream.getTracks()) {
-        await connection.addTrack(track, stream);
-      }
-    }
-  }
-
-  Future<void> _sendOffer() async {
-    final connection = _peerConnection;
-    if (connection == null) {
-      return;
-    }
-    final offer = await connection.createOffer();
-    await connection.setLocalDescription(offer);
-    await _sendCallSignal('offer', {'sdp': offer.sdp, 'sdpType': offer.type});
-  }
-
-  Future<void> _setRemoteDescription(
-    Map<String, dynamic> payload, {
-    required String fallbackType,
-  }) async {
-    final connection = _peerConnection;
-    if (connection == null) {
-      return;
-    }
-    await connection.setRemoteDescription(
-      rtc.RTCSessionDescription(
-        payload['sdp'] as String? ?? '',
-        payload['sdpType'] as String? ?? fallbackType,
-      ),
-    );
-    _remoteDescriptionSet = true;
-  }
-
-  Future<void> _handleRemoteCandidate(Map<String, dynamic> payload) async {
-    final candidate = payload['candidate'] as String? ?? '';
-    if (candidate.isEmpty) {
-      return;
-    }
-    final iceCandidate = rtc.RTCIceCandidate(
-      candidate,
-      payload['sdpMid'] as String?,
-      (payload['sdpMLineIndex'] as num?)?.toInt(),
-    );
-    if (!_remoteDescriptionSet || _peerConnection == null) {
-      _pendingCandidates.add(iceCandidate);
-      return;
-    }
-    await _peerConnection!.addCandidate(iceCandidate);
-  }
-
-  Future<void> _drainPendingCandidates() async {
-    final connection = _peerConnection;
-    if (connection == null || _pendingCandidates.isEmpty) {
-      return;
-    }
-    final candidates = [..._pendingCandidates];
-    _pendingCandidates.clear();
-    for (final candidate in candidates) {
-      await connection.addCandidate(candidate);
-    }
-  }
-
-  Future<void> _sendCallSignal(
+  Future<bool> _sendCallSignal(
     String action, [
     Map<String, dynamic> payload = const {},
   ]) {
@@ -3087,14 +2929,16 @@ class _ChatCallPageState extends State<_ChatCallPage> {
   }
 
   Future<void> _acceptIncomingCall() async {
-    _incomingWaiting = false;
-    _accepted = true;
-    _setNotice('正在接听...');
+    if (mounted) {
+      setState(() {
+        _incomingWaiting = false;
+        _accepted = true;
+        _notice = '正在接入音视频通道...';
+      });
+    }
     try {
-      await _openLocalMedia(video: widget.initialVideo);
-      await _ensurePeerConnection();
       await _sendCallSignal('accept');
-      _setNotice('等待对方建立安全通话...');
+      await _joinLiveKitRoom();
     } catch (_) {
       _setNotice('接听失败，请检查麦克风或摄像头权限。');
     }
@@ -3131,48 +2975,205 @@ class _ChatCallPageState extends State<_ChatCallPage> {
     if (sendAction != null) {
       await _sendCallSignal(sendAction);
     }
-    await _peerConnection?.close();
-    await _peerConnection?.dispose();
-    _peerConnection = null;
-    final stream = _localStream;
-    _localStream = null;
-    for (final track in stream?.getTracks() ?? const <rtc.MediaStreamTrack>[]) {
-      await track.stop();
-    }
-    _localRenderer.srcObject = null;
-    _remoteRenderer.srcObject = null;
-    await _localRenderer.dispose();
-    await _remoteRenderer.dispose();
+    await _disconnectLiveKit();
   }
 
-  void _setAudioEnabled(bool enabled) {
-    for (final track in _localStream?.getAudioTracks() ?? const []) {
-      track.enabled = enabled;
+  Future<void> _joinLiveKitRoom() async {
+    if (_liveKitConnected || _joiningLiveKit || _ended) {
+      return;
+    }
+    final rtcConfig = widget.controller.realtimeConfig?.rtc;
+    if (rtcConfig?.liveKitReady != true) {
+      _setNotice('音视频服务暂未配置，请稍后重试。');
+      return;
+    }
+    _joiningLiveKit = true;
+    _setNotice('正在获取通话凭证...');
+    try {
+      final credential = await widget.controller.createLiveKitCallToken(
+        friend: widget.friend,
+        callId: _callId,
+        media: _media,
+      );
+      if (credential == null || credential.url.isEmpty) {
+        _setNotice('音视频通话服务暂不可用。');
+        return;
+      }
+      final room = lk.Room(
+        roomOptions: const lk.RoomOptions(adaptiveStream: true, dynacast: true),
+      );
+      final listener = room.createListener()
+        ..on<lk.RoomConnectedEvent>((_) {
+          if (!mounted) {
+            return;
+          }
+          setState(() {
+            _liveKitConnected = true;
+            _notice = '通话中';
+          });
+        })
+        ..on<lk.RoomReconnectingEvent>((_) {
+          _setNotice('通话网络不稳定，正在自动重连...');
+        })
+        ..on<lk.RoomReconnectedEvent>((_) {
+          _setNotice('通话中');
+        })
+        ..on<lk.RoomDisconnectedEvent>((_) {
+          if (!mounted || _ended) {
+            return;
+          }
+          setState(() {
+            _liveKitConnected = false;
+            _notice = '通话连接已断开。';
+          });
+        })
+        ..on<lk.ParticipantConnectedEvent>((_) => _refreshCallTracks())
+        ..on<lk.ParticipantDisconnectedEvent>((_) => _refreshCallTracks())
+        ..on<lk.TrackSubscribedEvent>((_) => _refreshCallTracks())
+        ..on<lk.TrackUnsubscribedEvent>((_) => _refreshCallTracks())
+        ..on<lk.TrackMutedEvent>((_) => _refreshCallTracks())
+        ..on<lk.TrackUnmutedEvent>((_) => _refreshCallTracks());
+      _room = room;
+      _roomListener = listener;
+      await room.connect(
+        credential.url,
+        credential.token,
+        fastConnectOptions: lk.FastConnectOptions(
+          microphone: const lk.TrackOption(enabled: true),
+          camera: lk.TrackOption(enabled: widget.initialVideo && _cameraOn),
+        ),
+      );
+      await room.setSpeakerOn(_speakerOn);
+      await room.localParticipant?.setMicrophoneEnabled(_microphoneOn);
+      if (widget.initialVideo) {
+        await room.localParticipant?.setCameraEnabled(_cameraOn);
+      }
+      _refreshCallTracks(notice: '通话中');
+    } catch (error) {
+      appLog('LiveKit 通话接入失败', error);
+      _setNotice('通话接入失败，请检查音视频服务、网络或设备权限。');
+    } finally {
+      _joiningLiveKit = false;
     }
   }
 
-  void _setVideoEnabled(bool enabled) {
-    for (final track in _localStream?.getVideoTracks() ?? const []) {
-      track.enabled = enabled;
+  Future<void> _disconnectLiveKit() async {
+    final listener = _roomListener;
+    _roomListener = null;
+    if (listener != null) {
+      await listener.dispose();
     }
+    final room = _room;
+    _room = null;
+    if (room != null) {
+      await room.disconnect();
+      await room.dispose();
+    }
+    _liveKitConnected = false;
+  }
+
+  void _refreshCallTracks({String? notice}) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      if (notice != null) {
+        _notice = notice;
+      }
+    });
   }
 
   Future<void> _toggleCamera() async {
     if (!widget.initialVideo) {
       return;
     }
-    setState(() => _cameraOn = !_cameraOn);
-    _setVideoEnabled(_cameraOn);
+    final enabled = !_cameraOn;
+    setState(() => _cameraOn = enabled);
+    try {
+      await _room?.localParticipant?.setCameraEnabled(enabled);
+    } catch (error) {
+      appLog('切换摄像头开关失败', error);
+      _setNotice('摄像头切换失败，请检查权限。');
+    }
   }
 
-  void _toggleMicrophone() {
-    setState(() => _microphoneOn = !_microphoneOn);
-    _setAudioEnabled(_microphoneOn);
+  Future<void> _toggleMicrophone() async {
+    final enabled = !_microphoneOn;
+    setState(() => _microphoneOn = enabled);
+    try {
+      await _room?.localParticipant?.setMicrophoneEnabled(enabled);
+    } catch (error) {
+      appLog('切换麦克风失败', error);
+      _setNotice('麦克风切换失败，请检查权限。');
+    }
   }
 
-  void _toggleSpeaker() {
-    setState(() => _speakerOn = !_speakerOn);
-    // 桌面和移动端的扬声器路由能力差异较大，先保留 UI 状态和后续接入点。
+  Future<void> _toggleSpeaker() async {
+    final enabled = !_speakerOn;
+    setState(() => _speakerOn = enabled);
+    try {
+      await _room?.setSpeakerOn(enabled);
+    } catch (error) {
+      appLog('切换扬声器失败', error);
+      _setNotice('扬声器切换失败，请检查系统音频输出。');
+    }
+  }
+
+  Future<void> _switchCamera() async {
+    final room = _room;
+    if (room == null) {
+      return;
+    }
+    try {
+      final devices = await lk.Hardware.instance.enumerateDevices();
+      final cameras = devices
+          .where((device) => device.kind == 'videoinput')
+          .toList();
+      if (cameras.length < 2) {
+        _setNotice('当前设备没有可切换的摄像头。');
+        return;
+      }
+      final currentDeviceId = room.selectedVideoInputDeviceId;
+      final nextCamera = cameras.firstWhere(
+        (device) => device.deviceId != currentDeviceId,
+        orElse: () => cameras.first,
+      );
+      await room.setVideoInputDevice(nextCamera);
+      _setNotice('摄像头已切换。');
+    } catch (error) {
+      appLog('切换前后摄像头失败', error);
+      _setNotice('摄像头切换失败。');
+    }
+  }
+
+  lk.VideoTrack? _remoteVideoTrack() {
+    final room = _room;
+    if (room == null) {
+      return null;
+    }
+    for (final participant in room.remoteParticipants.values) {
+      for (final publication in participant.videoTrackPublications) {
+        final track = publication.track;
+        if (track != null && !publication.muted) {
+          return track;
+        }
+      }
+    }
+    return null;
+  }
+
+  lk.VideoTrack? _localVideoTrack() {
+    final participant = _room?.localParticipant;
+    if (participant == null) {
+      return null;
+    }
+    for (final publication in participant.videoTrackPublications) {
+      final track = publication.track;
+      if (track != null && !publication.muted) {
+        return track;
+      }
+    }
+    return null;
   }
 
   @override
@@ -3186,47 +3187,59 @@ class _ChatCallPageState extends State<_ChatCallPage> {
         child: Stack(
           children: [
             Positioned.fill(child: _buildCallBackground()),
-            Positioned(
-              top: 30,
-              left: 28,
-              child: IconButton(
-                icon: const Icon(Icons.picture_in_picture_alt_outlined),
-                color: Colors.white,
-                onPressed: () => Navigator.of(context).maybePop(),
-              ),
-            ),
-            Align(
-              alignment: const Alignment(0, -0.45),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _CallAvatar(friend: widget.friend),
-                  const SizedBox(height: 18),
-                  Text(
-                    name,
-                    style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Align(
-              alignment: const Alignment(0, 0.42),
-              child: Text(
-                _notice,
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  color: Colors.white.withAlpha(175),
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-            Align(
-              alignment: Alignment.bottomCenter,
+            Positioned.fill(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(26, 0, 26, 34),
-                child: _buildControls(context),
+                padding: const EdgeInsets.fromLTRB(26, 18, 26, 34),
+                child: Column(
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: IconButton(
+                        icon: const Icon(Icons.picture_in_picture_alt_outlined),
+                        color: Colors.white,
+                        onPressed: () => Navigator.of(context).maybePop(),
+                      ),
+                    ),
+                    Expanded(
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _CallAvatar(friend: widget.friend),
+                            const SizedBox(height: 18),
+                            Text(
+                              name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.displaySmall
+                                  ?.copyWith(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 22),
+                      child: Text(
+                        _notice,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              color: Colors.white.withAlpha(190),
+                              fontWeight: FontWeight.w800,
+                              height: 1.25,
+                            ),
+                      ),
+                    ),
+                    _buildControls(context),
+                  ],
+                ),
               ),
             ),
           ],
@@ -3236,18 +3249,20 @@ class _ChatCallPageState extends State<_ChatCallPage> {
   }
 
   Widget _buildCallBackground() {
-    if (widget.initialVideo && _remoteVideoReady) {
-      return rtc.RTCVideoView(
-        _remoteRenderer,
-        mirror: false,
-        objectFit: rtc.RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+    final remoteVideo = _remoteVideoTrack();
+    if (widget.initialVideo && remoteVideo != null) {
+      return lk.VideoTrackRenderer(
+        remoteVideo,
+        fit: lk.VideoViewFit.cover,
+        mirrorMode: lk.VideoViewMirrorMode.off,
       );
     }
-    if (widget.initialVideo && _cameraOn && _localStream != null) {
-      return rtc.RTCVideoView(
-        _localRenderer,
-        mirror: true,
-        objectFit: rtc.RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+    final localVideo = _localVideoTrack();
+    if (widget.initialVideo && _cameraOn && localVideo != null) {
+      return lk.VideoTrackRenderer(
+        localVideo,
+        fit: lk.VideoViewFit.cover,
+        mirrorMode: lk.VideoViewMirrorMode.mirror,
       );
     }
     return DecoratedBox(
@@ -3290,14 +3305,14 @@ class _ChatCallPageState extends State<_ChatCallPage> {
             _CallControlButton(
               icon: _microphoneOn ? Icons.mic_rounded : Icons.mic_off_rounded,
               label: _microphoneOn ? '麦克风已开' : '麦克风已关',
-              onTap: _toggleMicrophone,
+              onTap: () => unawaited(_toggleMicrophone()),
             ),
             _CallControlButton(
               icon: _speakerOn
                   ? Icons.volume_up_rounded
                   : Icons.volume_off_rounded,
               label: _speakerOn ? '扬声器已开' : '扬声器已关',
-              onTap: _toggleSpeaker,
+              onTap: () => unawaited(_toggleSpeaker()),
             ),
             if (widget.initialVideo)
               _CallControlButton(
@@ -3305,7 +3320,7 @@ class _ChatCallPageState extends State<_ChatCallPage> {
                     ? Icons.videocam_rounded
                     : Icons.videocam_off_rounded,
                 label: _cameraOn ? '摄像头已开' : '摄像头已关',
-                onTap: _toggleCamera,
+                onTap: () => unawaited(_toggleCamera()),
               ),
           ],
         ),
@@ -3327,13 +3342,7 @@ class _ChatCallPageState extends State<_ChatCallPage> {
                 icon: Icons.cameraswitch_rounded,
                 label: '切换摄像头',
                 compact: true,
-                onTap: () async {
-                  final tracks = _localStream?.getVideoTracks() ?? const [];
-                  final videoTrack = tracks.isEmpty ? null : tracks.first;
-                  if (videoTrack != null) {
-                    await rtc.Helper.switchCamera(videoTrack);
-                  }
-                },
+                onTap: () => unawaited(_switchCamera()),
               )
             else
               const SizedBox(width: 96),
@@ -3404,27 +3413,34 @@ class _CallControlButton extends StatelessWidget {
     return InkWell(
       borderRadius: BorderRadius.circular(999),
       onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: size,
-            height: size,
-            decoration: BoxDecoration(
-              color: background,
-              shape: BoxShape.circle,
+      child: SizedBox(
+        width: compact ? 86 : 104,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: size,
+              height: size,
+              decoration: BoxDecoration(
+                color: background,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: foreground, size: compact ? 28 : 38),
             ),
-            child: Icon(icon, color: foreground, size: compact ? 28 : 38),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            label,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: Colors.white.withAlpha(215),
-              fontWeight: FontWeight.w800,
+            const SizedBox(height: 12),
+            Text(
+              label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Colors.white.withAlpha(215),
+                fontWeight: FontWeight.w800,
+                height: 1.15,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -3810,7 +3826,7 @@ class _ChatMessageContent extends StatelessWidget {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _ChatImageAttachment(message: message),
+          _ChatImageAttachment(controller: controller, message: message),
           if (_cleanCaption.isNotEmpty) ...[
             const SizedBox(height: 10),
             _messageText(context),
@@ -3819,7 +3835,11 @@ class _ChatMessageContent extends StatelessWidget {
       );
     }
     if (message.isAudioAttachment) {
-      return _ChatAudioAttachment(message: message, sentByMe: sentByMe);
+      return _ChatAudioAttachment(
+        controller: controller,
+        message: message,
+        sentByMe: sentByMe,
+      );
     }
     if (message.isVideoAttachment) {
       return _ChatVideoAttachment(
@@ -3865,26 +3885,60 @@ class _ChatMessageContent extends StatelessWidget {
 }
 
 class _ChatImageAttachment extends StatelessWidget {
-  const _ChatImageAttachment({required this.message});
+  const _ChatImageAttachment({required this.controller, required this.message});
 
+  final AppController controller;
   final ChatMessage message;
 
   @override
   Widget build(BuildContext context) {
-    try {
-      final bytes = base64Decode(message.attachmentDataBase64);
-      return ClipRRect(
+    return FutureBuilder<Uint8List>(
+      future: controller.loadChatAttachmentBytes(message),
+      initialData: controller.cachedChatAttachmentBytes(message),
+      builder: (context, snapshot) {
+        final bytes = snapshot.data;
+        if (bytes != null && bytes.isNotEmpty) {
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Image.memory(
+              bytes,
+              width: 220,
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+              cacheWidth: 660,
+              errorBuilder: (context, _, _) => _broken(context),
+            ),
+          );
+        }
+        if (snapshot.connectionState != ConnectionState.done) {
+          return _loading(context);
+        }
+        if (snapshot.hasError || bytes == null || bytes.isEmpty) {
+          return _broken(context);
+        }
+        return _broken(context);
+      },
+    );
+  }
+
+  Widget _loading(BuildContext context) {
+    return Container(
+      width: 220,
+      height: 148,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: context.sx.subtle,
         borderRadius: BorderRadius.circular(16),
-        child: Image.memory(
-          bytes,
-          width: 220,
-          fit: BoxFit.cover,
-          errorBuilder: (context, _, _) => _broken(context),
+      ),
+      child: SizedBox(
+        width: 20,
+        height: 20,
+        child: CircularProgressIndicator(
+          strokeWidth: 2.5,
+          color: context.sx.primary,
         ),
-      );
-    } catch (_) {
-      return _broken(context);
-    }
+      ),
+    );
   }
 
   Widget _broken(BuildContext context) {
@@ -3906,8 +3960,13 @@ class _ChatImageAttachment extends StatelessWidget {
 }
 
 class _ChatAudioAttachment extends StatefulWidget {
-  const _ChatAudioAttachment({required this.message, required this.sentByMe});
+  const _ChatAudioAttachment({
+    required this.controller,
+    required this.message,
+    required this.sentByMe,
+  });
 
+  final AppController controller;
   final ChatMessage message;
   final bool sentByMe;
 
@@ -3944,10 +4003,12 @@ class _ChatAudioAttachmentState extends State<_ChatAudioAttachment> {
       return;
     }
     try {
-      final bytes = base64Decode(widget.message.attachmentDataBase64);
+      final bytes = await widget.controller.loadChatAttachmentBytes(
+        widget.message,
+      );
       await _player.play(
         audio.BytesSource(
-          Uint8List.fromList(bytes),
+          bytes,
           mimeType: widget.message.attachmentMimeType.isEmpty
               ? 'audio/mp4'
               : widget.message.attachmentMimeType,

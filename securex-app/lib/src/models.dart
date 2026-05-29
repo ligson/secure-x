@@ -628,12 +628,14 @@ class RealtimeConfig {
     required this.signalingUrl,
     required this.signalingEnabled,
     required this.iceServers,
+    required this.rtc,
   });
 
   final String transport;
   final String signalingUrl;
   final bool signalingEnabled;
   final List<String> iceServers;
+  final RealtimeRtcConfig rtc;
 
   factory RealtimeConfig.fromJson(Map<String, dynamic> json) {
     return RealtimeConfig(
@@ -643,6 +645,63 @@ class RealtimeConfig {
       iceServers: (json['iceServers'] as List<dynamic>? ?? [])
           .map((entry) => entry.toString())
           .toList(),
+      rtc: RealtimeRtcConfig.fromJson(
+        json['rtc'] as Map<String, dynamic>? ?? const {},
+      ),
+    );
+  }
+}
+
+class RealtimeRtcConfig {
+  RealtimeRtcConfig({
+    required this.provider,
+    required this.enabled,
+    required this.url,
+    required this.turnMode,
+  });
+
+  final String provider;
+  final bool enabled;
+  final String url;
+  final String turnMode;
+
+  bool get liveKitReady => provider == 'livekit' && enabled && url.isNotEmpty;
+
+  factory RealtimeRtcConfig.fromJson(Map<String, dynamic> json) {
+    return RealtimeRtcConfig(
+      provider: json['provider'] as String? ?? 'none',
+      enabled: json['enabled'] as bool? ?? false,
+      url: json['url'] as String? ?? '',
+      turnMode: json['turnMode'] as String? ?? '',
+    );
+  }
+}
+
+class LiveKitCallToken {
+  LiveKitCallToken({
+    required this.url,
+    required this.token,
+    required this.room,
+    required this.turnMode,
+    required this.media,
+    required this.expiresIn,
+  });
+
+  final String url;
+  final String token;
+  final String room;
+  final String turnMode;
+  final String media;
+  final int expiresIn;
+
+  factory LiveKitCallToken.fromJson(Map<String, dynamic> json) {
+    return LiveKitCallToken(
+      url: json['url'] as String? ?? '',
+      token: json['token'] as String? ?? '',
+      room: json['room'] as String? ?? '',
+      turnMode: json['turnMode'] as String? ?? '',
+      media: json['media'] as String? ?? 'audio',
+      expiresIn: (json['expiresIn'] as num?)?.toInt() ?? 0,
     );
   }
 }
@@ -665,6 +724,8 @@ class ChatMessage {
     this.attachmentMimeType = '',
     this.attachmentSize = 0,
     this.attachmentDataBase64 = '',
+    this.attachmentObjectId = '',
+    this.attachmentKeyBase64 = '',
   });
 
   final String id;
@@ -683,9 +744,13 @@ class ChatMessage {
   final String attachmentMimeType;
   final int attachmentSize;
   final String attachmentDataBase64;
+  final String attachmentObjectId;
+  final String attachmentKeyBase64;
 
   bool get hasAttachment =>
-      attachmentType.isNotEmpty && attachmentDataBase64.isNotEmpty;
+      attachmentType.isNotEmpty &&
+      (attachmentDataBase64.isNotEmpty ||
+          (attachmentObjectId.isNotEmpty && attachmentKeyBase64.isNotEmpty));
 
   bool get isImageAttachment => attachmentType == 'image';
 
@@ -710,6 +775,8 @@ class ChatMessage {
     String? attachmentMimeType,
     int? attachmentSize,
     String? attachmentDataBase64,
+    String? attachmentObjectId,
+    String? attachmentKeyBase64,
   }) {
     return ChatMessage(
       id: id ?? this.id,
@@ -728,6 +795,8 @@ class ChatMessage {
       attachmentMimeType: attachmentMimeType ?? this.attachmentMimeType,
       attachmentSize: attachmentSize ?? this.attachmentSize,
       attachmentDataBase64: attachmentDataBase64 ?? this.attachmentDataBase64,
+      attachmentObjectId: attachmentObjectId ?? this.attachmentObjectId,
+      attachmentKeyBase64: attachmentKeyBase64 ?? this.attachmentKeyBase64,
     );
   }
 
@@ -749,6 +818,8 @@ class ChatMessage {
       'attachmentMimeType': attachmentMimeType,
       'attachmentSize': attachmentSize,
       'attachmentDataBase64': attachmentDataBase64,
+      'attachmentObjectId': attachmentObjectId,
+      'attachmentKeyBase64': attachmentKeyBase64,
     };
   }
 
@@ -778,6 +849,8 @@ class ChatMessage {
       attachmentMimeType: json['attachmentMimeType'] as String? ?? '',
       attachmentSize: (json['attachmentSize'] as num?)?.toInt() ?? 0,
       attachmentDataBase64: json['attachmentDataBase64'] as String? ?? '',
+      attachmentObjectId: json['attachmentObjectId'] as String? ?? '',
+      attachmentKeyBase64: json['attachmentKeyBase64'] as String? ?? '',
     );
   }
 }

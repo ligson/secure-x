@@ -15,6 +15,7 @@ type Config struct {
 	Storage  StorageConfig  `yaml:"storage"`
 	Logging  LoggingConfig  `yaml:"logging"`
 	Auth     AuthConfig     `yaml:"auth"`
+	Realtime RealtimeConfig `yaml:"realtime"`
 }
 
 type ServerConfig struct {
@@ -38,6 +39,19 @@ type LoggingConfig struct {
 
 type AuthConfig struct {
 	JWTSecret string `yaml:"jwtSecret"`
+}
+
+type RealtimeConfig struct {
+	ICEServers []string      `yaml:"iceServers"`
+	LiveKit    LiveKitConfig `yaml:"livekit"`
+}
+
+type LiveKitConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	URL       string `yaml:"url"`
+	APIKey    string `yaml:"apiKey"`
+	APISecret string `yaml:"apiSecret"`
+	TurnMode  string `yaml:"turnMode"`
 }
 
 func Default() Config {

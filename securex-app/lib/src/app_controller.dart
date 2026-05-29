@@ -160,6 +160,8 @@ class AppController extends ChangeNotifier {
   Future<void> _chatArchiveSyncTask = Future.value();
   Future<void> _pendingChatSyncTask = Future.value();
   final Map<String, Future<void>> _chatConversationLoadTasks = {};
+  final Map<String, Future<Uint8List>> _chatAttachmentBytesCache = {};
+  final Map<String, Uint8List> _chatAttachmentPlainBytesCache = {};
 
   bool get initialized => _initialized;
   bool get busy => _busy;
