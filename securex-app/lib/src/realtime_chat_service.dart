@@ -742,7 +742,7 @@ class RealtimeChatService {
     }
     await _sendLocalKey(peer);
     _sendSignal(peer.friendId, 'connect-request', {});
-    for (var index = 0; index < 40; index++) {
+    for (var index = 0; index < 100; index++) {
       await Future<void>.delayed(const Duration(milliseconds: 100));
       if (peer.canSendSecurePayloads && peer.sessionKey != null) {
         return true;

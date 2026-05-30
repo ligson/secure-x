@@ -761,7 +761,7 @@ extension AppControllerChatActions on AppController {
     required String media,
     Map<String, dynamic> payload = const {},
   }) async {
-    await _ensureRealtimeChatConnected(forceReconnect: true);
+    await _ensureRealtimeChatConnected();
     if (_realtimeConfig?.signalingEnabled != true) {
       _statusMessage = '实时通道暂未建立，无法发起通话。';
       notifyListeners();

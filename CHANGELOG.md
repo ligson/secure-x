@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.25] - 2026-05-30
+
+### Fixed
+
+- 修复通话邀请、接听、挂断信令发送前反复强制重连实时 WebSocket，导致端到端加密信令会话被主动打断并提示“接听信令发送失败”的问题。
+- 放宽实时加密信令会话等待时间，降低移动网络和代理链路抖动下接听信令误判失败的概率。
+
+### Changed
+
+- 私有 LiveKit 部署已调整为对客户端发布 TURN/TLS `443` 候选，匹配公网 SNI 分流入口，减少移动网络阻断非标准 TURN 端口导致的入房失败。
+
+### Verified
+
+- `securex-app`: `dart analyze securex-app`
+- `securex-app`: `flutter test`
+
 ## [v1.0.24] - 2026-05-30
 
 ### Fixed
