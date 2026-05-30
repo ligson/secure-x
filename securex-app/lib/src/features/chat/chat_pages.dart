@@ -2961,6 +2961,10 @@ class _ChatCallPageState extends State<_ChatCallPage> {
         appLog('通话信令发送失败：action=$action, attempt=${index + 1}', error);
       }
     }
+    appLog(
+      '通话信令多次发送失败：action=$action, attempts=$attempts, '
+      'media=$_media, incoming=$_isIncoming',
+    );
     return false;
   }
 
@@ -3057,9 +3061,17 @@ class _ChatCallPageState extends State<_ChatCallPage> {
           )
           .timeout(const Duration(seconds: 10));
       if (credential == null || credential.url.isEmpty) {
+        appLog(
+          'LiveKit 通话凭证为空：media=$_media, incoming=$_isIncoming, '
+          'turnMode=${credential?.turnMode ?? ''}',
+        );
         _setNotice('音视频通话服务暂不可用。');
         return;
       }
+      appLog(
+        'LiveKit 准备入房：media=$_media, incoming=$_isIncoming, '
+        'turnMode=${credential.turnMode}, urlScheme=${_uriScheme(credential.url)}',
+      );
       final room = lk.Room(
         roomOptions: const lk.RoomOptions(adaptiveStream: false),
       );
@@ -3162,6 +3174,7 @@ class _ChatCallPageState extends State<_ChatCallPage> {
             ),
           )
           .timeout(const Duration(seconds: 15));
+      appLog('LiveKit 入房完成，准备启用本地媒体：media=$_media');
       await _enableLiveKitLocalMedia(room);
       _logLiveKitSnapshot('本地媒体已启用');
       _refreshCallTracks(notice: '通话中');
@@ -3175,6 +3188,10 @@ class _ChatCallPageState extends State<_ChatCallPage> {
     } finally {
       _joiningLiveKit = false;
     }
+  }
+
+  String _uriScheme(String value) {
+    return Uri.tryParse(value)?.scheme ?? '';
   }
 
   Future<void> _enableLiveKitLocalMedia(lk.Room room) async {

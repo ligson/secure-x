@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
+import 'app_logger.dart';
 import 'models.dart';
 
 class RealtimeIncomingMessage {
@@ -433,6 +434,10 @@ class RealtimeChatService {
     Map<String, dynamic> payload = const {},
   }) async {
     if (!connected) {
+      appLog(
+        '通话信令未发送：reason=实时通道未连接, '
+        'peer=${_diagnosticID(friend.id)}, action=$action, media=$media',
+      );
       return false;
     }
     final initiator = _shouldInitiateOffer(friend.id);
@@ -442,6 +447,11 @@ class RealtimeChatService {
     }
     final ready = await _waitForSecurePayloads(peer);
     if (!ready) {
+      appLog(
+        '通话信令未发送：reason=端到端加密会话未就绪, '
+        'peer=${_diagnosticID(friend.id)}, action=$action, media=$media, '
+        'connected=$connected',
+      );
       return false;
     }
     final cipherText = await _encryptText(
@@ -460,6 +470,10 @@ class RealtimeChatService {
     // 通话信令必须稳定可达。媒体链路已切换到 LiveKit 后，这里固定走
     // WebSocket 加密中继，避免旧 WebRTC DataChannel 状态影响接听/挂断。
     _sendSignal(friend.id, 'relay-call-signal', encryptedPayload);
+    appLog(
+      '通话信令已提交到实时中继：peer=${_diagnosticID(friend.id)}, '
+      'action=$action, media=$media',
+    );
     return true;
   }
 
@@ -482,14 +496,27 @@ class RealtimeChatService {
     final peer = await _ensurePeer(from, initiator: false);
     final ready = await _waitForSecurePayloads(peer);
     if (!ready) {
+      appLog(
+        '通话信令未处理：reason=端到端加密会话未就绪, '
+        'peer=${_diagnosticID(from)}',
+      );
       return;
     }
-    final clear = await _decryptText(
-      payload['cipherText'] as String? ?? '',
-      peer.sessionKey!,
-    );
-    final data = jsonDecode(clear) as Map<String, dynamic>;
-    _handlePlainCallSignal(from, data);
+    try {
+      final clear = await _decryptText(
+        payload['cipherText'] as String? ?? '',
+        peer.sessionKey!,
+      );
+      final data = jsonDecode(clear) as Map<String, dynamic>;
+      appLog(
+        '通话信令已解密：peer=${_diagnosticID(from)}, '
+        'action=${data['action'] as String? ?? ''}, '
+        'media=${data['media'] as String? ?? ''}',
+      );
+      _handlePlainCallSignal(from, data);
+    } catch (error) {
+      appLog('通话信令解密失败：peer=${_diagnosticID(from)}', error);
+    }
   }
 
   Future<bool> sendHistoryResponse({
@@ -588,16 +615,22 @@ class RealtimeChatService {
         );
         break;
       case 'connect-request':
-        await _ensurePeer(
+        final peer = await _ensurePeer(
           from,
           initiator: _preferWebRTC && _shouldInitiateOffer(from),
         );
+        // The requester may have rebuilt its local peer after a reconnect while
+        // this side still has an old session key. Always answer with our
+        // current public key so the requester can re-derive the relay key.
+        await _sendLocalKey(peer);
         break;
       case 'key':
         final peer = await _ensurePeer(from, initiator: false);
         final hadSessionKey = peer.sessionKey != null;
-        await peer.setRemoteKey(payload['publicKey'] as String? ?? '');
-        if (!hadSessionKey) {
+        final updatedSession = await peer.setRemoteKey(
+          payload['publicKey'] as String? ?? '',
+        );
+        if (!hadSessionKey || updatedSession) {
           await _sendLocalKey(peer);
         }
         if (peer.sessionKey != null) {
@@ -748,6 +781,10 @@ class RealtimeChatService {
         return true;
       }
     }
+    appLog(
+      '实时加密会话等待超时：peer=${_diagnosticID(peer.friendId)}, '
+      'connected=$connected',
+    );
     return false;
   }
 
@@ -1112,6 +1149,7 @@ class _PeerSession {
   final X25519 x25519;
 
   SimpleKeyPair? localKeyPair;
+  String? remotePublicKeyBase64;
   Uint8List? sessionKey;
   RTCPeerConnection? connection;
   RTCDataChannel? channel;
@@ -1135,13 +1173,17 @@ class _PeerSession {
     return base64Encode(publicKey.bytes);
   }
 
-  Future<void> setRemoteKey(String publicKeyBase64) async {
-    if (publicKeyBase64.isEmpty || sessionKey != null) {
-      return;
+  Future<bool> setRemoteKey(String publicKeyBase64) async {
+    final normalizedPublicKey = publicKeyBase64.trim();
+    if (normalizedPublicKey.isEmpty) {
+      return false;
+    }
+    if (remotePublicKeyBase64 == normalizedPublicKey && sessionKey != null) {
+      return false;
     }
     await initializeKeyPair();
     final remotePublicKey = SimplePublicKey(
-      base64Decode(publicKeyBase64),
+      base64Decode(normalizedPublicKey),
       type: KeyPairType.x25519,
     );
     final sharedSecret = await x25519.sharedSecretKey(
@@ -1152,7 +1194,9 @@ class _PeerSession {
     final pair = [localUserId, friendId]..sort();
     final transcript = utf8.encode(pair.join(':'));
     final digest = await Sha256().hash([...sharedBytes, ...transcript]);
+    remotePublicKeyBase64 = normalizedPublicKey;
     sessionKey = Uint8List.fromList(digest.bytes);
+    return true;
   }
 
   Future<void> dispose() async {
@@ -1160,4 +1204,15 @@ class _PeerSession {
     await connection?.close();
     await connection?.dispose();
   }
+}
+
+String _diagnosticID(String value) {
+  final normalized = value.trim();
+  if (normalized.isEmpty) {
+    return '-';
+  }
+  if (normalized.length <= 8) {
+    return normalized;
+  }
+  return normalized.substring(0, 8);
 }

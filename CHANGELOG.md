@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.28] - 2026-05-30
+
+### Fixed
+
+- 修复实时通话加密信令在单侧重连后可能卡在旧会话密钥上的问题：收到重新连接请求时会回发当前公钥，收到新公钥时会重新派生端到端加密会话，降低接听信令发送失败概率。
+- 增加通话信令与 LiveKit 入房阶段的客户端诊断日志，覆盖实时通道未连接、加密会话未就绪、信令提交/解密、凭证为空、准备入房和入房完成等关键节点，并避免记录 token、密文和私有部署信息。
+
+### Verified
+
+- `securex-app`: `flutter analyze`
+- `securex-app`: `flutter test`
+
 ## [v1.0.27] - 2026-05-30
 
 ### Fixed
