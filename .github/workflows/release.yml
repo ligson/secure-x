@@ -83,11 +83,34 @@ jobs:
           tar -C dist -czf "dist/securex-be-${version}-${{ matrix.target }}.tar.gz" "$(basename "$package_dir")"
 
       - name: Upload backend artifact
+        id: upload_backend_artifact_1
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: securex-be-${{ matrix.target }}
           path: securex-be/dist/*.tar.gz
           if-no-files-found: error
+          overwrite: true
+
+      - name: Retry upload backend artifact
+        if: steps.upload_backend_artifact_1.outcome == 'failure'
+        id: upload_backend_artifact_2
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: securex-be-${{ matrix.target }}
+          path: securex-be/dist/*.tar.gz
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Final retry upload backend artifact
+        if: steps.upload_backend_artifact_1.outcome == 'failure' && steps.upload_backend_artifact_2.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: securex-be-${{ matrix.target }}
+          path: securex-be/dist/*.tar.gz
+          if-no-files-found: error
+          overwrite: true
 
   build-windows:
     name: Flutter Windows x64
@@ -130,11 +153,34 @@ jobs:
           Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath "dist/securex-app-$version-windows-x64.zip" -Force
 
       - name: Upload Windows artifact
+        id: upload_windows_artifact_1
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: securex-app-windows-x64
           path: securex-app/dist/*.zip
           if-no-files-found: error
+          overwrite: true
+
+      - name: Retry upload Windows artifact
+        if: steps.upload_windows_artifact_1.outcome == 'failure'
+        id: upload_windows_artifact_2
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: securex-app-windows-x64
+          path: securex-app/dist/*.zip
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Final retry upload Windows artifact
+        if: steps.upload_windows_artifact_1.outcome == 'failure' && steps.upload_windows_artifact_2.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: securex-app-windows-x64
+          path: securex-app/dist/*.zip
+          if-no-files-found: error
+          overwrite: true
 
   build-macos:
     name: Flutter macOS ${{ matrix.arch }}
@@ -189,11 +235,34 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$app_path" "dist/securex-app-${version}-macos-${{ matrix.arch }}.zip"
 
       - name: Upload macOS artifact
+        id: upload_macos_artifact_1
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: securex-app-macos-${{ matrix.arch }}
           path: securex-app/dist/*.zip
           if-no-files-found: error
+          overwrite: true
+
+      - name: Retry upload macOS artifact
+        if: steps.upload_macos_artifact_1.outcome == 'failure'
+        id: upload_macos_artifact_2
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: securex-app-macos-${{ matrix.arch }}
+          path: securex-app/dist/*.zip
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Final retry upload macOS artifact
+        if: steps.upload_macos_artifact_1.outcome == 'failure' && steps.upload_macos_artifact_2.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: securex-app-macos-${{ matrix.arch }}
+          path: securex-app/dist/*.zip
+          if-no-files-found: error
+          overwrite: true
 
   build-android:
     name: Flutter Android
@@ -243,6 +312,8 @@ jobs:
           cp build/app/outputs/bundle/release/app-release.aab "dist/securex-app-${version}-android.aab"
 
       - name: Upload Android artifact
+        id: upload_android_artifact_1
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: securex-app-android
@@ -250,6 +321,31 @@ jobs:
             securex-app/dist/*.apk
             securex-app/dist/*.aab
           if-no-files-found: error
+          overwrite: true
+
+      - name: Retry upload Android artifact
+        if: steps.upload_android_artifact_1.outcome == 'failure'
+        id: upload_android_artifact_2
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: securex-app-android
+          path: |
+            securex-app/dist/*.apk
+            securex-app/dist/*.aab
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Final retry upload Android artifact
+        if: steps.upload_android_artifact_1.outcome == 'failure' && steps.upload_android_artifact_2.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: securex-app-android
+          path: |
+            securex-app/dist/*.apk
+            securex-app/dist/*.aab
+          if-no-files-found: error
+          overwrite: true
 
   build-ios:
     name: Flutter iOS unsigned
@@ -296,11 +392,34 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$app_path" "dist/securex-app-${version}-ios-unsigned.zip"
 
       - name: Upload iOS artifact
+        id: upload_ios_artifact_1
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: securex-app-ios-unsigned
           path: securex-app/dist/*.zip
           if-no-files-found: error
+          overwrite: true
+
+      - name: Retry upload iOS artifact
+        if: steps.upload_ios_artifact_1.outcome == 'failure'
+        id: upload_ios_artifact_2
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: securex-app-ios-unsigned
+          path: securex-app/dist/*.zip
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Final retry upload iOS artifact
+        if: steps.upload_ios_artifact_1.outcome == 'failure' && steps.upload_ios_artifact_2.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: securex-app-ios-unsigned
+          path: securex-app/dist/*.zip
+          if-no-files-found: error
+          overwrite: true
 
   release:
     name: Publish GitHub Release
@@ -337,6 +456,22 @@ jobs:
           fi
 
       - name: Download artifacts
+        id: download_artifacts_1
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Retry download artifacts
+        if: steps.download_artifacts_1.outcome == 'failure'
+        id: download_artifacts_2
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Final retry download artifacts
+        if: steps.download_artifacts_1.outcome == 'failure' && steps.download_artifacts_2.outcome == 'failure'
         uses: actions/download-artifact@v8
         with:
           path: artifacts

@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.27] - 2026-05-30
+
+### Fixed
+
+- 为 GitHub Release workflow 的 artifact 上传和下载步骤增加重试，并允许重试时覆盖半创建的 artifact，降低 GitHub artifact 服务 DNS 或网络瞬断导致 Release 失败的概率。
+
 ## [v1.0.26] - 2026-05-30
 
 ### Added
