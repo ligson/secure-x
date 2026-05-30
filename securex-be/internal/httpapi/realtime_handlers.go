@@ -18,6 +18,9 @@ const (
 	realtimePongWait   = 75 * time.Second
 	realtimePingEvery  = 25 * time.Second
 	realtimeSendBuffer = 128
+
+	realtimePendingSignalTTL = 45 * time.Second
+	realtimePendingSignalMax = 64
 )
 
 func (h *Handler) realtimeConfig(c *gin.Context) {
@@ -131,6 +134,7 @@ var realtimeUpgrader = websocket.Upgrader{
 type realtimeHub struct {
 	mu      sync.RWMutex
 	clients map[string]map[*realtimeClient]struct{}
+	pending map[string][]pendingRealtimeSignal
 }
 
 type realtimeClient struct {
@@ -149,8 +153,16 @@ type realtimeSignal struct {
 	Payload map[string]any `json:"payload,omitempty"`
 }
 
+type pendingRealtimeSignal struct {
+	signal    realtimeSignal
+	expiresAt time.Time
+}
+
 func newRealtimeHub() *realtimeHub {
-	return &realtimeHub{clients: map[string]map[*realtimeClient]struct{}{}}
+	return &realtimeHub{
+		clients: map[string]map[*realtimeClient]struct{}{},
+		pending: map[string][]pendingRealtimeSignal{},
+	}
 }
 
 func (h *Handler) realtimeWebSocket(c *gin.Context) {
@@ -170,6 +182,7 @@ func (h *Handler) realtimeWebSocket(c *gin.Context) {
 		hub:      h.realtimeHub,
 	}
 	h.realtimeHub.add(client)
+	h.realtimeHub.flushPending(client)
 	if client.deviceID != "" {
 		_ = h.db.Model(&model.ChatDevice{}).
 			Where("id = ? AND user_id = ?", client.deviceID, userID).
@@ -250,22 +263,90 @@ func (h *realtimeHub) sendPresenceSnapshot(client *realtimeClient, friendIDs []s
 }
 
 func (h *realtimeHub) forward(to string, signal realtimeSignal) bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
+	now := time.Now()
+	h.prunePendingLocked(to, now)
 	clients := h.clients[to]
 	if len(clients) == 0 {
+		h.queuePendingLocked(to, signal, now)
 		log.Printf("实时信令未投递：to=%s, type=%s, reason=用户不在线", to, signal.Type)
 		return false
 	}
+	delivered := false
 	for client := range clients {
 		select {
 		case client.send <- signal:
+			delivered = true
 		default:
 			log.Printf("实时信令未投递：to=%s, type=%s, reason=发送队列已满", to, signal.Type)
 		}
 	}
-	return true
+	if !delivered {
+		h.queuePendingLocked(to, signal, now)
+	}
+	return delivered
+}
+
+func (h *realtimeHub) flushPending(client *realtimeClient) {
+	h.mu.Lock()
+	now := time.Now()
+	h.prunePendingLocked(client.userID, now)
+	signals := h.pending[client.userID]
+	delete(h.pending, client.userID)
+	h.mu.Unlock()
+
+	for _, pending := range signals {
+		select {
+		case client.send <- pending.signal:
+			log.Printf("实时信令补投递：to=%s, type=%s", client.userID, pending.signal.Type)
+		default:
+			log.Printf("实时信令补投递失败：to=%s, type=%s, reason=发送队列已满", client.userID, pending.signal.Type)
+		}
+	}
+}
+
+func (h *realtimeHub) queuePendingLocked(to string, signal realtimeSignal, now time.Time) {
+	if !isPendingRealtimeSignal(signal.Type) {
+		return
+	}
+	h.prunePendingLocked(to, now)
+	pending := append(h.pending[to], pendingRealtimeSignal{
+		signal:    signal,
+		expiresAt: now.Add(realtimePendingSignalTTL),
+	})
+	if len(pending) > realtimePendingSignalMax {
+		pending = pending[len(pending)-realtimePendingSignalMax:]
+	}
+	h.pending[to] = pending
+}
+
+func (h *realtimeHub) prunePendingLocked(to string, now time.Time) {
+	signals := h.pending[to]
+	if len(signals) == 0 {
+		return
+	}
+	kept := signals[:0]
+	for _, signal := range signals {
+		if now.Before(signal.expiresAt) {
+			kept = append(kept, signal)
+		}
+	}
+	if len(kept) == 0 {
+		delete(h.pending, to)
+		return
+	}
+	h.pending[to] = kept
+}
+
+func isPendingRealtimeSignal(signalType string) bool {
+	switch signalType {
+	case "key", "connect-request", "call-signal", "relay-call-signal":
+		return true
+	default:
+		return false
+	}
 }
 
 func (h *realtimeHub) notifyChatPending(

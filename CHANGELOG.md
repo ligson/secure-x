@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.24] - 2026-05-30
+
+### Fixed
+
+- 修复语音/视频通话接听信令在对方 WebSocket 短暂重连时被直接丢弃的问题：服务端对关键通话信令做短 TTL 内存补投递，客户端对邀请、接听、拒绝、挂断信令增加重试，接听信令未发送成功前不进入 LiveKit 房间。
+- 修复视频通话远端视频未订阅成功时主窗口回退显示本地画面，导致主窗口和小窗都像是自己的视频的问题；默认主窗口只显示远端视频，本地视频保留在小窗。
+- LiveKit 客户端连接强制使用 TURN relay 候选，匹配当前只暴露 TURN/TLS 的私有部署模式，降低 ICE 选到不可达候选后断开的概率。
+
+### Verified
+
+- `securex-be`: `go test ./...`
+- `securex-app`: `dart analyze securex-app`
+- `securex-app`: `flutter test`
+
 ## [v1.0.23] - 2026-05-30
 
 ### Documentation

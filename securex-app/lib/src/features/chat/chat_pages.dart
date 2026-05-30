@@ -2865,7 +2865,9 @@ class _ChatCallPageState extends State<_ChatCallPage> {
         });
         return;
       }
-      final invited = await _sendCallSignal('invite', {'provider': 'livekit'});
+      final invited = await _sendCallSignalReliably('invite', {
+        'provider': 'livekit',
+      });
       if (!mounted) {
         return;
       }
@@ -2932,24 +2934,77 @@ class _ChatCallPageState extends State<_ChatCallPage> {
     );
   }
 
+  Future<bool> _sendCallSignalReliably(
+    String action, [
+    Map<String, dynamic> payload = const {},
+    int attempts = 5,
+  ]) async {
+    final retryDelays = <Duration>[
+      Duration.zero,
+      const Duration(milliseconds: 450),
+      const Duration(milliseconds: 900),
+      const Duration(milliseconds: 1600),
+      const Duration(milliseconds: 2500),
+    ];
+    for (var index = 0; index < attempts && !_ended; index += 1) {
+      if (index < retryDelays.length && retryDelays[index] > Duration.zero) {
+        await Future<void>.delayed(retryDelays[index]);
+      }
+      if (!mounted || _ended) {
+        return false;
+      }
+      try {
+        if (await _sendCallSignal(action, payload)) {
+          return true;
+        }
+      } catch (error) {
+        appLog('通话信令发送失败：action=$action, attempt=${index + 1}', error);
+      }
+    }
+    return false;
+  }
+
   Future<void> _acceptIncomingCall() async {
     if (mounted) {
       setState(() {
         _incomingWaiting = false;
-        _accepted = true;
-        _notice = '正在接入音视频通道...';
+        _accepted = false;
+        _notice = '正在发送接听信令...';
       });
     }
     try {
-      await _sendCallSignal('accept');
+      final accepted = await _sendCallSignalReliably('accept');
+      if (!accepted) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _incomingWaiting = true;
+          _accepted = false;
+          _notice = '接听信令发送失败，请确认网络后重试。';
+        });
+        return;
+      }
+      if (mounted) {
+        setState(() {
+          _accepted = true;
+          _notice = '正在接入音视频通道...';
+        });
+      }
       await _joinLiveKitRoom();
+      unawaited(
+        _sendCallSignalReliably('accept', {
+          'provider': 'livekit',
+          'joined': true,
+        }, 2),
+      );
     } catch (_) {
       _setNotice('接听失败，请检查麦克风或摄像头权限。');
     }
   }
 
   Future<void> _rejectIncomingCall() async {
-    await _sendCallSignal('reject');
+    await _sendCallSignalReliably('reject');
     await _endCall(sendAction: null);
     if (mounted) {
       Navigator.of(context).pop();
@@ -2977,7 +3032,7 @@ class _ChatCallPageState extends State<_ChatCallPage> {
     }
     _ended = true;
     if (sendAction != null) {
-      await _sendCallSignal(sendAction);
+      await _sendCallSignalReliably(sendAction, const {}, 3);
     }
     await _disconnectLiveKit();
   }
@@ -3099,7 +3154,12 @@ class _ChatCallPageState extends State<_ChatCallPage> {
           .connect(
             credential.url,
             credential.token,
-            connectOptions: const lk.ConnectOptions(autoSubscribe: true),
+            connectOptions: const lk.ConnectOptions(
+              autoSubscribe: true,
+              rtcConfiguration: lk.RTCConfiguration(
+                iceTransportPolicy: lk.RTCIceTransportPolicy.relay,
+              ),
+            ),
           )
           .timeout(const Duration(seconds: 15));
       await _enableLiveKitLocalMedia(room);
@@ -3391,7 +3451,7 @@ class _ChatCallPageState extends State<_ChatCallPage> {
     for (final participant in room.remoteParticipants.values) {
       for (final publication in participant.videoTrackPublications) {
         final track = publication.track;
-        if (track != null && !publication.muted) {
+        if (publication.subscribed && track != null && !publication.muted) {
           return track;
         }
       }
@@ -3532,9 +3592,7 @@ class _ChatCallPageState extends State<_ChatCallPage> {
     required lk.VideoTrack? remoteVideo,
     required lk.VideoTrack? localVideo,
   }) {
-    final mainTrack = _showLocalVideoAsMain
-        ? localVideo ?? remoteVideo
-        : remoteVideo ?? localVideo;
+    final mainTrack = _showLocalVideoAsMain ? localVideo : remoteVideo;
     if (widget.initialVideo && mainTrack != null) {
       return lk.VideoTrackRenderer(
         mainTrack,
@@ -3559,9 +3617,7 @@ class _ChatCallPageState extends State<_ChatCallPage> {
     required lk.VideoTrack? remoteVideo,
     required lk.VideoTrack? localVideo,
   }) {
-    final previewTrack = _showLocalVideoAsMain
-        ? remoteVideo ?? localVideo
-        : localVideo ?? remoteVideo;
+    final previewTrack = _showLocalVideoAsMain ? remoteVideo : localVideo;
     if (previewTrack == null) {
       return const SizedBox.shrink();
     }
