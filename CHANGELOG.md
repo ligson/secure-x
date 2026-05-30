@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.26] - 2026-05-30
+
+### Added
+
+- 增加音视频通话排障日志：记录 LiveKit token 签发/拒绝原因、实时通话信令收到/转发/缓存/补投递阶段和短 ID 诊断信息，避免记录 token、密钥、密文 payload 或私有部署地址。
+
 ## [v1.0.25] - 2026-05-30
 
 ### Fixed

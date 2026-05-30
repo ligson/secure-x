@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -30,16 +31,32 @@ func (h *Handler) createLiveKitCallToken(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	peerUserID := strings.TrimSpace(req.PeerUserID)
 	if peerUserID == "" || peerUserID == userID {
+		log.Printf(
+			"LiveKit 通话凭证拒绝：user=%s, peer=%s, reason=无效好友",
+			diagnosticID(userID),
+			diagnosticID(peerUserID),
+		)
 		RespondFailure(c, http.StatusBadRequest, "请选择有效的通话好友")
 		return
 	}
 	if !h.canExchangeRealtime(userID, peerUserID) {
+		log.Printf(
+			"LiveKit 通话凭证拒绝：user=%s, peer=%s, reason=无实时权限",
+			diagnosticID(userID),
+			diagnosticID(peerUserID),
+		)
 		RespondFailure(c, http.StatusForbidden, "无权与该用户发起通话")
 		return
 	}
 
 	identity, err := h.liveKitParticipantIdentity(userID, req.DeviceID)
 	if err != nil {
+		log.Printf(
+			"LiveKit 通话凭证拒绝：user=%s, peer=%s, device=%s, reason=设备校验失败",
+			diagnosticID(userID),
+			diagnosticID(peerUserID),
+			diagnosticID(req.DeviceID),
+		)
 		RespondFailure(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -47,9 +64,26 @@ func (h *Handler) createLiveKitCallToken(c *gin.Context) {
 	roomName := liveKitRoomName(userID, peerUserID, req.CallID)
 	token, err := h.issueLiveKitToken(identity, roomName)
 	if err != nil {
+		log.Printf(
+			"LiveKit 通话凭证生成失败：user=%s, peer=%s, call=%s, media=%s, err=%v",
+			diagnosticID(userID),
+			diagnosticID(peerUserID),
+			diagnosticID(req.CallID),
+			normalizeCallMedia(req.Media),
+			err,
+		)
 		RespondFailure(c, http.StatusInternalServerError, "生成通话凭证失败")
 		return
 	}
+	log.Printf(
+		"LiveKit 通话凭证已签发：user=%s, peer=%s, device=%s, call=%s, media=%s, identity=%s",
+		diagnosticID(userID),
+		diagnosticID(peerUserID),
+		diagnosticID(req.DeviceID),
+		diagnosticID(req.CallID),
+		normalizeCallMedia(req.Media),
+		diagnosticID(identity),
+	)
 
 	RespondSuccess(c, http.StatusOK, "通话凭证已生成", gin.H{
 		"livekit": gin.H{

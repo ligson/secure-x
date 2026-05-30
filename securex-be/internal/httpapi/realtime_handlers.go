@@ -169,7 +169,7 @@ func (h *Handler) realtimeWebSocket(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	conn, err := realtimeUpgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		log.Printf("实时信令连接升级失败：userID=%s, err=%v", userID, err)
+		log.Printf("实时信令连接升级失败：user=%s, err=%v", diagnosticID(userID), err)
 		return
 	}
 
@@ -189,7 +189,11 @@ func (h *Handler) realtimeWebSocket(c *gin.Context) {
 			Update("last_seen_at", time.Now()).
 			Error
 	}
-	log.Printf("实时信令已连接：userID=%s", userID)
+	log.Printf(
+		"实时信令已连接：user=%s, device=%s",
+		diagnosticID(userID),
+		diagnosticID(client.deviceID),
+	)
 	go client.writeLoop()
 
 	peerIDs := h.realtimePeerIDs(userID)
@@ -199,7 +203,11 @@ func (h *Handler) realtimeWebSocket(c *gin.Context) {
 	}
 	defer func() {
 		h.realtimeHub.remove(client)
-		log.Printf("实时信令已断开：userID=%s", userID)
+		log.Printf(
+			"实时信令已断开：user=%s, device=%s",
+			diagnosticID(userID),
+			diagnosticID(client.deviceID),
+		)
 		if !h.realtimeHub.isOnline(userID) {
 			h.realtimeHub.broadcastPresence(userID, false, peerIDs)
 		}
@@ -270,8 +278,20 @@ func (h *realtimeHub) forward(to string, signal realtimeSignal) bool {
 	h.prunePendingLocked(to, now)
 	clients := h.clients[to]
 	if len(clients) == 0 {
-		h.queuePendingLocked(to, signal, now)
-		log.Printf("实时信令未投递：to=%s, type=%s, reason=用户不在线", to, signal.Type)
+		queued := h.queuePendingLocked(to, signal, now)
+		log.Printf(
+			"实时信令未投递：to=%s, type=%s, reason=用户不在线",
+			diagnosticID(to),
+			signal.Type,
+		)
+		if queued {
+			log.Printf(
+				"实时诊断信令已缓存：type=%s, from=%s, to=%s, reason=用户不在线",
+				signal.Type,
+				diagnosticID(signal.From),
+				diagnosticID(to),
+			)
+		}
 		return false
 	}
 	delivered := false
@@ -280,11 +300,23 @@ func (h *realtimeHub) forward(to string, signal realtimeSignal) bool {
 		case client.send <- signal:
 			delivered = true
 		default:
-			log.Printf("实时信令未投递：to=%s, type=%s, reason=发送队列已满", to, signal.Type)
+			log.Printf(
+				"实时信令未投递：to=%s, type=%s, reason=发送队列已满",
+				diagnosticID(to),
+				signal.Type,
+			)
 		}
 	}
 	if !delivered {
-		h.queuePendingLocked(to, signal, now)
+		queued := h.queuePendingLocked(to, signal, now)
+		if queued {
+			log.Printf(
+				"实时诊断信令已缓存：type=%s, from=%s, to=%s, reason=发送队列已满",
+				signal.Type,
+				diagnosticID(signal.From),
+				diagnosticID(to),
+			)
+		}
 	}
 	return delivered
 }
@@ -300,16 +332,27 @@ func (h *realtimeHub) flushPending(client *realtimeClient) {
 	for _, pending := range signals {
 		select {
 		case client.send <- pending.signal:
-			log.Printf("实时信令补投递：to=%s, type=%s", client.userID, pending.signal.Type)
+			log.Printf(
+				"实时信令补投递：to=%s, device=%s, type=%s, from=%s",
+				diagnosticID(client.userID),
+				diagnosticID(client.deviceID),
+				pending.signal.Type,
+				diagnosticID(pending.signal.From),
+			)
 		default:
-			log.Printf("实时信令补投递失败：to=%s, type=%s, reason=发送队列已满", client.userID, pending.signal.Type)
+			log.Printf(
+				"实时信令补投递失败：to=%s, device=%s, type=%s, reason=发送队列已满",
+				diagnosticID(client.userID),
+				diagnosticID(client.deviceID),
+				pending.signal.Type,
+			)
 		}
 	}
 }
 
-func (h *realtimeHub) queuePendingLocked(to string, signal realtimeSignal, now time.Time) {
+func (h *realtimeHub) queuePendingLocked(to string, signal realtimeSignal, now time.Time) bool {
 	if !isPendingRealtimeSignal(signal.Type) {
-		return
+		return false
 	}
 	h.prunePendingLocked(to, now)
 	pending := append(h.pending[to], pendingRealtimeSignal{
@@ -320,6 +363,7 @@ func (h *realtimeHub) queuePendingLocked(to string, signal realtimeSignal, now t
 		pending = pending[len(pending)-realtimePendingSignalMax:]
 	}
 	h.pending[to] = pending
+	return true
 }
 
 func (h *realtimeHub) prunePendingLocked(to string, now time.Time) {
@@ -347,6 +391,26 @@ func isPendingRealtimeSignal(signalType string) bool {
 	default:
 		return false
 	}
+}
+
+func isDiagnosticRealtimeSignal(signalType string) bool {
+	switch signalType {
+	case "key", "connect-request", "call-signal", "relay-call-signal":
+		return true
+	default:
+		return false
+	}
+}
+
+func diagnosticID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "-"
+	}
+	if len(value) <= 8 {
+		return value
+	}
+	return value[:8]
 }
 
 func (h *realtimeHub) notifyChatPending(
@@ -474,13 +538,34 @@ func (c *realtimeClient) readLoop(handler *Handler) {
 	for {
 		var signal realtimeSignal
 		if err := c.conn.ReadJSON(&signal); err != nil {
-			log.Printf("实时信令读取失败：userID=%s, err=%v", c.userID, err)
+			log.Printf(
+				"实时信令读取失败：user=%s, device=%s, err=%v",
+				diagnosticID(c.userID),
+				diagnosticID(c.deviceID),
+				err,
+			)
 			return
 		}
 		if signal.To == "" || signal.To == c.userID {
+			if isDiagnosticRealtimeSignal(signal.Type) {
+				log.Printf(
+					"实时诊断信令忽略：type=%s, from=%s, to=%s, reason=目标无效",
+					signal.Type,
+					diagnosticID(c.userID),
+					diagnosticID(signal.To),
+				)
+			}
 			continue
 		}
 		if !handler.canExchangeRealtime(c.userID, signal.To) {
+			if isDiagnosticRealtimeSignal(signal.Type) {
+				log.Printf(
+					"实时诊断信令拒绝：type=%s, from=%s, to=%s, reason=无实时权限",
+					signal.Type,
+					diagnosticID(c.userID),
+					diagnosticID(signal.To),
+				)
+			}
 			continue
 		}
 
@@ -488,8 +573,26 @@ func (c *realtimeClient) readLoop(handler *Handler) {
 		if signal.Payload == nil {
 			signal.Payload = map[string]any{}
 		}
+		if isDiagnosticRealtimeSignal(signal.Type) {
+			log.Printf(
+				"实时诊断信令收到：type=%s, from=%s, to=%s, device=%s",
+				signal.Type,
+				diagnosticID(c.userID),
+				diagnosticID(signal.To),
+				diagnosticID(c.deviceID),
+			)
+		}
 		handler.touchChatDeviceActivity(c.userID, c.deviceID)
-		handler.realtimeHub.forward(signal.To, signal)
+		delivered := handler.realtimeHub.forward(signal.To, signal)
+		if isDiagnosticRealtimeSignal(signal.Type) {
+			log.Printf(
+				"实时诊断信令转发结果：type=%s, from=%s, to=%s, delivered=%t",
+				signal.Type,
+				diagnosticID(c.userID),
+				diagnosticID(signal.To),
+				delivered,
+			)
+		}
 	}
 }
 
@@ -505,8 +608,9 @@ func (c *realtimeClient) writeLoop() {
 			}
 			if err := c.writeJSON(signal); err != nil {
 				log.Printf(
-					"实时信令写入失败：userID=%s, type=%s, err=%v",
-					c.userID,
+					"实时信令写入失败：user=%s, device=%s, type=%s, err=%v",
+					diagnosticID(c.userID),
+					diagnosticID(c.deviceID),
 					signal.Type,
 					err,
 				)
@@ -514,7 +618,12 @@ func (c *realtimeClient) writeLoop() {
 			}
 		case <-ticker.C:
 			if err := c.writeControl(websocket.PingMessage, nil); err != nil {
-				log.Printf("实时信令心跳发送失败：userID=%s, err=%v", c.userID, err)
+				log.Printf(
+					"实时信令心跳发送失败：user=%s, device=%s, err=%v",
+					diagnosticID(c.userID),
+					diagnosticID(c.deviceID),
+					err,
+				)
 				return
 			}
 		}

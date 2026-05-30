@@ -226,6 +226,7 @@
 - GitHub Release 打包由 `.github/workflows/release.yml` 维护，推送 `v*` tag 后构建前端 Windows/macOS/Android/iOS 与后端 Linux/macOS 产物，并从 `CHANGELOG.md` 中与当前 tag 匹配的版本章节生成 Release 内容
 - Flutter 发版构建时必须把目标 tag 的语义版本注入应用内部版本：`build-name` 必须与当前 `v*` tag 对齐，`build-number` 必须保持单调递增；不能只改安装包文件名而让应用内显示版本停留在旧值
 - `CHANGELOG.md` 发布章节必须同时包含版本与日期，格式为 `## [vX.Y.Z] - YYYY-MM-DD`；未发布变更可先放在 `## [Unreleased]`
+- 除非用户明确说“发版”、指定要发布某个版本，或明确要求推送 release tag，否则不要主动执行发版流程；修复、排查和部署配置调整默认只做到代码修改、验证和说明，不能擅自提交 release commit、创建 `v*` tag、推送 tag 或触发 GitHub Release workflow
 - 用户说“发版”时，默认从当前最新 `v*` tag 自动递增 patch 版本；例如当前最新为 `v1.0.0`，下一次就是 `v1.0.1`，除非用户明确指定其他版本
 - 发版前必须先整理代码和文档，更新对应版本的 `CHANGELOG.md` 内容，然后提交、打 tag、推送 `main` 与 tag；不要跳过文档和 changelog
 - 发版时必须先确保 release commit 已提交到当前 `HEAD`，再打对应版本 tag；禁止先 push tag 再补 release commit，也禁止把已存在 tag 改指向新提交
