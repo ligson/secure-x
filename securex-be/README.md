@@ -70,6 +70,8 @@ realtime:
 
 语音/视频通话建议部署自托管 LiveKit。开启后，后端会用 `apiKey/apiSecret` 为已授权的好友或共同群成员签发短期房间 token；客户端通过 `/api/v1/realtime/config` 获取 LiveKit 地址，不需要在 App 中硬编码 RTC 端口。
 
+如果 LiveKit TURN/TLS 与普通 HTTPS 共用公网 `443/TCP`，入口层必须使用四层 SNI 分流，并为 TURN/TLS 准备独立域名；HTTP 反向代理的 `location` 规则只能处理 LiveKit 信令 WebSocket，不能处理 TURN/TLS 媒体中继流量。部署完成后应验证 LiveKit join response 中的 ICE server 指向可实际连通的 TURN/TLS 域名。
+
 ## 生产部署脚本
 
 Release 后端包中的可执行文件名为 `secure-x`，并包含以下生产辅助文件：

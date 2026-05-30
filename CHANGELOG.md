@@ -4,10 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.23] - 2026-05-30
+
 ### Documentation
 
 - 补充私有部署信息不得写入 tracked 文件的协作规则，并将具体服务器、路径和端口信息改为只允许记录在本机忽略文件中。
 - 将文档中的个人本机绝对路径改为仓库相对路径，并补充团队协作场景下禁止提交个人路径和敏感信息的规则。
+- 补充自托管 LiveKit 的 TURN/TLS 部署说明：当公网 `443/TCP` 同时承载 HTTPS 与 TURN/TLS 时，必须使用独立 TURN 域名和四层 SNI 分流，避免客户端收到不可用的 HTTP 反代入口作为 TURN/TLS 端点。
+
+### Verified
+
+- 未运行代码测试；本版本仅包含文档与部署约束更新。
 
 ## [v1.0.22] - 2026-05-29
 
