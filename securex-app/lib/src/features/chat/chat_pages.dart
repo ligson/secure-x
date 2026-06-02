@@ -2868,12 +2868,14 @@ class _ChatCallPage extends StatefulWidget {
     required this.friend,
     required this.initialVideo,
     this.incomingCallId,
+    this.incomingCallPayload = const {},
   });
 
   final AppController controller;
   final PublicUser friend;
   final bool initialVideo;
   final String? incomingCallId;
+  final Map<String, dynamic> incomingCallPayload;
 
   @override
   State<_ChatCallPage> createState() => _ChatCallPageState();
@@ -2898,6 +2900,8 @@ class _ChatCallPageState extends State<_ChatCallPage>
   bool _resolvingCompetingCall = false;
   bool _canRetryJoin = false;
   bool _remoteParticipantSeen = false;
+  bool _liveKitE2eeEnabled = false;
+  String? _mediaE2eeKey;
   DateTime? _connectedAt;
   DateTime? _lastJoinRetryAt;
   int _joinRetryAttempt = 0;
@@ -2921,7 +2925,49 @@ class _ChatCallPageState extends State<_ChatCallPage>
     if (normalized.length <= 8) {
       return normalized;
     }
-    return normalized.substring(0, 8);
+    if (normalized.length <= 12) {
+      return normalized;
+    }
+    return '${normalized.substring(0, 4)}...${normalized.substring(normalized.length - 6)}';
+  }
+
+  String _generateMediaE2eeKey() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(32, (_) => random.nextInt(256));
+    return base64UrlEncode(bytes);
+  }
+
+  String? _extractMediaE2eeKey(Map<String, dynamic> payload) {
+    final key = payload['mediaE2eeKey'] ?? payload['winnerMediaE2eeKey'];
+    if (key is! String || key.trim().isEmpty) {
+      return null;
+    }
+    return key.trim();
+  }
+
+  Map<String, dynamic> _liveKitInvitePayload() {
+    return {
+      'provider': 'livekit',
+      if (_mediaE2eeKey != null) ...{
+        'mediaE2ee': 'securex-livekit-e2ee-v1',
+        'mediaE2eeKey': _mediaE2eeKey,
+      },
+    };
+  }
+
+  Map<String, dynamic> _liveKitAcceptPayload({
+    bool joined = false,
+    bool glareResolved = false,
+  }) {
+    return {
+      'provider': 'livekit',
+      if (joined) 'joined': true,
+      if (glareResolved) 'glareResolved': true,
+      if (_mediaE2eeKey != null) ...{
+        'mediaE2ee': 'securex-livekit-e2ee-v1',
+        'mediaE2eeReady': true,
+      },
+    };
   }
 
   void _markCallPhase(SecureXCallPhase phase, {DateTime? connectedAt}) {
@@ -2933,7 +2979,7 @@ class _ChatCallPageState extends State<_ChatCallPage>
   }
 
   void _recordCallEvent(String phase, String reason) {
-    final key = '$phase:$reason';
+    final key = '$_callId:$phase:$reason';
     if (!_recordedCallEvents.add(key)) {
       return;
     }
@@ -2958,6 +3004,10 @@ class _ChatCallPageState extends State<_ChatCallPage>
     _media = widget.initialVideo ? 'video' : 'audio';
     _cameraOn = _videoCall;
     _incomingWaiting = _isIncoming;
+    _mediaE2eeKey = _isIncoming
+        ? _extractMediaE2eeKey(widget.incomingCallPayload)
+        : _generateMediaE2eeKey();
+    _liveKitE2eeEnabled = _isIncoming && _mediaE2eeKey != null;
     if (!_registerCallSession()) {
       _ended = true;
       _notice = '当前已有通话，请先结束后再重试。';
@@ -3034,9 +3084,10 @@ class _ChatCallPageState extends State<_ChatCallPage>
         });
         return;
       }
-      final invited = await _sendCallSignalReliably('invite', {
-        'provider': 'livekit',
-      });
+      final invited = await _sendCallSignalReliably(
+        'invite',
+        _liveKitInvitePayload(),
+      );
       if (!mounted) {
         return;
       }
@@ -3082,11 +3133,17 @@ class _ChatCallPageState extends State<_ChatCallPage>
         if (_isIncoming) {
           return;
         }
+        _liveKitE2eeEnabled =
+            _mediaE2eeKey != null && signal.payload['mediaE2eeReady'] == true;
         _accepted = true;
         _markCallPhase(SecureXCallPhase.joining);
         _recordCallEvent('accepted', 'remote-accepted');
+        _recordCallEvent(
+          'media-e2ee',
+          _liveKitE2eeEnabled ? 'enabled' : 'not-confirmed',
+        );
         _setNotice('对方已接听，正在接入音视频通道...');
-        await _joinLiveKitRoom();
+        await _joinLiveKitRoomAfterAccept('remote-accepted');
         break;
       case 'reject':
         if (await _handleSimultaneousResolution(signal)) {
@@ -3151,6 +3208,10 @@ class _ChatCallPageState extends State<_ChatCallPage>
           'reason': 'simultaneous-call-local-wins',
           'winnerCallId': _callId,
           'winnerMedia': _media,
+          if (_mediaE2eeKey != null) ...{
+            'winnerMediaE2ee': 'securex-livekit-e2ee-v1',
+            'winnerMediaE2eeKey': _mediaE2eeKey,
+          },
         },
       );
       _setNotice('检测到双方同时呼叫，继续等待对方接听...');
@@ -3174,6 +3235,7 @@ class _ChatCallPageState extends State<_ChatCallPage>
     await _switchToWinningCall(
       callId: signal.callId,
       media: _normalizeCallMedia(signal.media),
+      mediaE2eeKey: _extractMediaE2eeKey(signal.payload),
       notice: '检测到双方同时呼叫，正在合并通话...',
     );
   }
@@ -3194,6 +3256,7 @@ class _ChatCallPageState extends State<_ChatCallPage>
     await _switchToWinningCall(
       callId: winnerCallId,
       media: _normalizeCallMedia(winnerMedia ?? signal.media),
+      mediaE2eeKey: _extractMediaE2eeKey(signal.payload),
       notice: '检测到双方同时呼叫，正在切换到同一通话...',
     );
     return true;
@@ -3202,6 +3265,7 @@ class _ChatCallPageState extends State<_ChatCallPage>
   Future<void> _switchToWinningCall({
     required String callId,
     required String media,
+    required String? mediaE2eeKey,
     required String notice,
   }) async {
     if (!mounted || _ended || _resolvingCompetingCall) {
@@ -3224,15 +3288,18 @@ class _ChatCallPageState extends State<_ChatCallPage>
       _callId = callId;
       _media = media;
       _cameraOn = _videoCall;
+      _mediaE2eeKey = mediaE2eeKey;
+      _liveKitE2eeEnabled = _mediaE2eeKey != null;
       _accepted = false;
       _incomingWaiting = false;
       _notice = notice;
     });
     try {
-      final accepted = await _sendCallSignalReliably('accept', {
-        'provider': 'livekit',
-        'glareResolved': true,
-      }, 3);
+      final accepted = await _sendCallSignalReliably(
+        'accept',
+        _liveKitAcceptPayload(glareResolved: true),
+        3,
+      );
       if (!accepted) {
         _setNotice('通话合并失败，请稍后重试。');
         return;
@@ -3243,7 +3310,7 @@ class _ChatCallPageState extends State<_ChatCallPage>
           _notice = '正在接入音视频通道...';
         });
       }
-      await _joinLiveKitRoom();
+      await _joinLiveKitRoomAfterAccept('simultaneous-call-accepted');
     } finally {
       _resolvingCompetingCall = false;
     }
@@ -3321,7 +3388,10 @@ class _ChatCallPageState extends State<_ChatCallPage>
     _markCallPhase(SecureXCallPhase.accepting);
     _recordCallEvent('accepting', 'user-accepted');
     try {
-      final accepted = await _sendCallSignalReliably('accept');
+      final accepted = await _sendCallSignalReliably(
+        'accept',
+        _liveKitAcceptPayload(),
+      );
       if (!accepted) {
         if (!mounted) {
           return;
@@ -3341,13 +3411,14 @@ class _ChatCallPageState extends State<_ChatCallPage>
           _notice = '正在接入音视频通道...';
         });
       }
-      await _joinLiveKitRoom();
-      unawaited(
-        _sendCallSignalReliably('accept', {
-          'provider': 'livekit',
-          'joined': true,
-        }, 2),
-      );
+      await _joinLiveKitRoomAfterAccept('local-accepted');
+      if (_liveKitConnected) {
+        unawaited(
+          _sendCallSignalReliably('accept', {
+            ..._liveKitAcceptPayload(joined: true),
+          }, 2),
+        );
+      }
     } catch (_) {
       _markCallPhase(SecureXCallPhase.failed);
       _recordCallEvent('failed', 'accept-exception');
@@ -3400,7 +3471,16 @@ class _ChatCallPageState extends State<_ChatCallPage>
   }
 
   Future<void> _joinLiveKitRoom() async {
-    if (_liveKitConnected || _joiningLiveKit || _ended) {
+    if (_ended) {
+      _recordCallEvent('join-skipped', 'call-ended');
+      return;
+    }
+    if (_liveKitConnected) {
+      _recordCallEvent('join-skipped', 'already-connected');
+      return;
+    }
+    if (_joiningLiveKit) {
+      _recordCallEvent('join-skipped', 'already-joining');
       return;
     }
     final rtcConfig = widget.controller.realtimeConfig?.rtc;
@@ -3437,11 +3517,11 @@ class _ChatCallPageState extends State<_ChatCallPage>
       }
       appLog(
         'LiveKit 准备入房：media=$_media, incoming=$_isIncoming, '
-        'turnMode=${credential.turnMode}, urlScheme=${_uriScheme(credential.url)}',
+        'turnMode=${credential.turnMode}, urlScheme=${_uriScheme(credential.url)}, '
+        'mediaE2ee=$_liveKitE2eeEnabled',
       );
-      final room = lk.Room(
-        roomOptions: const lk.RoomOptions(adaptiveStream: false),
-      );
+      final roomOptions = await _createLiveKitRoomOptions();
+      final room = lk.Room(roomOptions: roomOptions);
       final listener = room.createListener()
         ..on<lk.RoomConnectedEvent>((_) {
           if (!mounted) {
@@ -3590,6 +3670,58 @@ class _ChatCallPageState extends State<_ChatCallPage>
       _setNotice('通话接入失败，请检查音视频服务、网络或设备权限。');
     } finally {
       _joiningLiveKit = false;
+    }
+  }
+
+  Future<void> _joinLiveKitRoomAfterAccept(String reason) async {
+    await _joinLiveKitRoom();
+    await _ensureLiveKitJoinAfterAccept(reason);
+  }
+
+  Future<lk.RoomOptions> _createLiveKitRoomOptions() async {
+    if (!_liveKitE2eeEnabled || _mediaE2eeKey == null) {
+      return const lk.RoomOptions(adaptiveStream: false);
+    }
+    try {
+      final keyProvider = await lk.BaseKeyProvider.create();
+      await keyProvider.setSharedKey(_mediaE2eeKey!);
+      return lk.RoomOptions(
+        adaptiveStream: false,
+        encryption: lk.E2EEOptions(keyProvider: keyProvider),
+      );
+    } catch (error) {
+      appLog('初始化 LiveKit 媒体端到端加密失败', error);
+      _recordCallEvent('failed', 'media-e2ee-init-failed');
+      rethrow;
+    }
+  }
+
+  Future<void> _ensureLiveKitJoinAfterAccept(String reason) async {
+    for (final delay in const [
+      Duration(milliseconds: 750),
+      Duration(milliseconds: 1800),
+      Duration(milliseconds: 4200),
+      Duration(seconds: 9),
+    ]) {
+      await Future<void>.delayed(delay);
+      if (!mounted ||
+          _ended ||
+          !_accepted ||
+          _incomingWaiting ||
+          _liveKitConnected) {
+        return;
+      }
+      if (_joiningLiveKit) {
+        _recordCallEvent('join-waiting', reason);
+        continue;
+      }
+      appLog(
+        '接听后未进入 LiveKit 房间，自动补偿重试：call=${_callDiagnosticId(_callId)}, reason=$reason',
+      );
+      await _retryJoinLiveKitRoom('accept-$reason');
+      if (_liveKitConnected) {
+        return;
+      }
     }
   }
 

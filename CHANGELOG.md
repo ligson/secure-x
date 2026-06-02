@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+## [v1.0.30] - 2026-06-02
+
+### Added
+
+- 新增后端 Dockerfile，支持把 `securex-be` 构建为容器镜像，并默认通过 `/app/config.yaml`、`/app/data`、`/app/logs` 运行。
+- 新增 `scripts/build-image.sh`，使用 Docker buildx 构建并推送 `linux/amd64`、`linux/arm64` 多架构后端镜像，默认镜像名为 `ligson/secure-x`。
+- 补充后端 Docker 镜像构建、推送与容器部署说明。
+
+### Fixed
+
+- 修复音视频通话发起方收到接听信令后可能没有进入 LiveKit 房间的问题：接听后会确认入房进度，必要时自动补偿重试，并上报非敏感 `join-skipped` / `join-waiting` 诊断事件，避免接听方一直停留在“等待对方进入通话”。
+- 新客户端之间的 LiveKit 语音/视频通话会通过已加密通话信令协商媒体帧 E2EE 密钥，接听方明确确认后才启用 LiveKit 帧级端到端加密；旧客户端未确认时保持兼容路径。
+- 优化通话诊断 ID 展示为首尾组合，避免微秒时间戳生成的多个 `callId` 因前缀相同而在日志中难以区分。
+
 ## [v1.0.29] - 2026-06-02
 
 ### Added

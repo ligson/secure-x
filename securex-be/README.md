@@ -95,3 +95,45 @@ chmod 600 config.yaml
 - 应用日志：`logs/secure-x.log`
 - 访问日志：`logs/access.log`
 - 脚本启动兜底日志：`logs/secure-x-console.log`
+
+## Docker 镜像
+
+后端提供 Dockerfile，可通过仓库脚本构建并推送多架构镜像：
+
+```bash
+scripts/build-image.sh v1.0.29
+```
+
+默认构建平台为 `linux/amd64,linux/arm64`，默认镜像名为 `ligson/secure-x`。可通过环境变量覆盖：
+
+```bash
+IMAGE_NAME=ligson/secure-x TAG_LATEST=true scripts/build-image.sh v1.0.29
+```
+
+本地单平台测试构建：
+
+```bash
+PUSH=false PLATFORMS=linux/arm64 scripts/build-image.sh dev-local
+```
+
+容器默认执行：
+
+```bash
+/app/secure-x --config /app/config.yaml
+```
+
+生产运行时应挂载真实配置、数据目录和日志目录，不要把真实配置写入镜像：
+
+```bash
+mkdir -p data logs
+chmod 640 config.yaml
+sudo chown -R 10001:10001 config.yaml data logs
+
+docker run -d \
+  --name secure-x \
+  -p 8080:8080 \
+  -v ./config.yaml:/app/config.yaml:ro \
+  -v ./data:/app/data \
+  -v ./logs:/app/logs \
+  ligson/secure-x:v1.0.29
+```

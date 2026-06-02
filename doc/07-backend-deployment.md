@@ -549,6 +549,82 @@ sudo systemctl restart secure-x
 sudo systemctl status secure-x --no-pager
 ```
 
+## Docker 镜像部署
+
+后端也可以构建为 Docker 镜像运行。镜像只包含后端二进制和示例配置，真实生产配置、SQLite 数据库、密文文件和日志必须通过挂载提供，不要打进镜像。
+
+### 构建并推送多架构镜像
+
+仓库脚本默认使用 `docker buildx` 构建 `linux/amd64` 与 `linux/arm64`，并推送到 `ligson/secure-x`：
+
+```bash
+scripts/build-image.sh v1.0.29
+```
+
+常用参数：
+
+```bash
+IMAGE_NAME=ligson/secure-x scripts/build-image.sh v1.0.29
+TAG_LATEST=true scripts/build-image.sh v1.0.29
+PLATFORMS=linux/amd64,linux/arm64 scripts/build-image.sh v1.0.29
+```
+
+本地只验证单平台构建时，可关闭推送：
+
+```bash
+PUSH=false PLATFORMS=linux/amd64 scripts/build-image.sh dev-local
+```
+
+推送前需要先完成 Docker Hub 登录：
+
+```bash
+docker login
+```
+
+### 运行容器
+
+准备生产配置：
+
+```bash
+mkdir -p data logs
+cp securex-be/config.example.yaml config.yaml
+chmod 640 config.yaml
+sudo chown -R 10001:10001 config.yaml data logs
+```
+
+镜像内后端进程使用非 root 用户 `10001:10001` 运行。Linux bind mount 部署时，需要确保 `config.yaml` 可读，`data/` 和 `logs/` 可写。
+
+至少修改：
+
+- `auth.jwtSecret`：替换为高强度随机值
+- `database.dsn`：容器内建议使用 `/app/data/securex.db`
+- `storage.fileDir`：容器内建议使用 `/app/data/files`
+- `logging.dir`：容器内建议使用 `/app/logs`
+- `server.addr`：容器内建议保持 `:8080`
+- `realtime.livekit`：如需语音/视频通话，按自托管 LiveKit 实际入口填写
+
+示例运行命令：
+
+```bash
+docker run -d \
+  --name secure-x \
+  --restart unless-stopped \
+  -p 127.0.0.1:8080:8080 \
+  -v ./config.yaml:/app/config.yaml:ro \
+  -v ./data:/app/data \
+  -v ./logs:/app/logs \
+  ligson/secure-x:v1.0.29
+```
+
+验证：
+
+```bash
+docker logs --tail 100 secure-x
+curl -fsS http://127.0.0.1:8080/healthz
+```
+
+容器前面仍建议放 HTTPS 反向代理，并确保 WebSocket 代理可用。LiveKit/TURN 的公网入口继续按本文 LiveKit 部署章节处理，不能把 TURN/TLS 当作普通 HTTP location 转发。
+
 ## 安全检查清单
 
 上线前至少确认：

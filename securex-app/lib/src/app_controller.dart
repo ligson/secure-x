@@ -304,7 +304,10 @@ class AppController extends ChangeNotifier {
     if (normalized.isEmpty) {
       return '-';
     }
-    return normalized.length <= 8 ? normalized : normalized.substring(0, 8);
+    if (normalized.length <= 12) {
+      return normalized;
+    }
+    return '${normalized.substring(0, 4)}...${normalized.substring(normalized.length - 6)}';
   }
 
   bool canStartCall() {

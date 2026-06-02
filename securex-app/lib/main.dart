@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:file_picker/file_picker.dart';
@@ -289,6 +291,7 @@ class _VaultScreenState extends State<VaultScreen> {
             friend: friend,
             initialVideo: signal.media == 'video',
             incomingCallId: signal.callId,
+            incomingCallPayload: signal.payload,
           ),
         ),
       );

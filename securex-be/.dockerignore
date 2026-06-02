@@ -1,0 +1,15 @@
+.git
+.gitignore
+dist/
+data/
+logs/
+run/
+config.yaml
+config/*.yaml
+!config/*.example.yaml
+*.db
+*.db-shm
+*.db-wal
+*.log
+tmp/
+coverage.out
