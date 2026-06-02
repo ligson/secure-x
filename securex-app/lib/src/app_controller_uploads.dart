@@ -55,92 +55,16 @@ extension AppControllerUploadActions on AppController {
       if (token == null || vaultKey == null || path == null) {
         return;
       }
-
-      const chunkSize = 2 * 1024 * 1024;
-      final sourceFile = File(path);
-      final originalSize = await sourceFile.length();
-      final totalChunks = originalSize == 0
-          ? 1
-          : ((originalSize + chunkSize - 1) ~/ chunkSize);
-      final fileKey = _cryptoService.randomKey();
-      final chunkCipherSizes = <int>[];
-
-      task.status = '创建上传任务';
-      notifyListeners();
-      final startData = await _apiClient.startChunkedFileUpload(
-        baseUrl: _baseUrl,
-        token: token,
-        totalChunks: totalChunks,
-        version: 1,
-        folderId: parentFolderIDOrNull(folderId),
-      );
-      final upload = startData['upload'] as Map<String, dynamic>;
-      final uploadId = upload['id'] as String;
-
-      var index = 0;
-      if (originalSize == 0) {
-        task.status = '加密分片 1 / 1';
-        notifyListeners();
-        final cipherBytes = await compute(encryptBinaryChunkForUpload, {
-          'bytes': Uint8List(0),
-          'keyBytes': fileKey,
-        });
-        chunkCipherSizes.add(cipherBytes.length);
-        await _apiClient.uploadFileChunk(
-          baseUrl: _baseUrl,
-          token: token,
-          uploadId: uploadId,
-          index: 0,
-          cipherBytes: cipherBytes,
-        );
-      } else {
-        await for (final clearChunk in _readFileChunks(sourceFile, chunkSize)) {
-          task.status = '加密分片 ${index + 1} / $totalChunks';
-          notifyListeners();
-
-          final cipherBytes = await compute(encryptBinaryChunkForUpload, {
-            'bytes': clearChunk,
-            'keyBytes': fileKey,
-          });
-          chunkCipherSizes.add(cipherBytes.length);
-
-          task.status = '上传分片 ${index + 1} / $totalChunks';
-          notifyListeners();
-          await _apiClient.uploadFileChunk(
-            baseUrl: _baseUrl,
-            token: token,
-            uploadId: uploadId,
-            index: index,
-            cipherBytes: cipherBytes,
-          );
-
-          final nextCompleted = task.completedBytes + clearChunk.length;
-          task.completedBytes = nextCompleted > originalSize
-              ? originalSize
-              : nextCompleted;
-          index += 1;
-          notifyListeners();
-        }
-      }
-
-      task.status = '保存文件记录';
-      notifyListeners();
-      final payload = await _cryptoService.encryptJson({
-        'name': selectedFile.name,
-        'mimeType': selectedFile.extension ?? 'application/octet-stream',
-        'originalSize': originalSize,
-        'fileKey': base64Encode(fileKey),
-        'chunkCipherSizes': chunkCipherSizes,
-      }, vaultKey);
-
-      await _apiClient.completeChunkedFileUpload(
-        baseUrl: _baseUrl,
-        token: token,
-        uploadId: uploadId,
-        payload: payload,
+      final uploaded = await _uploadEncryptedFileFromPath(
+        path: path,
+        name: selectedFile.name,
+        mimeType: selectedFile.extension ?? 'application/octet-stream',
+        folderId: folderId,
+        allowedUserIds: const [],
+        task: task,
       );
       await _loadVaultSnapshot();
-      task.completedBytes = originalSize;
+      task.completedBytes = uploaded.originalSize;
       task.status = '上传完成';
       task.done = true;
       _statusMessage = '加密文件已上传。';
@@ -151,6 +75,151 @@ extension AppControllerUploadActions on AppController {
       _statusMessage = '文件上传失败：${task.status}';
       notifyListeners();
     }
+  }
+
+  Future<DecryptedFileRecord> _uploadEncryptedFileFromPath({
+    required String path,
+    required String name,
+    required String mimeType,
+    required String? folderId,
+    required List<String> allowedUserIds,
+    FileUploadTask? task,
+  }) async {
+    final token = _token;
+    final vaultKey = _vaultKey;
+    if (token == null || vaultKey == null) {
+      throw Exception('vault is locked');
+    }
+
+    const chunkSize = 2 * 1024 * 1024;
+    final sourceFile = File(path);
+    final originalSize = await sourceFile.length();
+    final totalChunks = originalSize == 0
+        ? 1
+        : ((originalSize + chunkSize - 1) ~/ chunkSize);
+    final fileKey = _cryptoService.randomKey();
+    final chunkCipherSizes = List<int>.filled(totalChunks, 0);
+
+    task?.status = '创建上传任务';
+    notifyListeners();
+    final startData = await _apiClient.startChunkedFileUpload(
+      baseUrl: _baseUrl,
+      token: token,
+      totalChunks: totalChunks,
+      version: 1,
+      folderId: parentFolderIDOrNull(folderId),
+      allowedUserIds: allowedUserIds,
+    );
+    final upload = startData['upload'] as Map<String, dynamic>;
+    final uploadId = upload['id'] as String;
+    final uploadedChunks = <int>{
+      for (final value in startData['uploadedChunks'] as List<dynamic>? ?? [])
+        (value as num).toInt(),
+    };
+
+    Future<void> refreshUploadedChunks() async {
+      final data = await _apiClient.getChunkedFileUpload(
+        baseUrl: _baseUrl,
+        token: token,
+        uploadId: uploadId,
+      );
+      uploadedChunks
+        ..clear()
+        ..addAll(
+          (data['uploadedChunks'] as List<dynamic>? ?? []).map(
+            (value) => (value as num).toInt(),
+          ),
+        );
+    }
+
+    Future<void> uploadChunkWithResume(int index, Uint8List clearChunk) async {
+      if (uploadedChunks.contains(index)) {
+        return;
+      }
+      task?.status = '加密分片 ${index + 1} / $totalChunks';
+      notifyListeners();
+      final cipherBytes = await compute(encryptBinaryChunkForUpload, {
+        'bytes': clearChunk,
+        'keyBytes': fileKey,
+      });
+      chunkCipherSizes[index] = cipherBytes.length;
+
+      for (var attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          task?.status = attempt == 0
+              ? '上传分片 ${index + 1} / $totalChunks'
+              : '续传分片 ${index + 1} / $totalChunks';
+          notifyListeners();
+          await _apiClient.uploadFileChunk(
+            baseUrl: _baseUrl,
+            token: token,
+            uploadId: uploadId,
+            index: index,
+            cipherBytes: cipherBytes,
+          );
+          uploadedChunks.add(index);
+          return;
+        } catch (_) {
+          await refreshUploadedChunks();
+          if (uploadedChunks.contains(index)) {
+            return;
+          }
+          if (attempt == 2) {
+            rethrow;
+          }
+          await Future<void>.delayed(
+            Duration(milliseconds: 600 * (attempt + 1)),
+          );
+        }
+      }
+    }
+
+    if (originalSize == 0) {
+      await uploadChunkWithResume(0, Uint8List(0));
+    } else {
+      var index = 0;
+      await for (final clearChunk in _readFileChunks(sourceFile, chunkSize)) {
+        await uploadChunkWithResume(index, clearChunk);
+        final completedChunks = uploadedChunks.length.clamp(0, totalChunks);
+        task?.completedBytes = (completedChunks * chunkSize).clamp(
+          0,
+          originalSize,
+        );
+        index += 1;
+        notifyListeners();
+      }
+    }
+
+    task?.status = '保存文件记录';
+    notifyListeners();
+    final payload = await _cryptoService.encryptJson({
+      'name': name,
+      'mimeType': mimeType,
+      'originalSize': originalSize,
+      'fileKey': base64Encode(fileKey),
+      'chunkCipherSizes': chunkCipherSizes,
+    }, vaultKey);
+
+    final completed = await _apiClient.completeChunkedFileUpload(
+      baseUrl: _baseUrl,
+      token: token,
+      uploadId: uploadId,
+      payload: payload,
+    );
+    final file = StoredFileRecord.fromJson(
+      completed['file'] as Map<String, dynamic>? ?? const {},
+    );
+    return DecryptedFileRecord(
+      id: file.id,
+      name: name,
+      mimeType: mimeType,
+      originalSize: originalSize,
+      fileKey: base64Encode(fileKey),
+      cipherSize: file.cipherSize,
+      version: file.version,
+      chunkCipherSizes: chunkCipherSizes,
+      folderId: file.folderId,
+    );
   }
 
   Future<void> updateEncryptedFile({

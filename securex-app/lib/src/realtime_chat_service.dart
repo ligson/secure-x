@@ -26,6 +26,7 @@ class RealtimeIncomingMessage {
     this.attachmentDataBase64 = '',
     this.attachmentObjectId = '',
     this.attachmentKeyBase64 = '',
+    this.attachmentChunkCipherSizes = const [],
   });
 
   final String friendId;
@@ -43,6 +44,7 @@ class RealtimeIncomingMessage {
   final String attachmentDataBase64;
   final String attachmentObjectId;
   final String attachmentKeyBase64;
+  final List<int> attachmentChunkCipherSizes;
 }
 
 class RealtimeGroupControl {
@@ -343,6 +345,7 @@ class RealtimeChatService {
         'attachmentDataBase64': message.attachmentDataBase64,
         'attachmentObjectId': message.attachmentObjectId,
         'attachmentKeyBase64': message.attachmentKeyBase64,
+        'attachmentChunkCipherSizes': message.attachmentChunkCipherSizes,
       }),
       peer.sessionKey!,
     );
@@ -970,6 +973,12 @@ class RealtimeChatService {
         attachmentDataBase64: payload['attachmentDataBase64'] as String? ?? '',
         attachmentObjectId: payload['attachmentObjectId'] as String? ?? '',
         attachmentKeyBase64: payload['attachmentKeyBase64'] as String? ?? '',
+        attachmentChunkCipherSizes:
+            (payload['attachmentChunkCipherSizes'] as List<dynamic>? ??
+                    const [])
+                .map((entry) => (entry as num).toInt())
+                .where((entry) => entry > 0)
+                .toList(),
       ),
     );
     await peer.channel?.send(

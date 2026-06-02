@@ -2435,10 +2435,44 @@ class _ChatComposer extends StatelessWidget {
     final result = await FilePicker.platform.pickFiles(
       type: image ? FileType.image : FileType.any,
       allowMultiple: false,
-      withData: true,
+      withData: image,
     );
     final picked = result?.files.single;
     if (picked == null) {
+      return;
+    }
+    if (!image) {
+      final path = picked.path;
+      if (path == null) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('文件读取失败')));
+        }
+        return;
+      }
+      final mimeType = _guessMimeType(picked.name);
+      if (conversation?.isGroup == true) {
+        await controller.sendGroupChatVaultFile(
+          conversation: conversation!,
+          path: path,
+          name: picked.name,
+          mimeType: mimeType,
+          size: picked.size,
+        );
+        return;
+      }
+      final directFriend = friend;
+      if (directFriend == null) {
+        return;
+      }
+      await controller.sendLocalChatVaultFile(
+        friend: directFriend,
+        path: path,
+        name: picked.name,
+        mimeType: mimeType,
+        size: picked.size,
+      );
       return;
     }
     Uint8List? bytes = picked.bytes;
@@ -2491,17 +2525,15 @@ class _ChatComposer extends StatelessWidget {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.media,
       allowMultiple: false,
-      withData: true,
+      withData: false,
     );
     final picked = result?.files.single;
     if (picked == null) {
       return;
     }
-    Uint8List? bytes = picked.bytes;
-    if (bytes == null && picked.path != null) {
-      bytes = await File(picked.path!).readAsBytes();
-    }
-    if (bytes == null || bytes.isEmpty) {
+    final video = _isVideoFile(picked.name);
+    final path = picked.path;
+    if (path == null) {
       if (context.mounted) {
         ScaffoldMessenger.of(
           context,
@@ -2509,7 +2541,40 @@ class _ChatComposer extends StatelessWidget {
       }
       return;
     }
-    final video = _isVideoFile(picked.name);
+    if (video) {
+      final mimeType = _guessMimeType(picked.name);
+      if (conversation?.isGroup == true) {
+        await controller.sendGroupChatVaultFile(
+          conversation: conversation!,
+          path: path,
+          name: picked.name,
+          mimeType: mimeType,
+          size: picked.size,
+        );
+        return;
+      }
+      final directFriend = friend;
+      if (directFriend == null) {
+        return;
+      }
+      await controller.sendLocalChatVaultFile(
+        friend: directFriend,
+        path: path,
+        name: picked.name,
+        mimeType: mimeType,
+        size: picked.size,
+      );
+      return;
+    }
+    final bytes = await File(path).readAsBytes();
+    if (bytes.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('媒体文件读取失败')));
+      }
+      return;
+    }
     final sendBytes = video ? bytes : _prepareChatImage(bytes);
     final maxBytes = video
         ? _chatUiVideoAttachmentMaxBytes
@@ -2568,6 +2633,12 @@ class _ChatComposer extends StatelessWidget {
       builder: (context) => _ChatCallOptionSheet(friend: directFriend),
     );
     if (!context.mounted || media == null || media.isEmpty) {
+      return;
+    }
+    if (!controller.canStartCall()) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('当前已有通话，请先结束后再发起新的通话。')));
       return;
     }
     await Navigator.of(context).push(
@@ -2808,10 +2879,12 @@ class _ChatCallPage extends StatefulWidget {
   State<_ChatCallPage> createState() => _ChatCallPageState();
 }
 
-class _ChatCallPageState extends State<_ChatCallPage> {
+class _ChatCallPageState extends State<_ChatCallPage>
+    with WidgetsBindingObserver {
   lk.Room? _room;
   lk.EventsListener<lk.RoomEvent>? _roomListener;
-  late final String _callId;
+  late String _callId;
+  late String _media;
   bool _microphoneOn = true;
   bool _speakerOn = true;
   bool _cameraOn = false;
@@ -2820,22 +2893,77 @@ class _ChatCallPageState extends State<_ChatCallPage> {
   bool _liveKitConnected = false;
   bool _joiningLiveKit = false;
   bool _ended = false;
+  bool _endingCall = false;
   bool _showLocalVideoAsMain = false;
+  bool _resolvingCompetingCall = false;
+  bool _canRetryJoin = false;
+  bool _remoteParticipantSeen = false;
   DateTime? _connectedAt;
+  DateTime? _lastJoinRetryAt;
+  int _joinRetryAttempt = 0;
   Timer? _callTimer;
+  final ValueNotifier<String> _durationText = ValueNotifier<String>('');
+  final Set<String> _recordedCallEvents = {};
   String _notice = '正在准备通话...';
 
   bool get _isIncoming => widget.incomingCallId != null;
-  String get _media => widget.initialVideo ? 'video' : 'audio';
+  bool get _videoCall => _media == 'video';
+
+  String _normalizeCallMedia(String value) {
+    return value == 'video' || value == 'audio' ? value : _media;
+  }
+
+  String _callDiagnosticId(String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty) {
+      return '-';
+    }
+    if (normalized.length <= 8) {
+      return normalized;
+    }
+    return normalized.substring(0, 8);
+  }
+
+  void _markCallPhase(SecureXCallPhase phase, {DateTime? connectedAt}) {
+    widget.controller.markCallPhase(
+      callId: _callId,
+      phase: phase,
+      connectedAt: connectedAt,
+    );
+  }
+
+  void _recordCallEvent(String phase, String reason) {
+    final key = '$phase:$reason';
+    if (!_recordedCallEvents.add(key)) {
+      return;
+    }
+    unawaited(
+      widget.controller.recordCallEvent(
+        friend: widget.friend,
+        callId: _callId,
+        media: _media,
+        phase: phase,
+        reason: reason,
+      ),
+    );
+  }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _callId =
         widget.incomingCallId ??
         DateTime.now().microsecondsSinceEpoch.toString();
-    _cameraOn = widget.initialVideo;
+    _media = widget.initialVideo ? 'video' : 'audio';
+    _cameraOn = _videoCall;
     _incomingWaiting = _isIncoming;
+    if (!_registerCallSession()) {
+      _ended = true;
+      _notice = '当前已有通话，请先结束后再重试。';
+      unawaited(_closeAfterDelay());
+      return;
+    }
     widget.controller.callListenable.addListener(_handleCallSignal);
     unawaited(_startCall());
   }
@@ -2843,23 +2971,64 @@ class _ChatCallPageState extends State<_ChatCallPage> {
   @override
   void dispose() {
     _callTimer?.cancel();
+    _durationText.dispose();
+    WidgetsBinding.instance.removeObserver(this);
     widget.controller.callListenable.removeListener(_handleCallSignal);
     unawaited(_endCall(sendAction: _accepted ? 'end' : 'cancel'));
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed ||
+        _ended ||
+        _incomingWaiting ||
+        !_accepted ||
+        _liveKitConnected ||
+        _joiningLiveKit) {
+      return;
+    }
+    appLog('通话页面恢复前台，尝试恢复音视频房间：call=${_callDiagnosticId(_callId)}');
+    unawaited(_retryJoinLiveKitRoom('app-resumed'));
+  }
+
+  bool _registerCallSession() {
+    if (_isIncoming) {
+      final handling = widget.controller.prepareIncomingCall(
+        RealtimeCallSignal(
+          friendId: widget.friend.id,
+          callId: _callId,
+          action: 'invite',
+          media: _media,
+        ),
+      );
+      return handling == IncomingCallHandling.open ||
+          handling == IncomingCallHandling.duplicate ||
+          handling == IncomingCallHandling.handledByActiveCall;
+    }
+    return widget.controller.reserveOutgoingCall(
+      friend: widget.friend,
+      callId: _callId,
+      media: _media,
+    );
+  }
+
   Future<void> _startCall() async {
     try {
       if (_isIncoming) {
+        _markCallPhase(SecureXCallPhase.incoming);
+        _recordCallEvent('incoming', 'waiting-user-action');
         if (!mounted) {
           return;
         }
         setState(() {
-          _notice = '邀请你进行${widget.initialVideo ? '视频' : '语音'}通话';
+          _notice = '邀请你进行${_videoCall ? '视频' : '语音'}通话';
         });
         return;
       }
       if (widget.controller.realtimeConfig?.rtc.liveKitReady != true) {
+        _markCallPhase(SecureXCallPhase.failed);
+        _recordCallEvent('failed', 'livekit-not-ready');
         setState(() {
           _notice = '音视频服务暂未配置，请先检查服务器 LiveKit 配置。';
         });
@@ -2871,10 +3040,19 @@ class _ChatCallPageState extends State<_ChatCallPage> {
       if (!mounted) {
         return;
       }
+      _markCallPhase(
+        invited ? SecureXCallPhase.outgoing : SecureXCallPhase.failed,
+      );
+      _recordCallEvent(
+        invited ? 'outgoing' : 'failed',
+        invited ? 'invite-sent' : 'invite-send-failed',
+      );
       setState(() {
         _notice = invited ? '等待对方接受邀请...' : '通话邀请发送失败，请稍后重试。';
       });
     } catch (_) {
+      _markCallPhase(SecureXCallPhase.failed);
+      _recordCallEvent('failed', 'start-exception');
       if (!mounted) {
         return;
       }
@@ -2886,9 +3064,13 @@ class _ChatCallPageState extends State<_ChatCallPage> {
 
   void _handleCallSignal() {
     final signal = widget.controller.lastCallSignal;
-    if (signal == null ||
-        signal.callId != _callId ||
-        signal.friendId != widget.friend.id) {
+    if (signal == null || signal.friendId != widget.friend.id) {
+      return;
+    }
+    if (signal.callId != _callId) {
+      if (signal.action == 'invite') {
+        unawaited(_handleCompetingInvite(signal));
+      }
       return;
     }
     unawaited(_handleCallSignalAsync(signal));
@@ -2901,15 +3083,25 @@ class _ChatCallPageState extends State<_ChatCallPage> {
           return;
         }
         _accepted = true;
+        _markCallPhase(SecureXCallPhase.joining);
+        _recordCallEvent('accepted', 'remote-accepted');
         _setNotice('对方已接听，正在接入音视频通道...');
         await _joinLiveKitRoom();
         break;
       case 'reject':
+        if (await _handleSimultaneousResolution(signal)) {
+          return;
+        }
+        _recordCallEvent('ended', 'remote-rejected');
         _setNotice('对方已拒绝通话。');
         await _closeAfterDelay();
         break;
       case 'cancel':
       case 'end':
+        if (await _handleSimultaneousResolution(signal)) {
+          return;
+        }
+        _recordCallEvent('ended', 'remote-${signal.action}');
         _setNotice(signal.action == 'cancel' ? '对方已取消通话。' : '通话已结束。');
         await _closeAfterDelay();
         break;
@@ -2918,6 +3110,142 @@ class _ChatCallPageState extends State<_ChatCallPage> {
       case 'candidate':
         // 旧版自研 WebRTC 通话信令仅为兼容历史客户端保留，新版媒体链路走 LiveKit。
         break;
+      case 'invite':
+        // 同一 callId 的重复邀请可能来自弱网重试，当前页面已经在处理该通话。
+        break;
+    }
+  }
+
+  Future<void> _handleCompetingInvite(RealtimeCallSignal signal) async {
+    if (!mounted || _ended) {
+      return;
+    }
+    final activeCall =
+        _accepted ||
+        _joiningLiveKit ||
+        _liveKitConnected ||
+        _connectedAt != null;
+    if (activeCall || _incomingWaiting) {
+      appLog(
+        '收到并发通话邀请，当前已有活跃通话，拒绝新邀请：current=${_callDiagnosticId(_callId)}, incoming=${_callDiagnosticId(signal.callId)}',
+      );
+      await _sendCallSignalForCallId(
+        callId: signal.callId,
+        action: 'reject',
+        media: _normalizeCallMedia(signal.media),
+        payload: const {'reason': 'busy'},
+      );
+      return;
+    }
+
+    final localWins = _callId.compareTo(signal.callId) <= 0;
+    if (localWins) {
+      appLog(
+        '检测到双方同时呼叫，本地通话胜出：local=${_callDiagnosticId(_callId)}, remote=${_callDiagnosticId(signal.callId)}',
+      );
+      await _sendCallSignalForCallId(
+        callId: signal.callId,
+        action: 'reject',
+        media: _normalizeCallMedia(signal.media),
+        payload: {
+          'reason': 'simultaneous-call-local-wins',
+          'winnerCallId': _callId,
+          'winnerMedia': _media,
+        },
+      );
+      _setNotice('检测到双方同时呼叫，继续等待对方接听...');
+      return;
+    }
+
+    final previousCallId = _callId;
+    final previousMedia = _media;
+    appLog(
+      '检测到双方同时呼叫，切换到对方通话：old=${_callDiagnosticId(previousCallId)}, winner=${_callDiagnosticId(signal.callId)}',
+    );
+    await _sendCallSignalForCallId(
+      callId: previousCallId,
+      action: 'cancel',
+      media: previousMedia,
+      payload: {
+        'reason': 'simultaneous-call-remote-wins',
+        'winnerCallId': signal.callId,
+      },
+    );
+    await _switchToWinningCall(
+      callId: signal.callId,
+      media: _normalizeCallMedia(signal.media),
+      notice: '检测到双方同时呼叫，正在合并通话...',
+    );
+  }
+
+  Future<bool> _handleSimultaneousResolution(RealtimeCallSignal signal) async {
+    final reason = signal.payload['reason'] as String?;
+    final winnerCallId = signal.payload['winnerCallId'] as String?;
+    if (reason?.startsWith('simultaneous-call-') != true ||
+        winnerCallId == null ||
+        winnerCallId.isEmpty) {
+      return false;
+    }
+    if (winnerCallId == _callId) {
+      appLog('收到同时呼叫仲裁结果，当前通话已是胜出通话：call=${_callDiagnosticId(_callId)}');
+      return true;
+    }
+    final winnerMedia = signal.payload['winnerMedia'] as String?;
+    await _switchToWinningCall(
+      callId: winnerCallId,
+      media: _normalizeCallMedia(winnerMedia ?? signal.media),
+      notice: '检测到双方同时呼叫，正在切换到同一通话...',
+    );
+    return true;
+  }
+
+  Future<void> _switchToWinningCall({
+    required String callId,
+    required String media,
+    required String notice,
+  }) async {
+    if (!mounted || _ended || _resolvingCompetingCall) {
+      return;
+    }
+    if (_joiningLiveKit || _liveKitConnected || _connectedAt != null) {
+      appLog(
+        '已进入音视频通道，忽略同时呼叫合并请求：current=${_callDiagnosticId(_callId)}, winner=${_callDiagnosticId(callId)}',
+      );
+      return;
+    }
+    _resolvingCompetingCall = true;
+    final previousCallId = _callId;
+    widget.controller.switchActiveCall(
+      previousCallId: previousCallId,
+      callId: callId,
+      media: media,
+    );
+    setState(() {
+      _callId = callId;
+      _media = media;
+      _cameraOn = _videoCall;
+      _accepted = false;
+      _incomingWaiting = false;
+      _notice = notice;
+    });
+    try {
+      final accepted = await _sendCallSignalReliably('accept', {
+        'provider': 'livekit',
+        'glareResolved': true,
+      }, 3);
+      if (!accepted) {
+        _setNotice('通话合并失败，请稍后重试。');
+        return;
+      }
+      if (mounted) {
+        setState(() {
+          _accepted = true;
+          _notice = '正在接入音视频通道...';
+        });
+      }
+      await _joinLiveKitRoom();
+    } finally {
+      _resolvingCompetingCall = false;
     }
   }
 
@@ -2925,11 +3253,25 @@ class _ChatCallPageState extends State<_ChatCallPage> {
     String action, [
     Map<String, dynamic> payload = const {},
   ]) {
-    return widget.controller.sendChatCallSignal(
-      friend: widget.friend,
+    return _sendCallSignalForCallId(
       callId: _callId,
       action: action,
       media: _media,
+      payload: payload,
+    );
+  }
+
+  Future<bool> _sendCallSignalForCallId({
+    required String callId,
+    required String action,
+    required String media,
+    Map<String, dynamic> payload = const {},
+  }) {
+    return widget.controller.sendChatCallSignal(
+      friend: widget.friend,
+      callId: callId,
+      action: action,
+      media: media,
       payload: payload,
     );
   }
@@ -2976,6 +3318,8 @@ class _ChatCallPageState extends State<_ChatCallPage> {
         _notice = '正在发送接听信令...';
       });
     }
+    _markCallPhase(SecureXCallPhase.accepting);
+    _recordCallEvent('accepting', 'user-accepted');
     try {
       final accepted = await _sendCallSignalReliably('accept');
       if (!accepted) {
@@ -2987,6 +3331,8 @@ class _ChatCallPageState extends State<_ChatCallPage> {
           _accepted = false;
           _notice = '接听信令发送失败，请确认网络后重试。';
         });
+        _markCallPhase(SecureXCallPhase.incoming);
+        _recordCallEvent('failed', 'accept-signal-send-failed');
         return;
       }
       if (mounted) {
@@ -3003,11 +3349,14 @@ class _ChatCallPageState extends State<_ChatCallPage> {
         }, 2),
       );
     } catch (_) {
+      _markCallPhase(SecureXCallPhase.failed);
+      _recordCallEvent('failed', 'accept-exception');
       _setNotice('接听失败，请检查麦克风或摄像头权限。');
     }
   }
 
   Future<void> _rejectIncomingCall() async {
+    _recordCallEvent('ended', 'user-rejected');
     await _sendCallSignalReliably('reject');
     await _endCall(sendAction: null);
     if (mounted) {
@@ -3031,14 +3380,23 @@ class _ChatCallPageState extends State<_ChatCallPage> {
   }
 
   Future<void> _endCall({required String? sendAction}) async {
-    if (_ended) {
+    if (_ended || _endingCall) {
       return;
     }
-    _ended = true;
-    if (sendAction != null) {
-      await _sendCallSignalReliably(sendAction, const {}, 3);
+    _endingCall = true;
+    try {
+      if (sendAction != null) {
+        _recordCallEvent('ending', 'send-$sendAction');
+        await _sendCallSignalReliably(sendAction, const {}, 3);
+      }
+      _ended = true;
+      _markCallPhase(SecureXCallPhase.ended);
+      widget.controller.clearActiveCall(_callId);
+      await _disconnectLiveKit();
+      _recordCallEvent('ended', sendAction ?? 'local-close');
+    } finally {
+      _endingCall = false;
     }
-    await _disconnectLiveKit();
   }
 
   Future<void> _joinLiveKitRoom() async {
@@ -3047,10 +3405,16 @@ class _ChatCallPageState extends State<_ChatCallPage> {
     }
     final rtcConfig = widget.controller.realtimeConfig?.rtc;
     if (rtcConfig?.liveKitReady != true) {
+      _canRetryJoin = false;
+      _markCallPhase(SecureXCallPhase.failed);
+      _recordCallEvent('failed', 'livekit-not-ready');
       _setNotice('音视频服务暂未配置，请稍后重试。');
       return;
     }
     _joiningLiveKit = true;
+    _canRetryJoin = false;
+    _markCallPhase(SecureXCallPhase.joining);
+    _recordCallEvent('joining', 'request-token');
     _setNotice('正在获取通话凭证...');
     try {
       final credential = await widget.controller
@@ -3065,6 +3429,9 @@ class _ChatCallPageState extends State<_ChatCallPage> {
           'LiveKit 通话凭证为空：media=$_media, incoming=$_isIncoming, '
           'turnMode=${credential?.turnMode ?? ''}',
         );
+        _canRetryJoin = true;
+        _markCallPhase(SecureXCallPhase.failed);
+        _recordCallEvent('failed', 'empty-livekit-credential');
         _setNotice('音视频通话服务暂不可用。');
         return;
       }
@@ -3083,15 +3450,25 @@ class _ChatCallPageState extends State<_ChatCallPage> {
           _logLiveKitSnapshot('房间已连接');
           setState(() {
             _liveKitConnected = true;
-            _connectedAt ??= DateTime.now();
-            _notice = '通话中';
+            _canRetryJoin = false;
+            _notice = _liveKitMediaNotice();
           });
-          _startCallTimer();
+          _markCallPhase(SecureXCallPhase.joining);
+          _recordCallEvent('room-connected', 'livekit-connected');
+          _markRemoteParticipantConnected('房间连接后已有远端用户');
         })
         ..on<lk.RoomReconnectingEvent>((_) {
+          _markCallPhase(SecureXCallPhase.reconnecting);
+          _recordCallEvent('reconnecting', 'livekit-reconnecting');
           _setNotice('通话网络不稳定，正在自动重连...');
         })
         ..on<lk.RoomReconnectedEvent>((_) {
+          _markCallPhase(
+            _remoteParticipantSeen
+                ? SecureXCallPhase.connected
+                : SecureXCallPhase.joining,
+          );
+          _recordCallEvent('reconnected', 'livekit-reconnected');
           _setNotice('通话中');
         })
         ..on<lk.RoomDisconnectedEvent>((event) {
@@ -3101,16 +3478,35 @@ class _ChatCallPageState extends State<_ChatCallPage> {
           }
           setState(() {
             _liveKitConnected = false;
+            _canRetryJoin =
+                _accepted &&
+                event.reason != lk.DisconnectReason.duplicateIdentity;
             _notice = _disconnectNotice(event.reason);
           });
+          _markCallPhase(
+            _canRetryJoin
+                ? SecureXCallPhase.reconnecting
+                : SecureXCallPhase.failed,
+          );
+          _recordCallEvent(
+            _canRetryJoin ? 'disconnected-retryable' : 'disconnected',
+            event.reason?.name ?? 'unknown',
+          );
         })
         ..on<lk.ParticipantConnectedEvent>((_) {
           _logLiveKitSnapshot('远端用户进入房间');
+          _markRemoteParticipantConnected('远端用户进入房间');
           _refreshCallTracks();
         })
         ..on<lk.ParticipantDisconnectedEvent>((_) {
           _logLiveKitSnapshot('远端用户离开房间');
-          _refreshCallTracks();
+          unawaited(_handleRemoteParticipantDisconnected());
+          if (_remoteParticipantSeen &&
+              (_room?.remoteParticipants.isEmpty ?? true)) {
+            _setNotice('对方已挂断。');
+          } else {
+            _refreshCallTracks();
+          }
         })
         ..on<lk.TrackPublishedEvent>((event) {
           _logLiveKitSnapshot('远端发布轨道：${event.publication.kind.name}');
@@ -3177,13 +3573,20 @@ class _ChatCallPageState extends State<_ChatCallPage> {
       appLog('LiveKit 入房完成，准备启用本地媒体：media=$_media');
       await _enableLiveKitLocalMedia(room);
       _logLiveKitSnapshot('本地媒体已启用');
-      _refreshCallTracks(notice: '通话中');
+      _markRemoteParticipantConnected('本地媒体启用后已有远端用户');
+      _refreshCallTracks();
       _scheduleMediaDiagnostics();
     } on TimeoutException catch (error) {
       appLog('LiveKit 通话接入超时', error);
+      _canRetryJoin = true;
+      _markCallPhase(SecureXCallPhase.failed);
+      _recordCallEvent('failed', 'join-timeout');
       _setNotice('通话接入超时，请检查网络、音视频服务或稍后重试。');
     } catch (error) {
       appLog('LiveKit 通话接入失败', error);
+      _canRetryJoin = true;
+      _markCallPhase(SecureXCallPhase.failed);
+      _recordCallEvent('failed', 'join-exception');
       _setNotice('通话接入失败，请检查音视频服务、网络或设备权限。');
     } finally {
       _joiningLiveKit = false;
@@ -3213,7 +3616,7 @@ class _ChatCallPageState extends State<_ChatCallPage> {
       appLog('开启通话麦克风失败', error);
       _setNotice('麦克风开启失败，请检查系统权限。');
     }
-    if (!widget.initialVideo) {
+    if (!_videoCall) {
       return;
     }
     try {
@@ -3251,15 +3654,93 @@ class _ChatCallPageState extends State<_ChatCallPage> {
       await room.dispose();
     }
     _liveKitConnected = false;
+    _canRetryJoin = false;
     _connectedAt = null;
+    _remoteParticipantSeen = false;
     _callTimer?.cancel();
     _callTimer = null;
+    if (mounted) {
+      _durationText.value = '';
+    }
+  }
+
+  Future<void> _retryJoinLiveKitRoom(String reason) async {
+    if (_ended || _joiningLiveKit || _incomingWaiting) {
+      return;
+    }
+    final now = DateTime.now();
+    final minDelay = Duration(
+      seconds: (2 << _joinRetryAttempt.clamp(0, 2)).clamp(2, 8),
+    );
+    final lastRetryAt = _lastJoinRetryAt;
+    if (lastRetryAt != null && now.difference(lastRetryAt) < minDelay) {
+      if (reason == 'user-retry') {
+        _setNotice('正在等待网络稳定，请稍后再试。');
+      }
+      return;
+    }
+    _lastJoinRetryAt = now;
+    _joinRetryAttempt += 1;
+    appLog(
+      '准备重试进入 LiveKit 房间：call=${_callDiagnosticId(_callId)}, reason=$reason',
+    );
+    _recordCallEvent('retry-joining', reason);
+    setState(() {
+      _canRetryJoin = false;
+      _notice = '正在重新接入音视频通道...';
+    });
+    await _disconnectLiveKit();
+    await _joinLiveKitRoom();
+  }
+
+  void _markRemoteParticipantConnected(String reason) {
+    final room = _room;
+    if (!mounted || _ended || room == null || room.remoteParticipants.isEmpty) {
+      return;
+    }
+    if (!_remoteParticipantSeen || _connectedAt == null) {
+      appLog('LiveKit 通话真正接通：$reason');
+      final now = DateTime.now();
+      setState(() {
+        _remoteParticipantSeen = true;
+        _connectedAt ??= now;
+        _notice = '通话中';
+      });
+      _joinRetryAttempt = 0;
+      _lastJoinRetryAt = null;
+      _markCallPhase(SecureXCallPhase.connected, connectedAt: _connectedAt);
+      _recordCallEvent('connected', reason);
+      _startCallTimer();
+      return;
+    }
+    _remoteParticipantSeen = true;
+  }
+
+  Future<void> _handleRemoteParticipantDisconnected() async {
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    final room = _room;
+    if (!mounted ||
+        _ended ||
+        !_remoteParticipantSeen ||
+        room == null ||
+        room.remoteParticipants.isNotEmpty) {
+      return;
+    }
+    appLog('LiveKit 远端用户已离开房间，按对方挂断处理');
+    _recordCallEvent('ended', 'remote-participant-left');
+    _setNotice('对方已挂断。');
+    await _endCall(sendAction: null);
+    await Future<void>.delayed(const Duration(milliseconds: 450));
+    if (mounted) {
+      Navigator.of(context).maybePop();
+    }
   }
 
   void _startCallTimer() {
+    _durationText.value = _callDurationText();
     _callTimer ??= Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted && _connectedAt != null && !_ended) {
-        setState(() {});
+        _durationText.value = _callDurationText();
       }
     });
   }
@@ -3296,6 +3777,9 @@ class _ChatCallPageState extends State<_ChatCallPage> {
   }
 
   void _scheduleMediaDiagnostics() {
+    if (!appVerboseLoggingEnabled) {
+      return;
+    }
     for (final delay in const [
       Duration(milliseconds: 800),
       Duration(seconds: 3),
@@ -3319,14 +3803,14 @@ class _ChatCallPageState extends State<_ChatCallPage> {
       return '';
     }
     if (room.remoteParticipants.isEmpty) {
-      return '已接通，等待对方进入通话...';
+      return '等待对方进入通话...';
     }
     final remoteAudio = _hasRemoteAudioTrack();
-    final remoteVideo = _remoteVideoTrack();
     if (!remoteAudio) {
       return '已接通，等待对方麦克风音频...';
     }
-    if (widget.initialVideo && remoteVideo == null) {
+    final remoteVideo = _videoCall ? _remoteVideoTrack() : null;
+    if (_videoCall && remoteVideo == null) {
       return '已接通，等待对方视频画面...';
     }
     return '通话中';
@@ -3352,7 +3836,9 @@ class _ChatCallPageState extends State<_ChatCallPage> {
   void _logLiveKitSnapshot(String reason) {
     final room = _room;
     if (room == null) {
-      appLog('LiveKit 通话状态：$reason，room=null');
+      appLogVerbose(
+        'LiveKit 通话状态：call=${_callDiagnosticId(_callId)}，$reason，room=null',
+      );
       return;
     }
     final remoteSummary = room.remoteParticipants.values
@@ -3369,7 +3855,7 @@ class _ChatCallPageState extends State<_ChatCallPage> {
                     '${publication.kind.name}/sub=${publication.subscribed}/muted=${publication.muted}/track=${publication.track != null}',
               )
               .join('|');
-          return 'remote=${participant.identity}, audio=[$audio], video=[$video]';
+          return 'remote=${_callDiagnosticId(participant.identity)}, audio=[$audio], video=[$video]';
         })
         .join('; ');
     final local = room.localParticipant;
@@ -3389,13 +3875,13 @@ class _ChatCallPageState extends State<_ChatCallPage> {
             )
             .join('|') ??
         '';
-    appLog(
-      'LiveKit 通话状态：$reason，connected=$_liveKitConnected，remoteCount=${room.remoteParticipants.length}，localAudio=[$localAudio]，localVideo=[$localVideo]，$remoteSummary',
+    appLogVerbose(
+      'LiveKit 通话状态：call=${_callDiagnosticId(_callId)}，$reason，connected=$_liveKitConnected，remoteCount=${room.remoteParticipants.length}，localAudio=[$localAudio]，localVideo=[$localVideo]，$remoteSummary',
     );
   }
 
   Future<void> _toggleCamera() async {
-    if (!widget.initialVideo) {
+    if (!_videoCall) {
       return;
     }
     final enabled = !_cameraOn;
@@ -3495,11 +3981,10 @@ class _ChatCallPageState extends State<_ChatCallPage> {
     final name = widget.friend.displayName.isEmpty
         ? widget.friend.username
         : widget.friend.displayName;
-    final remoteVideo = _remoteVideoTrack();
-    final localVideo = _localVideoTrack();
+    final remoteVideo = _videoCall ? _remoteVideoTrack() : null;
+    final localVideo = _videoCall ? _localVideoTrack() : null;
     final hasVideoSurface =
-        widget.initialVideo && (remoteVideo != null || localVideo != null);
-    final durationText = _callDurationText();
+        _videoCall && (remoteVideo != null || localVideo != null);
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
@@ -3540,16 +4025,23 @@ class _ChatCallPageState extends State<_ChatCallPage> {
                               onPressed: () => Navigator.of(context).maybePop(),
                             ),
                           ),
-                          if (durationText.isNotEmpty)
-                            Text(
-                              durationText,
-                              style: Theme.of(context).textTheme.headlineSmall
-                                  ?.copyWith(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: 0.5,
-                                  ),
-                            ),
+                          ValueListenableBuilder<String>(
+                            valueListenable: _durationText,
+                            builder: (context, durationText, _) {
+                              if (durationText.isEmpty) {
+                                return const SizedBox.shrink();
+                              }
+                              return Text(
+                                durationText,
+                                style: Theme.of(context).textTheme.headlineSmall
+                                    ?.copyWith(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 0.5,
+                                    ),
+                              );
+                            },
+                          ),
                         ],
                       ),
                     ),
@@ -3610,7 +4102,7 @@ class _ChatCallPageState extends State<_ChatCallPage> {
     required lk.VideoTrack? localVideo,
   }) {
     final mainTrack = _showLocalVideoAsMain ? localVideo : remoteVideo;
-    if (widget.initialVideo && mainTrack != null) {
+    if (_videoCall && mainTrack != null) {
       return lk.VideoTrackRenderer(
         mainTrack,
         fit: lk.VideoViewFit.cover,
@@ -3691,6 +4183,14 @@ class _ChatCallPageState extends State<_ChatCallPage> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (_canRetryJoin) ...[
+          FilledButton.icon(
+            onPressed: () => unawaited(_retryJoinLiveKitRoom('user-retry')),
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('重新接入'),
+          ),
+          const SizedBox(height: 18),
+        ],
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
@@ -3706,7 +4206,7 @@ class _ChatCallPageState extends State<_ChatCallPage> {
               label: _speakerOn ? '扬声器已开' : '扬声器已关',
               onTap: () => unawaited(_toggleSpeaker()),
             ),
-            if (widget.initialVideo)
+            if (_videoCall)
               _CallControlButton(
                 icon: _cameraOn
                     ? Icons.videocam_rounded
@@ -3729,7 +4229,7 @@ class _ChatCallPageState extends State<_ChatCallPage> {
                 }
               },
             ),
-            if (widget.initialVideo)
+            if (_videoCall)
               _CallControlButton(
                 icon: Icons.cameraswitch_rounded,
                 label: '切换摄像头',

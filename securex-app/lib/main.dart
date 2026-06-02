@@ -260,6 +260,23 @@ class _VaultScreenState extends State<VaultScreen> {
     if (friend == null || !mounted) {
       return;
     }
+    final handling = widget.controller.prepareIncomingCall(signal);
+    if (handling == IncomingCallHandling.duplicate ||
+        handling == IncomingCallHandling.handledByActiveCall) {
+      return;
+    }
+    if (handling == IncomingCallHandling.rejectBusy) {
+      unawaited(
+        widget.controller.sendChatCallSignal(
+          friend: friend,
+          callId: signal.callId,
+          action: 'reject',
+          media: signal.media,
+          payload: const {'reason': 'busy'},
+        ),
+      );
+      return;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
         return;

@@ -52,19 +52,25 @@ type itemUpsertRequest struct {
 }
 
 type fileMetadataRequest struct {
-	FolderID *string `json:"folderId"`
-	Payload  string  `json:"payload" binding:"required"`
-	Version  int     `json:"version"`
+	FolderID       *string  `json:"folderId"`
+	Payload        string   `json:"payload" binding:"required"`
+	Version        int      `json:"version"`
+	AllowedUserIDs []string `json:"allowedUserIds"`
 }
 
 type fileUploadStartRequest struct {
-	FolderID    *string `json:"folderId"`
-	Version     int     `json:"version"`
-	TotalChunks int     `json:"totalChunks" binding:"required"`
+	FolderID       *string  `json:"folderId"`
+	Version        int      `json:"version"`
+	TotalChunks    int      `json:"totalChunks" binding:"required"`
+	AllowedUserIDs []string `json:"allowedUserIds"`
 }
 
 type fileUploadCompleteRequest struct {
 	Payload string `json:"payload" binding:"required"`
+}
+
+type fileShareRequest struct {
+	AllowedUserIDs []string `json:"allowedUserIds" binding:"required"`
 }
 
 type friendRequestCreateRequest struct {
@@ -148,6 +154,15 @@ type liveKitCallTokenRequest struct {
 	PeerUserID string `json:"peerUserId" binding:"required"`
 	CallID     string `json:"callId" binding:"required"`
 	Media      string `json:"media"`
+	DeviceID   string `json:"deviceId"`
+}
+
+type callEventRequest struct {
+	PeerUserID string `json:"peerUserId" binding:"required"`
+	CallID     string `json:"callId" binding:"required"`
+	Media      string `json:"media"`
+	Phase      string `json:"phase" binding:"required"`
+	Reason     string `json:"reason"`
 	DeviceID   string `json:"deviceId"`
 }
 

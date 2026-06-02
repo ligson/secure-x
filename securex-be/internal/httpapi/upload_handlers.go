@@ -35,13 +35,19 @@ func (h *Handler) startFileUpload(c *gin.Context) {
 		RespondFailure(c, http.StatusBadRequest, "文件目录不存在或不属于当前用户")
 		return
 	}
+	allowedUserIDs, ok := h.validFileAllowedUserIDs(userID, req.AllowedUserIDs)
+	if !ok {
+		RespondFailure(c, http.StatusForbidden, "无权给目标用户授权下载文件")
+		return
+	}
 
 	session := model.FileUploadSession{
-		ID:          uuid.NewString(),
-		UserID:      userID,
-		FolderID:    folderID,
-		Version:     normalizeVersion(req.Version),
-		TotalChunks: req.TotalChunks,
+		ID:             uuid.NewString(),
+		UserID:         userID,
+		FolderID:       folderID,
+		AllowedUserIDs: encodeAllowedUserIDs(allowedUserIDs),
+		Version:        normalizeVersion(req.Version),
+		TotalChunks:    req.TotalChunks,
 	}
 	if err := h.db.Create(&session).Error; err != nil {
 		RespondFailure(c, http.StatusInternalServerError, "创建上传任务失败")
@@ -160,13 +166,14 @@ func (h *Handler) completeFileUpload(c *gin.Context) {
 	}
 
 	record := model.StoredFile{
-		ID:          fileID,
-		UserID:      session.UserID,
-		FolderID:    session.FolderID,
-		Payload:     req.Payload,
-		StoragePath: fullPath,
-		CipherSize:  cipherSize,
-		Version:     normalizeVersion(session.Version),
+		ID:             fileID,
+		UserID:         session.UserID,
+		FolderID:       session.FolderID,
+		Payload:        req.Payload,
+		AllowedUserIDs: session.AllowedUserIDs,
+		StoragePath:    fullPath,
+		CipherSize:     cipherSize,
+		Version:        normalizeVersion(session.Version),
 	}
 	if err := h.db.Create(&record).Error; err != nil {
 		_ = h.fileStore.Delete(fullPath)

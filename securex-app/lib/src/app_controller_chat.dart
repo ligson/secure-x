@@ -554,6 +554,9 @@ extension AppControllerChatActions on AppController {
     if (!message.hasAttachment) {
       throw StateError('message has no attachment');
     }
+    if (message.isVaultFileAttachment) {
+      return _saveVaultFileChatAttachment(message);
+    }
     final bytes = await loadChatAttachmentBytes(message);
     final directory = await getApplicationDocumentsDirectory();
     final folder = Directory('${directory.path}/secure-x-chat');
@@ -569,6 +572,11 @@ extension AppControllerChatActions on AppController {
   Future<Uint8List> loadChatAttachmentBytes(ChatMessage message) {
     if (!message.hasAttachment) {
       return Future<Uint8List>.error(StateError('message has no attachment'));
+    }
+    if (message.isVaultFileAttachment) {
+      return Future<Uint8List>.error(
+        StateError('vault file attachment must be saved by streaming'),
+      );
     }
     final cacheKey = _chatAttachmentCacheKey(message);
     final cached = _chatAttachmentPlainBytesCache[cacheKey];
@@ -612,6 +620,98 @@ extension AppControllerChatActions on AppController {
     return message.attachmentObjectId.isNotEmpty
         ? 'remote:${message.attachmentObjectId}:${message.attachmentKeyBase64}'
         : 'inline:${message.id}:${message.attachmentDataBase64.hashCode}';
+  }
+
+  ChatMessage _vaultFileChatMessage({
+    required String conversationId,
+    required DecryptedFileRecord file,
+    required String senderId,
+    required String senderName,
+  }) {
+    final safeName = _safeChatAttachmentName(file.name);
+    final cipherSizes = file.chunkCipherSizes.isNotEmpty
+        ? file.chunkCipherSizes
+        : <int>[file.cipherSize];
+    return ChatMessage(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      friendId: conversationId,
+      text: '[文件] $safeName',
+      sentByMe: true,
+      createdAt: DateTime.now(),
+      status: _realtimeConfig?.signalingEnabled == true
+          ? 'pending'
+          : 'localOnly',
+      senderId: senderId,
+      senderName: senderName,
+      attachmentType: 'vault-file',
+      attachmentName: safeName,
+      attachmentMimeType: _safeChatMimeType(file.mimeType, image: false),
+      attachmentSize: file.originalSize,
+      attachmentObjectId: file.id,
+      attachmentKeyBase64: file.fileKey,
+      attachmentChunkCipherSizes: cipherSizes,
+    );
+  }
+
+  Future<String> _saveVaultFileChatAttachment(ChatMessage message) async {
+    final token = _token;
+    if (token == null) {
+      throw StateError('not authenticated');
+    }
+    final cipherSizes = message.attachmentChunkCipherSizes;
+    if (cipherSizes.isEmpty) {
+      throw StateError('missing chunk metadata');
+    }
+    final directory = await getApplicationDocumentsDirectory();
+    final folder = Directory('${directory.path}/secure-x-chat');
+    await folder.create(recursive: true);
+    final fileName = _safeChatAttachmentName(message.attachmentName);
+    final output = File('${folder.path}/$fileName');
+    final sink = output.openWrite();
+    final fileKey = Uint8List.fromList(
+      base64Decode(message.attachmentKeyBase64),
+    );
+    var pending = Uint8List(0);
+    var chunkIndex = 0;
+
+    Future<void> flushReadyChunks({bool finalFlush = false}) async {
+      while (chunkIndex < cipherSizes.length &&
+          pending.lengthInBytes >= cipherSizes[chunkIndex]) {
+        final cipherSize = cipherSizes[chunkIndex];
+        final cipherChunk = Uint8List.sublistView(pending, 0, cipherSize);
+        final clearBytes = await _cryptoService.decryptBinary(
+          cipherChunk,
+          fileKey,
+        );
+        sink.add(clearBytes);
+        chunkIndex += 1;
+        pending = pending.lengthInBytes > cipherSize
+            ? Uint8List.sublistView(pending, cipherSize)
+            : Uint8List(0);
+      }
+      if (finalFlush &&
+          (chunkIndex != cipherSizes.length || pending.isNotEmpty)) {
+        throw StateError('cipher chunk stream is incomplete');
+      }
+    }
+
+    try {
+      final stream = await _apiClient.downloadEncryptedFileStream(
+        baseUrl: _baseUrl,
+        token: token,
+        fileId: message.attachmentObjectId,
+      );
+      await for (final cipherBytes in stream) {
+        pending = Uint8List.fromList([...pending, ...cipherBytes]);
+        await flushReadyChunks();
+      }
+      await flushReadyChunks(finalFlush: true);
+    } finally {
+      await sink.close();
+    }
+    _statusMessage = '附件已保存到：${output.path}';
+    notifyListeners();
+    return output.path;
   }
 
   Future<({String objectId, String keyBase64})?> _uploadChatAttachmentCipher({
@@ -754,6 +854,129 @@ extension AppControllerChatActions on AppController {
     notifyListeners();
   }
 
+  Future<void> sendLocalChatVaultFile({
+    required PublicUser friend,
+    required String path,
+    required String name,
+    required String mimeType,
+    required int size,
+  }) async {
+    await _ensureChatConversationLoaded(friend.id);
+    final task = FileUploadTask(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      name: name,
+      totalBytes: size,
+      status: '等待后台上传',
+    );
+    _uploadTasks.insert(0, task);
+    _statusMessage = '文件已加入后台加密上传，完成后会发送文件引用。';
+    notifyListeners();
+    unawaited(
+      _sendLocalChatVaultFileInBackground(
+        friend: friend,
+        path: path,
+        name: name,
+        mimeType: mimeType,
+        task: task,
+      ),
+    );
+  }
+
+  Future<void> shareVaultFileToFriend({
+    required PublicUser friend,
+    required DecryptedFileRecord file,
+  }) async {
+    final token = _token;
+    if (token == null) {
+      return;
+    }
+    await _ensureChatConversationLoaded(friend.id);
+    await _apiClient.shareEncryptedFile(
+      baseUrl: _baseUrl,
+      token: token,
+      fileId: file.id,
+      allowedUserIds: [friend.id],
+    );
+    final message = _vaultFileChatMessage(
+      conversationId: friend.id,
+      file: file,
+      senderId: '',
+      senderName: '',
+    );
+    _replaceConversationMessages(friend, (messages) => [...messages, message]);
+    notifyListeners();
+    await _persistChatSnapshot();
+
+    final deliveredToChannel = await _sendRealtimeMessage(friend, message);
+    _replaceMessage(
+      friend,
+      message.id,
+      (current) => current.copyWith(
+        status: deliveredToChannel ? 'sent' : current.status,
+      ),
+    );
+    _statusMessage = deliveredToChannel
+        ? '文件分享已通过端到端加密通道发送。'
+        : '好友当前暂无可用设备，文件分享已加密缓存在本机，并等待同步到服务端归档。';
+    notifyListeners();
+    await _persistChatSnapshot();
+    notifyListeners();
+  }
+
+  Future<void> _sendLocalChatVaultFileInBackground({
+    required PublicUser friend,
+    required String path,
+    required String name,
+    required String mimeType,
+    required FileUploadTask task,
+  }) async {
+    try {
+      final uploaded = await _uploadEncryptedFileFromPath(
+        path: path,
+        name: name,
+        mimeType: mimeType,
+        folderId: null,
+        allowedUserIds: [friend.id],
+        task: task,
+      );
+      task.completedBytes = uploaded.originalSize;
+      task.status = '上传完成';
+      task.done = true;
+      final message = _vaultFileChatMessage(
+        conversationId: friend.id,
+        file: uploaded,
+        senderId: '',
+        senderName: '',
+      );
+      _replaceConversationMessages(
+        friend,
+        (messages) => [...messages, message],
+      );
+      notifyListeners();
+      await _persistChatSnapshot();
+
+      final deliveredToChannel = await _sendRealtimeMessage(friend, message);
+      _replaceMessage(
+        friend,
+        message.id,
+        (current) => current.copyWith(
+          status: deliveredToChannel ? 'sent' : current.status,
+        ),
+      );
+      _statusMessage = deliveredToChannel
+          ? '文件引用已通过端到端加密通道发送。'
+          : '好友当前暂无可用设备，文件引用已加密缓存在本机，并等待同步到服务端归档。';
+      notifyListeners();
+      await _persistChatSnapshot();
+      notifyListeners();
+    } catch (error) {
+      task.failed = true;
+      task.status = _friendlyError(error);
+      _statusMessage = '聊天文件上传失败：${task.status}';
+      notifyListeners();
+    }
+  }
+
   Future<bool> sendChatCallSignal({
     required PublicUser friend,
     required String callId,
@@ -820,6 +1043,37 @@ extension AppControllerChatActions on AppController {
       _statusMessage = '生成通话凭证失败，请稍后重试。';
       notifyListeners();
       return null;
+    }
+  }
+
+  Future<void> recordCallEvent({
+    required PublicUser friend,
+    required String callId,
+    required String media,
+    required String phase,
+    required String reason,
+  }) async {
+    final token = _token;
+    if (token == null) {
+      return;
+    }
+    try {
+      final identity = await _ensureChatIdentity(registerOnServer: true);
+      await _apiClient.recordCallEvent(
+        baseUrl: _baseUrl,
+        token: token,
+        peerUserId: friend.id,
+        callId: callId,
+        media: media,
+        phase: phase,
+        reason: reason,
+        deviceId: identity?.deviceId ?? '',
+      );
+    } catch (error) {
+      appLog(
+        '记录通话诊断事件失败：call=${callDiagnosticId(callId)}, phase=$phase',
+        error,
+      );
     }
   }
 
@@ -978,6 +1232,152 @@ extension AppControllerChatActions on AppController {
 
     await _persistChatSnapshot();
     notifyListeners();
+  }
+
+  Future<void> sendGroupChatVaultFile({
+    required ChatConversation conversation,
+    required String path,
+    required String name,
+    required String mimeType,
+    required int size,
+  }) async {
+    if (!conversation.isGroup) {
+      return;
+    }
+    await _ensureChatConversationLoaded(conversation.id);
+    final latest = _conversationById(conversation.id) ?? conversation;
+    if (latest.isDissolved) {
+      _statusMessage = '群聊已解散，无法继续发送文件。';
+      notifyListeners();
+      return;
+    }
+    final task = FileUploadTask(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      name: name,
+      totalBytes: size,
+      status: '等待后台上传',
+    );
+    _uploadTasks.insert(0, task);
+    _statusMessage = '群文件已加入后台加密上传，完成后会发送文件引用。';
+    notifyListeners();
+    unawaited(
+      _sendGroupChatVaultFileInBackground(
+        conversation: latest,
+        path: path,
+        name: name,
+        mimeType: mimeType,
+        task: task,
+      ),
+    );
+  }
+
+  Future<void> shareVaultFileToGroup({
+    required ChatConversation conversation,
+    required DecryptedFileRecord file,
+  }) async {
+    final token = _token;
+    if (token == null || !conversation.isGroup) {
+      return;
+    }
+    await _ensureChatConversationLoaded(conversation.id);
+    final latest = _conversationById(conversation.id) ?? conversation;
+    if (latest.isDissolved) {
+      _statusMessage = '群聊已解散，无法继续分享文件。';
+      notifyListeners();
+      return;
+    }
+    await _apiClient.shareEncryptedFile(
+      baseUrl: _baseUrl,
+      token: token,
+      fileId: file.id,
+      allowedUserIds: latest.members.map((member) => member.id).toList(),
+    );
+    final message = _vaultFileChatMessage(
+      conversationId: latest.id,
+      file: file,
+      senderId: _user?.id ?? '',
+      senderName: _user?.displayName ?? '',
+    );
+    _replaceConversationMessagesById(
+      latest.id,
+      (messages) => [...messages, message],
+    );
+    notifyListeners();
+    await _persistChatSnapshot();
+
+    final sentPeerIds = await _sendRealtimeGroupMessage(latest, message);
+    _replaceMessageByConversationId(latest.id, message.id, (current) {
+      final updated = current.copyWith(
+        sentPeerIds: _uniqueIds([...current.sentPeerIds, ...sentPeerIds]),
+      );
+      return updated.copyWith(status: _groupMessageStatus(latest, updated));
+    });
+    _statusMessage = sentPeerIds.isNotEmpty
+        ? '文件分享已通过端到端加密通道发送给 ${sentPeerIds.length} 个在线成员。'
+        : '群成员当前暂无可用设备，文件分享已加密缓存在本机，并等待同步到服务端归档。';
+    notifyListeners();
+    await _persistChatSnapshot();
+    notifyListeners();
+  }
+
+  Future<void> _sendGroupChatVaultFileInBackground({
+    required ChatConversation conversation,
+    required String path,
+    required String name,
+    required String mimeType,
+    required FileUploadTask task,
+  }) async {
+    try {
+      final uploaded = await _uploadEncryptedFileFromPath(
+        path: path,
+        name: name,
+        mimeType: mimeType,
+        folderId: null,
+        allowedUserIds: conversation.members
+            .map((member) => member.id)
+            .toList(),
+        task: task,
+      );
+      task.completedBytes = uploaded.originalSize;
+      task.status = '上传完成';
+      task.done = true;
+      final message = _vaultFileChatMessage(
+        conversationId: conversation.id,
+        file: uploaded,
+        senderId: _user?.id ?? '',
+        senderName: _user?.displayName ?? '',
+      );
+      _replaceConversationMessagesById(
+        conversation.id,
+        (messages) => [...messages, message],
+      );
+      notifyListeners();
+      await _persistChatSnapshot();
+
+      final sentPeerIds = await _sendRealtimeGroupMessage(
+        conversation,
+        message,
+      );
+      _replaceMessageByConversationId(conversation.id, message.id, (current) {
+        final updated = current.copyWith(
+          sentPeerIds: _uniqueIds([...current.sentPeerIds, ...sentPeerIds]),
+        );
+        return updated.copyWith(
+          status: _groupMessageStatus(conversation, updated),
+        );
+      });
+      _statusMessage = sentPeerIds.isNotEmpty
+          ? '群文件引用已通过端到端加密通道发送给 ${sentPeerIds.length} 个在线成员。'
+          : '群成员当前暂无可用设备，文件引用已加密缓存在本机，并等待同步到服务端归档。';
+      notifyListeners();
+      await _persistChatSnapshot();
+      notifyListeners();
+    } catch (error) {
+      task.failed = true;
+      task.status = _friendlyError(error);
+      _statusMessage = '群文件上传失败：${task.status}';
+      notifyListeners();
+    }
   }
 
   Future<void> retryChatMessage({
@@ -1376,6 +1776,7 @@ extension AppControllerChatActions on AppController {
         'attachmentDataBase64': message.attachmentDataBase64,
         'attachmentObjectId': message.attachmentObjectId,
         'attachmentKeyBase64': message.attachmentKeyBase64,
+        'attachmentChunkCipherSizes': message.attachmentChunkCipherSizes,
       },
     };
   }
@@ -1757,6 +2158,13 @@ extension AppControllerChatActions on AppController {
                 decrypted.body['attachmentObjectId'] as String? ?? '',
             attachmentKeyBase64:
                 decrypted.body['attachmentKeyBase64'] as String? ?? '',
+            attachmentChunkCipherSizes:
+                (decrypted.body['attachmentChunkCipherSizes']
+                            as List<dynamic>? ??
+                        const [])
+                    .map((entry) => (entry as num).toInt())
+                    .where((entry) => entry > 0)
+                    .toList(),
           ),
         );
         if (!handled) {
@@ -1801,6 +2209,13 @@ extension AppControllerChatActions on AppController {
                 decrypted.body['attachmentObjectId'] as String? ?? '',
             attachmentKeyBase64:
                 decrypted.body['attachmentKeyBase64'] as String? ?? '',
+            attachmentChunkCipherSizes:
+                (decrypted.body['attachmentChunkCipherSizes']
+                            as List<dynamic>? ??
+                        const [])
+                    .map((entry) => (entry as num).toInt())
+                    .where((entry) => entry > 0)
+                    .toList(),
           ),
         );
         if (!handled) {
@@ -1913,6 +2328,7 @@ extension AppControllerChatActions on AppController {
           attachmentDataBase64: incoming.attachmentDataBase64,
           attachmentObjectId: incoming.attachmentObjectId,
           attachmentKeyBase64: incoming.attachmentKeyBase64,
+          attachmentChunkCipherSizes: incoming.attachmentChunkCipherSizes,
         ),
       ],
     );
@@ -2007,6 +2423,7 @@ extension AppControllerChatActions on AppController {
           attachmentDataBase64: incoming.attachmentDataBase64,
           attachmentObjectId: incoming.attachmentObjectId,
           attachmentKeyBase64: incoming.attachmentKeyBase64,
+          attachmentChunkCipherSizes: incoming.attachmentChunkCipherSizes,
         ),
       ],
     );

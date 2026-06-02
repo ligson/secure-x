@@ -110,6 +110,36 @@ func TestLiveKitCallTokenRequiresRealtimePermission(t *testing.T) {
 	}, http.StatusForbidden)
 }
 
+func TestCallEventRequiresRealtimePermission(t *testing.T) {
+	router, tokens, db := newAccessControlRouter(t)
+	createTestUser(t, db, "user-a", "user-a", "user-a@example.com")
+	createTestUser(t, db, "user-c", "user-c", "user-c@example.com")
+	token := issueTestToken(t, tokens, "user-a")
+
+	assertJSONStatus(t, router, http.MethodPost, "/api/v1/calls/events", token, map[string]any{
+		"peerUserId": "user-c",
+		"callId":     "call-1",
+		"media":      "audio",
+		"phase":      "failed",
+	}, http.StatusForbidden)
+}
+
+func TestCallEventForFriend(t *testing.T) {
+	router, tokens, db := newAccessControlRouter(t)
+	createTestUser(t, db, "user-a", "user-a", "user-a@example.com")
+	createTestUser(t, db, "user-b", "user-b", "user-b@example.com")
+	createTestFriendship(t, db, "user-a", "user-b")
+	token := issueTestToken(t, tokens, "user-a")
+
+	assertJSONStatus(t, router, http.MethodPost, "/api/v1/calls/events", token, map[string]any{
+		"peerUserId": "user-b",
+		"callId":     "call-1",
+		"media":      "video",
+		"phase":      "connected",
+		"reason":     "livekit-connected",
+	}, http.StatusOK)
+}
+
 func TestLiveKitCallTokenForFriend(t *testing.T) {
 	router, tokens, db := newAccessControlRouterWithConfig(
 		t,

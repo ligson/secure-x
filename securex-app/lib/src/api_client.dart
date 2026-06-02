@@ -347,6 +347,7 @@ class ApiClient {
     required int totalChunks,
     required int version,
     String? folderId,
+    List<String> allowedUserIds = const [],
   }) async {
     return _unwrapMap(
       await _dio.post<Map<String, dynamic>>(
@@ -355,7 +356,21 @@ class ApiClient {
           'folderId': folderId,
           'version': version,
           'totalChunks': totalChunks,
+          'allowedUserIds': allowedUserIds,
         },
+        options: _authorized(token),
+      ),
+    );
+  }
+
+  Future<Map<String, dynamic>> getChunkedFileUpload({
+    required String baseUrl,
+    required String token,
+    required String uploadId,
+  }) async {
+    return _unwrapMap(
+      await _dio.get<Map<String, dynamic>>(
+        '$baseUrl/api/v1/file-uploads/$uploadId',
         options: _authorized(token),
       ),
     );
@@ -383,16 +398,18 @@ class ApiClient {
     );
   }
 
-  Future<void> completeChunkedFileUpload({
+  Future<Map<String, dynamic>> completeChunkedFileUpload({
     required String baseUrl,
     required String token,
     required String uploadId,
     required String payload,
   }) async {
-    await _dio.post<Map<String, dynamic>>(
-      '$baseUrl/api/v1/file-uploads/$uploadId/complete',
-      data: {'payload': payload},
-      options: _authorized(token),
+    return _unwrapMap(
+      await _dio.post<Map<String, dynamic>>(
+        '$baseUrl/api/v1/file-uploads/$uploadId/complete',
+        data: {'payload': payload},
+        options: _authorized(token),
+      ),
     );
   }
 
@@ -422,6 +439,19 @@ class ApiClient {
     );
   }
 
+  Future<void> shareEncryptedFile({
+    required String baseUrl,
+    required String token,
+    required String fileId,
+    required List<String> allowedUserIds,
+  }) async {
+    await _dio.post<Map<String, dynamic>>(
+      '$baseUrl/api/v1/files/$fileId/share',
+      data: {'allowedUserIds': allowedUserIds},
+      options: _authorized(token),
+    );
+  }
+
   Future<Uint8List> downloadEncryptedFile({
     required String baseUrl,
     required String token,
@@ -435,6 +465,22 @@ class ApiClient {
     );
 
     return Uint8List.fromList(base64Decode(data['cipherTextBase64'] as String));
+  }
+
+  Future<Stream<Uint8List>> downloadEncryptedFileStream({
+    required String baseUrl,
+    required String token,
+    required String fileId,
+  }) async {
+    final response = await _dio.get<ResponseBody>(
+      '$baseUrl/api/v1/files/$fileId/download?raw=1',
+      options: _authorized(token, responseType: ResponseType.stream),
+    );
+    final body = response.data;
+    if (body == null) {
+      return const Stream<Uint8List>.empty();
+    }
+    return body.stream.map((chunk) => Uint8List.fromList(chunk));
   }
 
   Future<Map<String, dynamic>> uploadChatAttachment({
@@ -1053,6 +1099,30 @@ class ApiClient {
     );
     return LiveKitCallToken.fromJson(
       data['livekit'] as Map<String, dynamic>? ?? const {},
+    );
+  }
+
+  Future<void> recordCallEvent({
+    required String baseUrl,
+    required String token,
+    required String peerUserId,
+    required String callId,
+    required String media,
+    required String phase,
+    required String reason,
+    required String deviceId,
+  }) async {
+    await _dio.post<Map<String, dynamic>>(
+      '$baseUrl/api/v1/calls/events',
+      data: {
+        'peerUserId': peerUserId,
+        'callId': callId,
+        'media': media,
+        'phase': phase,
+        'reason': reason,
+        'deviceId': deviceId,
+      },
+      options: _authorized(token),
     );
   }
 

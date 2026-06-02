@@ -95,6 +95,7 @@ func NewRouter(
 		protected.GET("/chat/messages/pending", handler.listPendingChatMessages)
 		protected.POST("/chat/messages/ack", handler.ackChatMessages)
 		protected.POST("/calls/livekit-token", handler.createLiveKitCallToken)
+		protected.POST("/calls/events", handler.recordCallEvent)
 
 		protected.GET("/folders", handler.listFolders)
 		protected.POST("/folders", handler.createFolder)
@@ -115,6 +116,7 @@ func NewRouter(
 		protected.GET("/files/:id", handler.getFileMetadata)
 		protected.POST("/files", handler.uploadFile)
 		protected.PUT("/files/:id", handler.updateFileMetadata)
+		protected.POST("/files/:id/share", handler.shareFile)
 		protected.GET("/files/:id/download", handler.downloadFile)
 		protected.DELETE("/files/:id", handler.deleteFile)
 

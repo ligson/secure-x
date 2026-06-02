@@ -98,6 +98,37 @@ func (h *Handler) createLiveKitCallToken(c *gin.Context) {
 	})
 }
 
+func (h *Handler) recordCallEvent(c *gin.Context) {
+	var req callEventRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondFailure(c, http.StatusBadRequest, bindErrorMessage(err))
+		return
+	}
+
+	userID := middleware.CurrentUserID(c)
+	peerUserID := strings.TrimSpace(req.PeerUserID)
+	if peerUserID == "" || peerUserID == userID {
+		RespondFailure(c, http.StatusBadRequest, "请选择有效的通话好友")
+		return
+	}
+	if !h.canExchangeRealtime(userID, peerUserID) {
+		RespondFailure(c, http.StatusForbidden, "无权记录该通话事件")
+		return
+	}
+
+	log.Printf(
+		"LiveKit 通话事件：user=%s, peer=%s, device=%s, call=%s, media=%s, phase=%s, reason=%s",
+		diagnosticID(userID),
+		diagnosticID(peerUserID),
+		diagnosticID(req.DeviceID),
+		diagnosticID(req.CallID),
+		normalizeCallMedia(req.Media),
+		sanitizeCallEventField(req.Phase, 32),
+		sanitizeCallEventField(req.Reason, 96),
+	)
+	RespondSuccess(c, http.StatusOK, "通话事件已记录", gin.H{})
+}
+
 func (h *Handler) liveKitParticipantIdentity(userID string, deviceID string) (string, error) {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
@@ -154,4 +185,30 @@ func normalizeCallMedia(media string) string {
 		return "video"
 	}
 	return "audio"
+}
+
+func sanitizeCallEventField(value string, maxLen int) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "-"
+	}
+	var builder strings.Builder
+	for _, r := range value {
+		if r >= 'a' && r <= 'z' ||
+			r >= 'A' && r <= 'Z' ||
+			r >= '0' && r <= '9' ||
+			r == '-' || r == '_' || r == '.' || r == ':' {
+			builder.WriteRune(r)
+			continue
+		}
+		builder.WriteByte('-')
+	}
+	result := builder.String()
+	if result == "" {
+		return "-"
+	}
+	if len(result) > maxLen {
+		return result[:maxLen]
+	}
+	return result
 }

@@ -16,6 +16,10 @@
   - 汇总需要用户拍板的关键设计决策，避免实现阶段反复返工
 - [06-release.md](06-release.md)
   - 说明 GitHub Actions 多端打包、Release 产物与签名边界
+- [07-backend-deployment.md](07-backend-deployment.md)
+  - 说明后端生产部署、配置、反向代理、备份升级与 LiveKit 音视频部署注意事项
+- [08-encrypted-file-sharing.md](08-encrypted-file-sharing.md)
+  - 说明文件模块分享、聊天大文件引用、客户端加密分片上传、密文下载授权与续传边界
 
 ## 使用原则
 

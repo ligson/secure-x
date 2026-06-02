@@ -50,25 +50,27 @@ type VaultItem struct {
 }
 
 type StoredFile struct {
-	ID          string    `gorm:"primaryKey;size:36" json:"id"`
-	UserID      string    `gorm:"index;size:36;not null" json:"userId"`
-	FolderID    *string   `gorm:"index;size:36" json:"folderId,omitempty"`
-	Payload     string    `gorm:"type:text;not null" json:"payload"`
-	StoragePath string    `gorm:"uniqueIndex;size:255;not null" json:"-"`
-	CipherSize  int64     `gorm:"not null" json:"cipherSize"`
-	Version     int       `gorm:"not null;default:1" json:"version"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID             string    `gorm:"primaryKey;size:36" json:"id"`
+	UserID         string    `gorm:"index;size:36;not null" json:"userId"`
+	FolderID       *string   `gorm:"index;size:36" json:"folderId,omitempty"`
+	Payload        string    `gorm:"type:text;not null" json:"payload"`
+	AllowedUserIDs string    `gorm:"type:text;not null;default:'[]'" json:"allowedUserIds"`
+	StoragePath    string    `gorm:"uniqueIndex;size:255;not null" json:"-"`
+	CipherSize     int64     `gorm:"not null" json:"cipherSize"`
+	Version        int       `gorm:"not null;default:1" json:"version"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 type FileUploadSession struct {
-	ID          string    `gorm:"primaryKey;size:36" json:"id"`
-	UserID      string    `gorm:"index;size:36;not null" json:"userId"`
-	FolderID    *string   `gorm:"index;size:36" json:"folderId,omitempty"`
-	Version     int       `gorm:"not null;default:1" json:"version"`
-	TotalChunks int       `gorm:"not null" json:"totalChunks"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID             string    `gorm:"primaryKey;size:36" json:"id"`
+	UserID         string    `gorm:"index;size:36;not null" json:"userId"`
+	FolderID       *string   `gorm:"index;size:36" json:"folderId,omitempty"`
+	AllowedUserIDs string    `gorm:"type:text;not null;default:'[]'" json:"allowedUserIds"`
+	Version        int       `gorm:"not null;default:1" json:"version"`
+	TotalChunks    int       `gorm:"not null" json:"totalChunks"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 type FriendRequest struct {

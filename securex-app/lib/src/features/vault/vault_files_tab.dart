@@ -244,6 +244,10 @@ extension _VaultFilesTab on _VaultScreenState {
             await _showFileEditor(file: file);
             return;
           }
+          if (value == 'share') {
+            await _showFileShareSheet(file);
+            return;
+          }
           if (value == 'delete') {
             final confirmed = await _confirmDelete(
               title: '删除文件',
@@ -259,11 +263,106 @@ extension _VaultFilesTab on _VaultScreenState {
         },
         itemBuilder: (context) => const [
           PopupMenuItem(value: 'download', child: Text('下载')),
+          PopupMenuItem(value: 'share', child: Text('分享')),
           PopupMenuItem(value: 'edit', child: Text('编辑')),
           PopupMenuItem(value: 'delete', child: Text('删除')),
         ],
       ),
     );
+  }
+
+  Future<void> _showFileShareSheet(DecryptedFileRecord file) async {
+    final friends = widget.controller.friends;
+    final groups = widget.controller.chatConversations
+        .where(
+          (conversation) => conversation.isGroup && !conversation.isDissolved,
+        )
+        .toList();
+    if (friends.isEmpty && groups.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('暂无可分享的好友或群聊。')));
+      return;
+    }
+    final target = await showModalBottomSheet<Object>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(22, 8, 22, 12),
+              child: Text(
+                '分享文件',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+              ),
+            ),
+            if (friends.isNotEmpty) ...[
+              const Padding(
+                padding: EdgeInsets.fromLTRB(22, 10, 22, 6),
+                child: Text('好友'),
+              ),
+              for (final friend in friends)
+                ListTile(
+                  leading: _PresetAvatar(
+                    presetId: friend.avatarPreset,
+                    imageUrl: friend.avatarUrl,
+                    size: 42,
+                  ),
+                  title: Text(friend.displayName),
+                  subtitle: Text(friend.username),
+                  onTap: () => Navigator.of(context).pop(friend),
+                ),
+            ],
+            if (groups.isNotEmpty) ...[
+              const Padding(
+                padding: EdgeInsets.fromLTRB(22, 16, 22, 6),
+                child: Text('群聊'),
+              ),
+              for (final group in groups)
+                ListTile(
+                  leading: _PresetAvatar(
+                    presetId: group.avatarPreset,
+                    size: 42,
+                    group: true,
+                  ),
+                  title: Text(group.displayTitle),
+                  subtitle: Text('${group.members.length + 1} 个成员'),
+                  onTap: () => Navigator.of(context).pop(group),
+                ),
+            ],
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || target == null) {
+      return;
+    }
+    try {
+      if (target is PublicUser) {
+        await widget.controller.shareVaultFileToFriend(
+          friend: target,
+          file: file,
+        );
+        if (mounted) {
+          await _showChatRoom(target);
+        }
+        return;
+      }
+      if (target is ChatConversation) {
+        await widget.controller.shareVaultFileToGroup(
+          conversation: target,
+          file: file,
+        );
+        if (mounted) {
+          await _showConversation(target);
+        }
+      }
+    } catch (_) {}
   }
 
   Widget _buildUploadProgressCard() {

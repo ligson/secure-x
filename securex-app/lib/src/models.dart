@@ -726,6 +726,7 @@ class ChatMessage {
     this.attachmentDataBase64 = '',
     this.attachmentObjectId = '',
     this.attachmentKeyBase64 = '',
+    this.attachmentChunkCipherSizes = const [],
   });
 
   final String id;
@@ -746,6 +747,7 @@ class ChatMessage {
   final String attachmentDataBase64;
   final String attachmentObjectId;
   final String attachmentKeyBase64;
+  final List<int> attachmentChunkCipherSizes;
 
   bool get hasAttachment =>
       attachmentType.isNotEmpty &&
@@ -757,6 +759,8 @@ class ChatMessage {
   bool get isAudioAttachment => attachmentType == 'audio';
 
   bool get isVideoAttachment => attachmentType == 'video';
+
+  bool get isVaultFileAttachment => attachmentType == 'vault-file';
 
   ChatMessage copyWith({
     String? id,
@@ -777,6 +781,7 @@ class ChatMessage {
     String? attachmentDataBase64,
     String? attachmentObjectId,
     String? attachmentKeyBase64,
+    List<int>? attachmentChunkCipherSizes,
   }) {
     return ChatMessage(
       id: id ?? this.id,
@@ -797,6 +802,8 @@ class ChatMessage {
       attachmentDataBase64: attachmentDataBase64 ?? this.attachmentDataBase64,
       attachmentObjectId: attachmentObjectId ?? this.attachmentObjectId,
       attachmentKeyBase64: attachmentKeyBase64 ?? this.attachmentKeyBase64,
+      attachmentChunkCipherSizes:
+          attachmentChunkCipherSizes ?? this.attachmentChunkCipherSizes,
     );
   }
 
@@ -820,6 +827,7 @@ class ChatMessage {
       'attachmentDataBase64': attachmentDataBase64,
       'attachmentObjectId': attachmentObjectId,
       'attachmentKeyBase64': attachmentKeyBase64,
+      'attachmentChunkCipherSizes': attachmentChunkCipherSizes,
     };
   }
 
@@ -851,6 +859,11 @@ class ChatMessage {
       attachmentDataBase64: json['attachmentDataBase64'] as String? ?? '',
       attachmentObjectId: json['attachmentObjectId'] as String? ?? '',
       attachmentKeyBase64: json['attachmentKeyBase64'] as String? ?? '',
+      attachmentChunkCipherSizes:
+          (json['attachmentChunkCipherSizes'] as List<dynamic>? ?? const [])
+              .map((entry) => (entry as num).toInt())
+              .where((entry) => entry > 0)
+              .toList(),
     );
   }
 }

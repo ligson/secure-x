@@ -55,6 +55,71 @@ class FileUploadTask {
   }
 }
 
+enum SecureXCallPhase {
+  idle,
+  outgoing,
+  incoming,
+  accepting,
+  joining,
+  connected,
+  reconnecting,
+  ended,
+  failed,
+}
+
+enum IncomingCallHandling { open, duplicate, handledByActiveCall, rejectBusy }
+
+class ActiveCallSession {
+  const ActiveCallSession({
+    required this.friendId,
+    required this.callId,
+    required this.media,
+    required this.incoming,
+    required this.phase,
+    required this.diagnosticId,
+    required this.startedAt,
+    this.connectedAt,
+    this.updatedAt,
+  });
+
+  final String friendId;
+  final String callId;
+  final String media;
+  final bool incoming;
+  final SecureXCallPhase phase;
+  final String diagnosticId;
+  final DateTime startedAt;
+  final DateTime? connectedAt;
+  final DateTime? updatedAt;
+
+  bool get active =>
+      phase != SecureXCallPhase.ended && phase != SecureXCallPhase.failed;
+
+  ActiveCallSession copyWith({
+    String? friendId,
+    String? callId,
+    String? media,
+    bool? incoming,
+    SecureXCallPhase? phase,
+    String? diagnosticId,
+    DateTime? startedAt,
+    DateTime? connectedAt,
+    bool clearConnectedAt = false,
+  }) {
+    return ActiveCallSession(
+      friendId: friendId ?? this.friendId,
+      callId: callId ?? this.callId,
+      media: media ?? this.media,
+      incoming: incoming ?? this.incoming,
+      phase: phase ?? this.phase,
+      diagnosticId: diagnosticId ?? this.diagnosticId,
+      startedAt: startedAt ?? this.startedAt,
+      connectedAt: clearConnectedAt ? null : connectedAt ?? this.connectedAt,
+      updatedAt: DateTime.now(),
+    );
+  }
+}
+
 class AppController extends ChangeNotifier {
   AppController({
     required ApiClient apiClient,
@@ -134,6 +199,7 @@ class AppController extends ChangeNotifier {
   List<FriendRequestRecord> _outgoingFriendRequests = [];
   List<ChatConversation> _chatConversations = [];
   RealtimeCallSignal? _lastCallSignal;
+  ActiveCallSession? _activeCallSession;
   ChatIdentityBundle? _chatIdentity;
   final Map<String, bool> _chatFriendOnline = {};
   final Set<String> _activeConversationIds = {};
@@ -193,6 +259,7 @@ class AppController extends ChangeNotifier {
   Listenable get callListenable => _callRevision;
   Listenable get friendsListenable => _friendsRevision;
   RealtimeCallSignal? get lastCallSignal => _lastCallSignal;
+  ActiveCallSession? get activeCallSession => _activeCallSession;
 
   String get devInstance => _storageNamespace;
 
@@ -231,4 +298,123 @@ class AppController extends ChangeNotifier {
   void _markCallChanged() => _bumpRevision(_callRevision);
 
   void _markFriendsChanged() => _bumpRevision(_friendsRevision);
+
+  String callDiagnosticId(String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty) {
+      return '-';
+    }
+    return normalized.length <= 8 ? normalized : normalized.substring(0, 8);
+  }
+
+  bool canStartCall() {
+    final session = _activeCallSession;
+    return session == null || !session.active;
+  }
+
+  bool reserveOutgoingCall({
+    required PublicUser friend,
+    required String callId,
+    required String media,
+  }) {
+    final session = _activeCallSession;
+    if (session != null &&
+        session.active &&
+        (session.friendId != friend.id || session.callId != callId)) {
+      _statusMessage = '当前已有通话，请先结束后再发起新的通话。';
+      notifyListeners();
+      return false;
+    }
+    _activeCallSession = ActiveCallSession(
+      friendId: friend.id,
+      callId: callId,
+      media: _normalizeCallMediaForState(media),
+      incoming: false,
+      phase: SecureXCallPhase.outgoing,
+      diagnosticId: callDiagnosticId(callId),
+      startedAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+    _markCallChanged();
+    return true;
+  }
+
+  IncomingCallHandling prepareIncomingCall(RealtimeCallSignal signal) {
+    final session = _activeCallSession;
+    if (session != null && session.active) {
+      if (session.callId == signal.callId) {
+        return IncomingCallHandling.duplicate;
+      }
+      if (session.friendId == signal.friendId) {
+        return IncomingCallHandling.handledByActiveCall;
+      }
+      return IncomingCallHandling.rejectBusy;
+    }
+    _activeCallSession = ActiveCallSession(
+      friendId: signal.friendId,
+      callId: signal.callId,
+      media: _normalizeCallMediaForState(signal.media),
+      incoming: true,
+      phase: SecureXCallPhase.incoming,
+      diagnosticId: callDiagnosticId(signal.callId),
+      startedAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+    _markCallChanged();
+    return IncomingCallHandling.open;
+  }
+
+  void markCallPhase({
+    required String callId,
+    required SecureXCallPhase phase,
+    DateTime? connectedAt,
+    bool clearConnectedAt = false,
+  }) {
+    final session = _activeCallSession;
+    if (session == null || session.callId != callId) {
+      return;
+    }
+    _activeCallSession = session.copyWith(
+      phase: phase,
+      connectedAt: connectedAt,
+      clearConnectedAt: clearConnectedAt,
+    );
+    _markCallChanged();
+  }
+
+  void switchActiveCall({
+    required String previousCallId,
+    required String callId,
+    required String media,
+  }) {
+    final session = _activeCallSession;
+    if (session == null || session.callId != previousCallId) {
+      return;
+    }
+    _activeCallSession = session.copyWith(
+      callId: callId,
+      media: _normalizeCallMediaForState(media),
+      phase: SecureXCallPhase.accepting,
+      diagnosticId: callDiagnosticId(callId),
+      clearConnectedAt: true,
+    );
+    _markCallChanged();
+  }
+
+  void clearActiveCall(String callId, {bool failed = false}) {
+    final session = _activeCallSession;
+    if (session == null || session.callId != callId) {
+      return;
+    }
+    _activeCallSession = session.copyWith(
+      phase: failed ? SecureXCallPhase.failed : SecureXCallPhase.ended,
+    );
+    _markCallChanged();
+    _activeCallSession = null;
+    _markCallChanged();
+  }
+
+  String _normalizeCallMediaForState(String media) {
+    return media == 'video' ? 'video' : 'audio';
+  }
 }

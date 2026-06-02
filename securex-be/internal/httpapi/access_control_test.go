@@ -201,9 +201,70 @@ func TestDownloadRejectsCrossUserFileAccess(t *testing.T) {
 
 	router.ServeHTTP(response, request)
 
-	if response.Code != http.StatusNotFound {
-		t.Fatalf("expected %d, got %d: %s", http.StatusNotFound, response.Code, response.Body.String())
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("expected %d, got %d: %s", http.StatusForbidden, response.Code, response.Body.String())
 	}
+}
+
+func TestSharedFileDownloadAllowsFriendOnly(t *testing.T) {
+	router, tokens, db := newAccessControlRouter(t)
+	createTestFriendship(t, db, "user-a", "user-b")
+	tokenA := issueTestToken(t, tokens, "user-a")
+	tokenB := issueTestToken(t, tokens, "user-b")
+	tokenC := issueTestToken(t, tokens, "user-c")
+
+	cipherPath := filepath.Join(t.TempDir(), "cipher.bin")
+	if err := writeTestFile(cipherPath, []byte("cipher data")); err != nil {
+		t.Fatalf("write cipher file: %v", err)
+	}
+	fileA := model.StoredFile{
+		ID:             "file-shared",
+		UserID:         "user-a",
+		Payload:        "cipher-metadata",
+		AllowedUserIDs: "[]",
+		StoragePath:    cipherPath,
+		CipherSize:     int64(len("cipher data")),
+		Version:        1,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
+	if err := db.Create(&fileA).Error; err != nil {
+		t.Fatalf("create file record: %v", err)
+	}
+
+	assertJSONStatus(t, router, http.MethodPost, "/api/v1/files/file-shared/share", tokenA, map[string]any{
+		"allowedUserIds": []string{"user-b"},
+	}, http.StatusOK)
+	assertJSONStatus(t, router, http.MethodGet, "/api/v1/files/file-shared/download", tokenB, nil, http.StatusOK)
+	assertJSONStatus(t, router, http.MethodGet, "/api/v1/files/file-shared/download", tokenC, nil, http.StatusForbidden)
+}
+
+func TestFileShareRejectsUnrelatedRecipient(t *testing.T) {
+	router, tokens, db := newAccessControlRouter(t)
+	tokenA := issueTestToken(t, tokens, "user-a")
+
+	cipherPath := filepath.Join(t.TempDir(), "cipher.bin")
+	if err := writeTestFile(cipherPath, []byte("cipher data")); err != nil {
+		t.Fatalf("write cipher file: %v", err)
+	}
+	fileA := model.StoredFile{
+		ID:             "file-not-shared",
+		UserID:         "user-a",
+		Payload:        "cipher-metadata",
+		AllowedUserIDs: "[]",
+		StoragePath:    cipherPath,
+		CipherSize:     int64(len("cipher data")),
+		Version:        1,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
+	if err := db.Create(&fileA).Error; err != nil {
+		t.Fatalf("create file record: %v", err)
+	}
+
+	assertJSONStatus(t, router, http.MethodPost, "/api/v1/files/file-not-shared/share", tokenA, map[string]any{
+		"allowedUserIds": []string{"user-c"},
+	}, http.StatusForbidden)
 }
 
 func TestChatMessageDispatchRejectsUnauthorizedTargetDevice(t *testing.T) {
