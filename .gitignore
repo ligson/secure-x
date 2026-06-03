@@ -4,6 +4,7 @@
 # Editors
 .idea/
 .vscode/
+.codegraph/
 
 # Logs and temp files
 *.log
@@ -24,6 +25,12 @@ securex-be/config/*.yaml
 *.p12
 *.pfx
 secrets/
+deploy/.env
+deploy/securex/config.yaml
+deploy/securex/data/
+deploy/securex/logs/
+deploy/livekit/livekit.yaml
+deploy/livekit/certs/
 
 # Local databases and runtime data
 *.db

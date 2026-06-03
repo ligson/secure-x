@@ -1,0 +1,29 @@
+server:
+  addr: ":8080"
+  publicBasePath: ""
+
+database:
+  dsn: "data/securex.db"
+
+storage:
+  fileDir: "data/files"
+
+logging:
+  dir: "logs"
+  appFile: "secure-x.log"
+  accessFile: "access.log"
+
+auth:
+  jwtSecret: "replace-with-a-long-random-secret"
+
+realtime:
+  iceServers: []
+  livekit:
+    enabled: true
+    # Use the HTTPS/WSS endpoint that clients can reach through your reverse proxy.
+    # Same-domain path example: "wss://securex.example.com/livekit"
+    # Dedicated domain example: "wss://rtc.example.com"
+    url: "wss://securex.example.com/livekit"
+    apiKey: "replace-with-livekit-api-key"
+    apiSecret: "replace-with-livekit-api-secret"
+    turnMode: "turn_udp_5349"

@@ -48,6 +48,7 @@ dependencies:
   record: ^6.1.2
   audioplayers: ^6.5.1
   livekit_client: ^2.7.0
+  wakelock_plus: ^1.5.2
 
 dev_dependencies:
   flutter_test:

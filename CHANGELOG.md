@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.31] - 2026-06-03
+
+### Added
+
+- App 会按全局活跃通话状态保持屏幕常亮，避免等待接听、接入 LiveKit 或通话中被系统自动锁屏；通话结束后恢复系统默认锁屏策略。
+- 音视频通话页头像优先显示用户上传的图片头像；左上角画中画按钮改为应用内可拖动通话浮窗，点浮窗可恢复全屏，浮窗外继续操作聊天界面，避免误退出通话页导致挂断。
+- 新增 `deploy/docker-compose.yml` 私有部署模板，支持用 Docker Compose 同时部署 Secure X 后端和 LiveKit，并提供后端、LiveKit、nginx 与 `.env` 示例配置。
+
+### Documentation
+
+- 完善后端部署文档，补充 Docker Compose 部署流程、LiveKit 端口规划、同域名 `/livekit/` 反代、TURN/UDP 模式和 relay 端口一致性要求。
+
+### Fixed
+
+- 后端 Docker 镜像默认仓库名统一为 `ligson/securex-be`，私有部署 Compose 使用包含 `linux/amd64` 与 `linux/arm64` 的发版版本 tag，避免继续使用临时 dev 镜像标签。
+- 修复音视频通话在双方同时呼叫或重复接听信令乱序到达时，旧的 LiveKit 入房异步任务可能污染当前通话状态的问题；LiveKit 入房现在绑定当前 `callId` 和入房 generation，切换通话或挂断会失效旧入房任务。
+- 发起、接听或重试音视频通话前会刷新后端实时配置，避免客户端继续使用已经废弃或没有 DNS 解析的 LiveKit 信令域名。
+
 ## [v1.0.30] - 2026-06-02
 
 ### Added

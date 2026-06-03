@@ -1,0 +1,41 @@
+services:
+  securex-be:
+    image: ${SECUREX_IMAGE:-ligson/securex-be:latest}
+    container_name: securex-be
+    restart: unless-stopped
+    user: ${SECUREX_CONTAINER_USER:-10001:10001}
+    command: ["--config", "/app/config.yaml"]
+    volumes:
+      - ./securex/config.yaml:/app/config.yaml:ro
+      - ./securex/data:/app/data
+      - ./securex/logs:/app/logs
+    ports:
+      - "${SECUREX_HTTP_HOST:-127.0.0.1}:${SECUREX_HTTP_PORT:-8080}:${SECUREX_CONTAINER_HTTP_PORT:-8080}/tcp"
+    networks:
+      - securex
+      - proxy
+
+  livekit:
+    image: ${LIVEKIT_IMAGE:-livekit/livekit-server:latest}
+    container_name: livekit
+    restart: unless-stopped
+    command: ["--config", "/etc/livekit/livekit.yaml"]
+    volumes:
+      - ./livekit/livekit.yaml:/etc/livekit/livekit.yaml:ro
+      - ${LIVEKIT_CERTS_DIR:-./livekit/certs}:/etc/livekit/certs:ro
+    ports:
+      - "${LIVEKIT_HTTP_HOST:-127.0.0.1}:${LIVEKIT_HTTP_PORT:-7880}:7880/tcp"
+      - "${LIVEKIT_TURN_HOST:-127.0.0.1}:${LIVEKIT_TURN_PORT:-5349}:5349/tcp"
+      - "${LIVEKIT_TURN_HOST:-127.0.0.1}:${LIVEKIT_TURN_PORT:-5349}:5349/udp"
+      # Keep this range aligned with livekit/livekit.yaml turn.relay_range_start/end.
+      - "${LIVEKIT_RTC_HOST:-127.0.0.1}:${LIVEKIT_RTC_PORT_START:-50000}-${LIVEKIT_RTC_PORT_END:-50010}:50000-50010/udp"
+    networks:
+      - securex
+      - proxy
+
+networks:
+  securex:
+    name: securex
+  proxy:
+    name: ${PROXY_NETWORK:-mynetwork}
+    external: true

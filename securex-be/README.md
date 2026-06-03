@@ -104,10 +104,10 @@ chmod 600 config.yaml
 scripts/build-image.sh v1.0.29
 ```
 
-默认构建平台为 `linux/amd64,linux/arm64`，默认镜像名为 `ligson/secure-x`。可通过环境变量覆盖：
+默认构建平台为 `linux/amd64,linux/arm64`，默认镜像名为 `ligson/securex-be`。可通过环境变量覆盖：
 
 ```bash
-IMAGE_NAME=ligson/secure-x TAG_LATEST=true scripts/build-image.sh v1.0.29
+IMAGE_NAME=ligson/securex-be TAG_LATEST=true scripts/build-image.sh v1.0.29
 ```
 
 本地单平台测试构建：
@@ -135,5 +135,5 @@ docker run -d \
   -v ./config.yaml:/app/config.yaml:ro \
   -v ./data:/app/data \
   -v ./logs:/app/logs \
-  ligson/secure-x:v1.0.29
+  ligson/securex-be:v1.0.29
 ```

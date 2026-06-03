@@ -1,0 +1,37 @@
+port: 7880
+bind_addresses:
+  - "0.0.0.0"
+
+rtc:
+  # Set this to the public IP or public edge address that clients can reach.
+  # For NAT, frp, or reverse-tunnel deployments, this must be the public entrypoint.
+  node_ip: "203.0.113.10"
+  udp_port: 50000
+  use_external_ip: false
+  stun_servers: []
+  # Keep this false unless you also expose a reachable TCP media port.
+  allow_tcp_fallback: false
+
+turn:
+  enabled: true
+  domain: "turn.example.com"
+  udp_port: 5349
+  # Enable TURN/TLS only when the domain has a trusted certificate and TCP is exposed.
+  # tls_port: 5349
+  # cert_file: /etc/livekit/certs/fullchain.pem
+  # key_file: /etc/livekit/certs/privkey.pem
+  ttl_seconds: 300
+  relay_range_start: 50001
+  relay_range_end: 50010
+
+keys:
+  replace-with-livekit-api-key: replace-with-livekit-api-secret
+
+logging:
+  level: info
+  pion_level: warn
+
+room:
+  auto_create: true
+  empty_timeout: 300
+  departure_timeout: 20

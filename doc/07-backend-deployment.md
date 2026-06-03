@@ -33,6 +33,75 @@ https://securex.example.com
 - 后端实际监听端口只绑定本机，不直接暴露公网
 - 如果要使用 Secure X 音视频通话，必须同时部署 LiveKit，并按 LiveKit 要求开放或转发媒体端口
 
+## 使用 Docker Compose 部署后端和 LiveKit
+
+仓库提供了面向私有部署的 Compose 模板，位于 [deploy/docker-compose.yml](../deploy/docker-compose.yml)。这个模板同时包含：
+
+- `securex-be`：Secure X 后端容器
+- `livekit`：LiveKit 音视频服务容器
+
+模板不包含真实生产密钥、证书、域名或公网 IP。部署时必须先复制示例文件，再填写你自己的配置：
+
+```bash
+cd deploy
+cp .env.example .env
+cp securex/config.example.yaml securex/config.yaml
+cp livekit/livekit.example.yaml livekit/livekit.yaml
+mkdir -p securex/data securex/logs livekit/certs
+chmod 600 .env securex/config.yaml livekit/livekit.yaml
+# Linux bind mount 部署时需要让后端容器用户可写数据和日志目录。
+sudo chown -R 10001:10001 securex/data securex/logs
+```
+
+必须替换的配置：
+
+- `.env` 中的镜像 tag 和端口规划
+- `securex/config.yaml` 中的 `auth.jwtSecret`
+- `securex/config.yaml` 中的 `realtime.livekit.url`
+- `securex/config.yaml` 与 `livekit/livekit.yaml` 中同一组 LiveKit API key / secret
+- `livekit/livekit.yaml` 中的公网入口 `rtc.node_ip`
+- `livekit/livekit.yaml` 中的 TURN 域名
+- 如启用 TURN/TLS，还要放入可信 CA 签发的证书到 `livekit/certs/`
+
+启动：
+
+```bash
+docker compose up -d
+docker compose ps
+curl -fsS http://127.0.0.1:8080/healthz
+curl -fsS http://127.0.0.1:7880/
+```
+
+默认端口规划：
+
+- `127.0.0.1:8080/TCP`：Secure X 后端 HTTP，只给本机反向代理访问
+- `127.0.0.1:7880/TCP`：LiveKit HTTP/WebSocket，只给本机反向代理访问
+- `5349/UDP`：LiveKit TURN/UDP
+- `50000/UDP`：LiveKit RTC UDP mux
+- `50001-50010/UDP`：LiveKit TURN relay 范围
+
+如果要修改 `50001-50010` 这段 relay 范围，必须同时修改 `deploy/docker-compose.yml` 和 `deploy/livekit/livekit.yaml`。LiveKit 广告给客户端的候选端口必须与公网实际开放端口一致，不能只改 Docker 宿主机映射。
+
+对外 HTTPS 仍建议由 nginx、Caddy 或其他反向代理终止 TLS。仓库提供 nginx 示例：[deploy/nginx/securex.conf.example](../deploy/nginx/securex.conf.example)。同域名子路径部署时，客户端 LiveKit URL 可以配置为：
+
+```yaml
+realtime:
+  livekit:
+    enabled: true
+    url: "wss://securex.example.com/livekit"
+```
+
+如果使用独立 RTC 域名，则把 nginx 示例拆成两个 `server_name`，并把后端配置改成：
+
+```yaml
+realtime:
+  livekit:
+    enabled: true
+    url: "wss://rtc.example.com"
+```
+
+生产环境不要把 `deploy/.env`、`deploy/securex/config.yaml`、`deploy/livekit/livekit.yaml`、证书、数据库、密文文件和日志提交到 Git。仓库 `.gitignore` 已默认忽略这些运行文件。
+
 ## 获取后端包
 
 从 GitHub Release 下载与你服务器架构匹配的后端包：
@@ -329,7 +398,8 @@ rtc:
   # 使用单个 UDP mux 端口，减少需要开放的公网端口数量。
   udp_port: 50000
   stun_servers: []
-  allow_tcp_fallback: true
+  # 如果没有真实开放 LiveKit TCP 媒体端口，保持 false，避免客户端拿到不可达 TCP 候选。
+  allow_tcp_fallback: false
 
 turn:
   enabled: true
@@ -362,18 +432,26 @@ room:
 
 ### Docker Compose 示例
 
-如果使用 Docker bridge 网络，需要显式映射 LiveKit HTTP、TURN 和 UDP relay 端口：
+仓库已经提供完整 Compose 模板：[deploy/docker-compose.yml](../deploy/docker-compose.yml)。它同时运行 `securex-be` 和 `livekit`，并把后端配置、SQLite 数据库、密文文件、日志和 LiveKit 配置挂载到 `deploy/` 下的持久化目录。
+
+核心端口映射如下：
 
 ```yaml
 services:
+  securex-be:
+    image: ligson/securex-be:latest
+    volumes:
+      - ./securex/config.yaml:/app/config.yaml:ro
+      - ./securex/data:/app/data
+      - ./securex/logs:/app/logs
+    ports:
+      - "127.0.0.1:8080:8080/tcp"
+
   livekit:
     image: livekit/livekit-server:latest
-    container_name: livekit
-    restart: unless-stopped
     command: --config /etc/livekit/livekit.yaml
     volumes:
-      - ./livekit.yaml:/etc/livekit/livekit.yaml:ro
-      - ./certs:/etc/livekit/certs:ro
+      - ./livekit/livekit.yaml:/etc/livekit/livekit.yaml:ro
     ports:
       - "127.0.0.1:7880:7880/tcp"
       - "5349:5349/udp"
@@ -437,7 +515,7 @@ realtime:
     url: "wss://rtc.example.com"
     apiKey: "replace-with-livekit-api-key"
     apiSecret: "replace-with-livekit-api-secret"
-    turnMode: "turn_tls_443"
+    turnMode: "turn_udp_5349"
 ```
 
 ### 关键经验
@@ -555,7 +633,7 @@ sudo systemctl status secure-x --no-pager
 
 ### 构建并推送多架构镜像
 
-仓库脚本默认使用 `docker buildx` 构建 `linux/amd64` 与 `linux/arm64`，并推送到 `ligson/secure-x`：
+仓库脚本默认使用 `docker buildx` 构建 `linux/amd64` 与 `linux/arm64`，并推送到 `ligson/securex-be`：
 
 ```bash
 scripts/build-image.sh v1.0.29
@@ -564,7 +642,7 @@ scripts/build-image.sh v1.0.29
 常用参数：
 
 ```bash
-IMAGE_NAME=ligson/secure-x scripts/build-image.sh v1.0.29
+IMAGE_NAME=ligson/securex-be scripts/build-image.sh v1.0.29
 TAG_LATEST=true scripts/build-image.sh v1.0.29
 PLATFORMS=linux/amd64,linux/arm64 scripts/build-image.sh v1.0.29
 ```
@@ -613,7 +691,7 @@ docker run -d \
   -v ./config.yaml:/app/config.yaml:ro \
   -v ./data:/app/data \
   -v ./logs:/app/logs \
-  ligson/secure-x:v1.0.29
+  ligson/securex-be:v1.0.29
 ```
 
 验证：

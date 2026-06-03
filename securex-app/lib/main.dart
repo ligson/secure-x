@@ -14,6 +14,7 @@ import 'package:audioplayers/audioplayers.dart' as audio;
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart' as record;
 import 'package:livekit_client/livekit_client.dart' as lk;
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'src/api_client.dart';
 import 'src/app_controller.dart';
@@ -73,11 +74,13 @@ class _SecureXAppState extends State<SecureXApp> with WidgetsBindingObserver {
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   bool _hadReachableNetwork = false;
   bool _connectivityInitialized = false;
+  bool _callWakelockEnabled = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    widget.controller.callListenable.addListener(_syncCallWakelock);
     widget.controller.initialize();
     _connectivitySubscription = Connectivity().onConnectivityChanged.listen(
       _handleConnectivityChanged,
@@ -122,6 +125,7 @@ class _SecureXAppState extends State<SecureXApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      unawaited(_syncCallWakelock());
       unawaited(widget.controller.handleAppResumed());
     }
   }
@@ -129,9 +133,31 @@ class _SecureXAppState extends State<SecureXApp> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    widget.controller.callListenable.removeListener(_syncCallWakelock);
     _connectivitySubscription?.cancel();
     _connectivitySubscription = null;
+    unawaited(_setCallWakelock(false));
     super.dispose();
+  }
+
+  Future<void> _syncCallWakelock() {
+    return _setCallWakelock(widget.controller.hasActiveCall);
+  }
+
+  Future<void> _setCallWakelock(bool enabled) async {
+    if (_callWakelockEnabled == enabled) {
+      return;
+    }
+    try {
+      if (enabled) {
+        await WakelockPlus.enable();
+      } else {
+        await WakelockPlus.disable();
+      }
+      _callWakelockEnabled = enabled;
+    } catch (error) {
+      appLog(enabled ? '启用通话保持亮屏失败' : '关闭通话保持亮屏失败', error);
+    }
   }
 
   @override
@@ -284,15 +310,19 @@ class _VaultScreenState extends State<VaultScreen> {
         return;
       }
       Navigator.of(context).push(
-        MaterialPageRoute<void>(
+        PageRouteBuilder<void>(
+          opaque: false,
           fullscreenDialog: true,
-          builder: (_) => _ChatCallPage(
+          pageBuilder: (_, _, _) => _ChatCallPage(
             controller: widget.controller,
             friend: friend,
             initialVideo: signal.media == 'video',
             incomingCallId: signal.callId,
             incomingCallPayload: signal.payload,
           ),
+          transitionsBuilder: (context, animation, _, child) {
+            return FadeTransition(opacity: animation, child: child);
+          },
         ),
       );
     });

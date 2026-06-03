@@ -2627,6 +2627,12 @@ class _ChatComposer extends StatelessWidget {
       ).showSnackBar(const SnackBar(content: Text('当前仅支持单聊发起通话。')));
       return;
     }
+    if (!controller.canStartCall()) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('当前已有通话，请先结束后再发起新的通话。')));
+      return;
+    }
     final media = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -2635,19 +2641,17 @@ class _ChatComposer extends StatelessWidget {
     if (!context.mounted || media == null || media.isEmpty) {
       return;
     }
-    if (!controller.canStartCall()) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('当前已有通话，请先结束后再发起新的通话。')));
-      return;
-    }
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => _ChatCallPage(
+      PageRouteBuilder<void>(
+        opaque: false,
+        pageBuilder: (_, _, _) => _ChatCallPage(
           controller: controller,
           friend: directFriend,
           initialVideo: media == 'video',
         ),
+        transitionsBuilder: (context, animation, _, child) {
+          return FadeTransition(opacity: animation, child: child);
+        },
       ),
     );
   }
@@ -2892,6 +2896,8 @@ class _ChatCallPageState extends State<_ChatCallPage>
   bool _cameraOn = false;
   bool _accepted = false;
   bool _incomingWaiting = false;
+  bool _minimized = false;
+  Offset _floatingCallOffset = const Offset(14, 14);
   bool _liveKitConnected = false;
   bool _joiningLiveKit = false;
   bool _ended = false;
@@ -2902,6 +2908,8 @@ class _ChatCallPageState extends State<_ChatCallPage>
   bool _remoteParticipantSeen = false;
   bool _liveKitE2eeEnabled = false;
   String? _mediaE2eeKey;
+  String? _joiningLiveKitCallId;
+  int _joinGeneration = 0;
   DateTime? _connectedAt;
   DateTime? _lastJoinRetryAt;
   int _joinRetryAttempt = 0;
@@ -2912,6 +2920,8 @@ class _ChatCallPageState extends State<_ChatCallPage>
 
   bool get _isIncoming => widget.incomingCallId != null;
   bool get _videoCall => _media == 'video';
+  bool get _joiningCurrentCall =>
+      _joiningLiveKit && _joiningLiveKitCallId == _callId;
 
   String _normalizeCallMedia(String value) {
     return value == 'video' || value == 'audio' ? value : _media;
@@ -2994,6 +3004,19 @@ class _ChatCallPageState extends State<_ChatCallPage>
     );
   }
 
+  bool _isActiveJoinAttempt(String callId, int generation) {
+    return mounted &&
+        !_ended &&
+        _callId == callId &&
+        _joinGeneration == generation;
+  }
+
+  void _invalidatePendingLiveKitJoin() {
+    _joinGeneration += 1;
+    _joiningLiveKit = false;
+    _joiningLiveKitCallId = null;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -3015,6 +3038,7 @@ class _ChatCallPageState extends State<_ChatCallPage>
       return;
     }
     widget.controller.callListenable.addListener(_handleCallSignal);
+    unawaited(_enableCallWakelock());
     unawaited(_startCall());
   }
 
@@ -3024,18 +3048,22 @@ class _ChatCallPageState extends State<_ChatCallPage>
     _durationText.dispose();
     WidgetsBinding.instance.removeObserver(this);
     widget.controller.callListenable.removeListener(_handleCallSignal);
+    unawaited(_disableCallWakelock());
     unawaited(_endCall(sendAction: _accepted ? 'end' : 'cancel'));
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed ||
-        _ended ||
+    if (state != AppLifecycleState.resumed) {
+      return;
+    }
+    unawaited(_enableCallWakelock());
+    if (_ended ||
         _incomingWaiting ||
         !_accepted ||
         _liveKitConnected ||
-        _joiningLiveKit) {
+        _joiningCurrentCall) {
       return;
     }
     appLog('通话页面恢复前台，尝试恢复音视频房间：call=${_callDiagnosticId(_callId)}');
@@ -3063,6 +3091,22 @@ class _ChatCallPageState extends State<_ChatCallPage>
     );
   }
 
+  Future<void> _enableCallWakelock() async {
+    try {
+      await WakelockPlus.enable();
+    } catch (error) {
+      appLog('启用通话保持亮屏失败', error);
+    }
+  }
+
+  Future<void> _disableCallWakelock() async {
+    try {
+      await WakelockPlus.disable();
+    } catch (error) {
+      appLog('关闭通话保持亮屏失败', error);
+    }
+  }
+
   Future<void> _startCall() async {
     try {
       if (_isIncoming) {
@@ -3076,7 +3120,9 @@ class _ChatCallPageState extends State<_ChatCallPage>
         });
         return;
       }
-      if (widget.controller.realtimeConfig?.rtc.liveKitReady != true) {
+      final realtimeConfig = await widget.controller
+          .refreshRealtimeConfigForCall();
+      if (realtimeConfig?.rtc.liveKitReady != true) {
         _markCallPhase(SecureXCallPhase.failed);
         _recordCallEvent('failed', 'livekit-not-ready');
         setState(() {
@@ -3179,7 +3225,7 @@ class _ChatCallPageState extends State<_ChatCallPage>
     }
     final activeCall =
         _accepted ||
-        _joiningLiveKit ||
+        _joiningCurrentCall ||
         _liveKitConnected ||
         _connectedAt != null;
     if (activeCall || _incomingWaiting) {
@@ -3271,7 +3317,7 @@ class _ChatCallPageState extends State<_ChatCallPage>
     if (!mounted || _ended || _resolvingCompetingCall) {
       return;
     }
-    if (_joiningLiveKit || _liveKitConnected || _connectedAt != null) {
+    if (_joiningCurrentCall || _liveKitConnected || _connectedAt != null) {
       appLog(
         '已进入音视频通道，忽略同时呼叫合并请求：current=${_callDiagnosticId(_callId)}, winner=${_callDiagnosticId(callId)}',
       );
@@ -3279,6 +3325,7 @@ class _ChatCallPageState extends State<_ChatCallPage>
     }
     _resolvingCompetingCall = true;
     final previousCallId = _callId;
+    _invalidatePendingLiveKitJoin();
     widget.controller.switchActiveCall(
       previousCallId: previousCallId,
       callId: callId,
@@ -3460,6 +3507,7 @@ class _ChatCallPageState extends State<_ChatCallPage>
         _recordCallEvent('ending', 'send-$sendAction');
         await _sendCallSignalReliably(sendAction, const {}, 3);
       }
+      _invalidatePendingLiveKitJoin();
       _ended = true;
       _markCallPhase(SecureXCallPhase.ended);
       widget.controller.clearActiveCall(_callId);
@@ -3471,6 +3519,8 @@ class _ChatCallPageState extends State<_ChatCallPage>
   }
 
   Future<void> _joinLiveKitRoom() async {
+    final joinCallId = _callId;
+    final joinMedia = _media;
     if (_ended) {
       _recordCallEvent('join-skipped', 'call-ended');
       return;
@@ -3479,11 +3529,21 @@ class _ChatCallPageState extends State<_ChatCallPage>
       _recordCallEvent('join-skipped', 'already-connected');
       return;
     }
-    if (_joiningLiveKit) {
+    if (_joiningCurrentCall) {
       _recordCallEvent('join-skipped', 'already-joining');
       return;
     }
-    final rtcConfig = widget.controller.realtimeConfig?.rtc;
+    if (_joiningLiveKit) {
+      _recordCallEvent('join-stale-reset', _joiningLiveKitCallId ?? 'unknown');
+      _invalidatePendingLiveKitJoin();
+    }
+    final realtimeConfig = await widget.controller
+        .refreshRealtimeConfigForCall();
+    if (!_isActiveJoinAttempt(joinCallId, _joinGeneration)) {
+      _recordCallEvent('join-skipped', 'stale-after-config');
+      return;
+    }
+    final rtcConfig = realtimeConfig?.rtc;
     if (rtcConfig?.liveKitReady != true) {
       _canRetryJoin = false;
       _markCallPhase(SecureXCallPhase.failed);
@@ -3491,7 +3551,10 @@ class _ChatCallPageState extends State<_ChatCallPage>
       _setNotice('音视频服务暂未配置，请稍后重试。');
       return;
     }
+    final joinGeneration = _joinGeneration + 1;
+    _joinGeneration = joinGeneration;
     _joiningLiveKit = true;
+    _joiningLiveKitCallId = joinCallId;
     _canRetryJoin = false;
     _markCallPhase(SecureXCallPhase.joining);
     _recordCallEvent('joining', 'request-token');
@@ -3500,13 +3563,17 @@ class _ChatCallPageState extends State<_ChatCallPage>
       final credential = await widget.controller
           .createLiveKitCallToken(
             friend: widget.friend,
-            callId: _callId,
-            media: _media,
+            callId: joinCallId,
+            media: joinMedia,
           )
           .timeout(const Duration(seconds: 10));
+      if (!_isActiveJoinAttempt(joinCallId, joinGeneration)) {
+        _recordCallEvent('join-skipped', 'stale-after-token');
+        return;
+      }
       if (credential == null || credential.url.isEmpty) {
         appLog(
-          'LiveKit 通话凭证为空：media=$_media, incoming=$_isIncoming, '
+          'LiveKit 通话凭证为空：media=$joinMedia, incoming=$_isIncoming, '
           'turnMode=${credential?.turnMode ?? ''}',
         );
         _canRetryJoin = true;
@@ -3516,15 +3583,20 @@ class _ChatCallPageState extends State<_ChatCallPage>
         return;
       }
       appLog(
-        'LiveKit 准备入房：media=$_media, incoming=$_isIncoming, '
+        'LiveKit 准备入房：media=$joinMedia, incoming=$_isIncoming, '
         'turnMode=${credential.turnMode}, urlScheme=${_uriScheme(credential.url)}, '
         'mediaE2ee=$_liveKitE2eeEnabled',
       );
       final roomOptions = await _createLiveKitRoomOptions();
+      if (!_isActiveJoinAttempt(joinCallId, joinGeneration)) {
+        _recordCallEvent('join-skipped', 'stale-after-options');
+        return;
+      }
       final room = lk.Room(roomOptions: roomOptions);
       final listener = room.createListener()
         ..on<lk.RoomConnectedEvent>((_) {
-          if (!mounted) {
+          if (!_isActiveJoinAttempt(joinCallId, joinGeneration) ||
+              room != _room) {
             return;
           }
           _logLiveKitSnapshot('房间已连接');
@@ -3538,11 +3610,19 @@ class _ChatCallPageState extends State<_ChatCallPage>
           _markRemoteParticipantConnected('房间连接后已有远端用户');
         })
         ..on<lk.RoomReconnectingEvent>((_) {
+          if (!_isActiveJoinAttempt(joinCallId, joinGeneration) ||
+              room != _room) {
+            return;
+          }
           _markCallPhase(SecureXCallPhase.reconnecting);
           _recordCallEvent('reconnecting', 'livekit-reconnecting');
           _setNotice('通话网络不稳定，正在自动重连...');
         })
         ..on<lk.RoomReconnectedEvent>((_) {
+          if (!_isActiveJoinAttempt(joinCallId, joinGeneration) ||
+              room != _room) {
+            return;
+          }
           _markCallPhase(
             _remoteParticipantSeen
                 ? SecureXCallPhase.connected
@@ -3553,7 +3633,8 @@ class _ChatCallPageState extends State<_ChatCallPage>
         })
         ..on<lk.RoomDisconnectedEvent>((event) {
           _logLiveKitSnapshot('房间已断开：${event.reason?.name ?? 'unknown'}');
-          if (!mounted || _ended) {
+          if (!_isActiveJoinAttempt(joinCallId, joinGeneration) ||
+              room != _room) {
             return;
           }
           setState(() {
@@ -3574,11 +3655,19 @@ class _ChatCallPageState extends State<_ChatCallPage>
           );
         })
         ..on<lk.ParticipantConnectedEvent>((_) {
+          if (!_isActiveJoinAttempt(joinCallId, joinGeneration) ||
+              room != _room) {
+            return;
+          }
           _logLiveKitSnapshot('远端用户进入房间');
           _markRemoteParticipantConnected('远端用户进入房间');
           _refreshCallTracks();
         })
         ..on<lk.ParticipantDisconnectedEvent>((_) {
+          if (!_isActiveJoinAttempt(joinCallId, joinGeneration) ||
+              room != _room) {
+            return;
+          }
           _logLiveKitSnapshot('远端用户离开房间');
           unawaited(_handleRemoteParticipantDisconnected());
           if (_remoteParticipantSeen &&
@@ -3589,49 +3678,93 @@ class _ChatCallPageState extends State<_ChatCallPage>
           }
         })
         ..on<lk.TrackPublishedEvent>((event) {
+          if (!_isActiveJoinAttempt(joinCallId, joinGeneration) ||
+              room != _room) {
+            return;
+          }
           _logLiveKitSnapshot('远端发布轨道：${event.publication.kind.name}');
           _refreshCallTracks();
         })
         ..on<lk.TrackUnpublishedEvent>((event) {
+          if (!_isActiveJoinAttempt(joinCallId, joinGeneration) ||
+              room != _room) {
+            return;
+          }
           _logLiveKitSnapshot('远端取消轨道：${event.publication.kind.name}');
           _refreshCallTracks();
         })
         ..on<lk.LocalTrackPublishedEvent>((event) {
+          if (!_isActiveJoinAttempt(joinCallId, joinGeneration) ||
+              room != _room) {
+            return;
+          }
           _logLiveKitSnapshot('本地发布轨道：${event.publication.kind.name}');
           _refreshCallTracks();
         })
         ..on<lk.LocalTrackUnpublishedEvent>((event) {
+          if (!_isActiveJoinAttempt(joinCallId, joinGeneration) ||
+              room != _room) {
+            return;
+          }
           _logLiveKitSnapshot('本地取消轨道：${event.publication.kind.name}');
           _refreshCallTracks();
         })
         ..on<lk.TrackSubscribedEvent>((event) {
+          if (!_isActiveJoinAttempt(joinCallId, joinGeneration) ||
+              room != _room) {
+            return;
+          }
           _logLiveKitSnapshot('已订阅远端轨道：${event.publication.kind.name}');
           _refreshCallTracks();
         })
         ..on<lk.TrackSubscriptionExceptionEvent>((event) {
+          if (!_isActiveJoinAttempt(joinCallId, joinGeneration) ||
+              room != _room) {
+            return;
+          }
           appLog(
             'LiveKit 订阅远端轨道失败：sid=${event.sid ?? '-'}, reason=${event.reason.name}',
           );
           _setNotice('订阅对方音视频失败，请检查网络或稍后重试。');
         })
         ..on<lk.TrackUnsubscribedEvent>((event) {
+          if (!_isActiveJoinAttempt(joinCallId, joinGeneration) ||
+              room != _room) {
+            return;
+          }
           _logLiveKitSnapshot('已取消订阅远端轨道：${event.publication.kind.name}');
           _refreshCallTracks();
         })
         ..on<lk.TrackMutedEvent>((event) {
+          if (!_isActiveJoinAttempt(joinCallId, joinGeneration) ||
+              room != _room) {
+            return;
+          }
           _logLiveKitSnapshot('轨道已静音：${event.publication.kind.name}');
           _refreshCallTracks();
         })
         ..on<lk.TrackUnmutedEvent>((event) {
+          if (!_isActiveJoinAttempt(joinCallId, joinGeneration) ||
+              room != _room) {
+            return;
+          }
           _logLiveKitSnapshot('轨道已恢复：${event.publication.kind.name}');
           _refreshCallTracks();
         })
         ..on<lk.ActiveSpeakersChangedEvent>((event) {
+          if (!_isActiveJoinAttempt(joinCallId, joinGeneration) ||
+              room != _room) {
+            return;
+          }
           if (event.speakers.isNotEmpty) {
             _refreshCallTracks();
           }
         })
         ..on<lk.AudioPlaybackStatusChanged>((event) {
+          if (!_isActiveJoinAttempt(joinCallId, joinGeneration) ||
+              room != _room) {
+            return;
+          }
           if (!event.isPlaying) {
             _setNotice('音频播放被系统暂停，请点击扬声器重新开启。');
           }
@@ -3650,8 +3783,18 @@ class _ChatCallPageState extends State<_ChatCallPage>
             ),
           )
           .timeout(const Duration(seconds: 15));
-      appLog('LiveKit 入房完成，准备启用本地媒体：media=$_media');
+      if (!_isActiveJoinAttempt(joinCallId, joinGeneration)) {
+        await listener.dispose();
+        await room.disconnect();
+        await room.dispose();
+        _recordCallEvent('join-skipped', 'stale-after-connect');
+        return;
+      }
+      appLog('LiveKit 入房完成，准备启用本地媒体：media=$joinMedia');
       await _enableLiveKitLocalMedia(room);
+      if (!_isActiveJoinAttempt(joinCallId, joinGeneration) || room != _room) {
+        return;
+      }
       _logLiveKitSnapshot('本地媒体已启用');
       _markRemoteParticipantConnected('本地媒体启用后已有远端用户');
       _refreshCallTracks();
@@ -3669,7 +3812,11 @@ class _ChatCallPageState extends State<_ChatCallPage>
       _recordCallEvent('failed', 'join-exception');
       _setNotice('通话接入失败，请检查音视频服务、网络或设备权限。');
     } finally {
-      _joiningLiveKit = false;
+      if (_joiningLiveKitCallId == joinCallId &&
+          _joinGeneration == joinGeneration) {
+        _joiningLiveKit = false;
+        _joiningLiveKitCallId = null;
+      }
     }
   }
 
@@ -3711,9 +3858,16 @@ class _ChatCallPageState extends State<_ChatCallPage>
           _liveKitConnected) {
         return;
       }
-      if (_joiningLiveKit) {
+      if (_joiningCurrentCall) {
         _recordCallEvent('join-waiting', reason);
         continue;
+      }
+      if (_joiningLiveKit) {
+        _recordCallEvent(
+          'join-stale-reset',
+          _joiningLiveKitCallId ?? 'unknown',
+        );
+        _invalidatePendingLiveKitJoin();
       }
       appLog(
         '接听后未进入 LiveKit 房间，自动补偿重试：call=${_callDiagnosticId(_callId)}, reason=$reason',
@@ -3797,8 +3951,12 @@ class _ChatCallPageState extends State<_ChatCallPage>
   }
 
   Future<void> _retryJoinLiveKitRoom(String reason) async {
-    if (_ended || _joiningLiveKit || _incomingWaiting) {
+    if (_ended || _joiningCurrentCall || _incomingWaiting) {
       return;
+    }
+    if (_joiningLiveKit) {
+      _recordCallEvent('join-stale-reset', _joiningLiveKitCallId ?? 'unknown');
+      _invalidatePendingLiveKitJoin();
     }
     final now = DateTime.now();
     final minDelay = Duration(
@@ -4117,6 +4275,28 @@ class _ChatCallPageState extends State<_ChatCallPage>
     final localVideo = _videoCall ? _localVideoTrack() : null;
     final hasVideoSurface =
         _videoCall && (remoteVideo != null || localVideo != null);
+    if (_minimized) {
+      return SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return Stack(
+              children: [
+                Positioned(
+                  top: _floatingCallOffset.dy,
+                  left: _floatingCallOffset.dx,
+                  child: _buildFloatingCallWindow(
+                    name: name,
+                    remoteVideo: remoteVideo,
+                    localVideo: localVideo,
+                    bounds: constraints.biggest,
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+    }
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
@@ -4154,7 +4334,10 @@ class _ChatCallPageState extends State<_ChatCallPage>
                                 Icons.picture_in_picture_alt_outlined,
                               ),
                               color: Colors.white,
-                              onPressed: () => Navigator.of(context).maybePop(),
+                              tooltip: '最小化通话',
+                              onPressed: () {
+                                setState(() => _minimized = true);
+                              },
                             ),
                           ),
                           ValueListenableBuilder<String>(
@@ -4292,6 +4475,167 @@ class _ChatCallPageState extends State<_ChatCallPage>
     );
   }
 
+  Widget _buildFloatingCallWindow({
+    required String name,
+    required lk.VideoTrack? remoteVideo,
+    required lk.VideoTrack? localVideo,
+    required Size bounds,
+  }) {
+    final previewVideo = remoteVideo ?? localVideo;
+    return Material(
+      color: Colors.transparent,
+      child: GestureDetector(
+        onPanUpdate: (details) =>
+            _moveFloatingCallWindow(delta: details.delta, bounds: bounds),
+        child: Container(
+          width: 156,
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: Colors.black.withAlpha(218),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Colors.white.withAlpha(56), width: 1),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withAlpha(120),
+                blurRadius: 22,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => setState(() => _minimized = false),
+                child: AspectRatio(
+                  aspectRatio: 1.15,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      if (_videoCall && previewVideo != null)
+                        lk.VideoTrackRenderer(
+                          previewVideo,
+                          fit: lk.VideoViewFit.cover,
+                          mirrorMode: identical(previewVideo, localVideo)
+                              ? lk.VideoViewMirrorMode.mirror
+                              : lk.VideoViewMirrorMode.off,
+                        )
+                      else
+                        DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: RadialGradient(
+                              center: const Alignment(0, -0.35),
+                              radius: 1,
+                              colors: [
+                                Colors.blueGrey.shade900.withAlpha(230),
+                                Colors.black,
+                              ],
+                            ),
+                          ),
+                          child: Center(
+                            child: _CallAvatar(friend: widget.friend, size: 64),
+                          ),
+                        ),
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: Container(
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            color: Colors.black.withAlpha(128),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: const Icon(
+                            Icons.open_in_full_rounded,
+                            color: Colors.white,
+                            size: 16,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    ValueListenableBuilder<String>(
+                      valueListenable: _durationText,
+                      builder: (context, durationText, _) {
+                        return Text(
+                          durationText.isEmpty ? _notice : durationText,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(
+                                color: Colors.white.withAlpha(190),
+                                fontWeight: FontWeight.w700,
+                              ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: 42,
+                      height: 42,
+                      child: FilledButton(
+                        style: FilledButton.styleFrom(
+                          padding: EdgeInsets.zero,
+                          shape: const CircleBorder(),
+                          backgroundColor: Colors.redAccent,
+                        ),
+                        onPressed: () async {
+                          final navigator = Navigator.of(context);
+                          await _endCall(
+                            sendAction: _accepted ? 'end' : 'cancel',
+                          );
+                          if (mounted) {
+                            navigator.pop();
+                          }
+                        },
+                        child: const Icon(Icons.call_end_rounded, size: 20),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _moveFloatingCallWindow({required Offset delta, required Size bounds}) {
+    const width = 156.0;
+    const estimatedHeight = 208.0;
+    final maxX = (bounds.width - width - 8).clamp(8.0, double.infinity);
+    final maxY = (bounds.height - estimatedHeight - 8).clamp(
+      8.0,
+      double.infinity,
+    );
+    setState(() {
+      _floatingCallOffset = Offset(
+        (_floatingCallOffset.dx + delta.dx).clamp(8.0, maxX),
+        (_floatingCallOffset.dy + delta.dy).clamp(8.0, maxY),
+      );
+    });
+  }
+
   Widget _buildControls(BuildContext context) {
     if (_incomingWaiting) {
       return Row(
@@ -4378,32 +4722,18 @@ class _ChatCallPageState extends State<_ChatCallPage>
 }
 
 class _CallAvatar extends StatelessWidget {
-  const _CallAvatar({required this.friend});
+  const _CallAvatar({required this.friend, this.size = 122});
 
   final PublicUser friend;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 122,
-      height: 122,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(28),
-        color: Colors.white.withAlpha(30),
-      ),
-      child: Center(
-        child: Text(
-          (friend.displayName.isNotEmpty ? friend.displayName : friend.username)
-              .characters
-              .take(1)
-              .toString()
-              .toUpperCase(),
-          style: Theme.of(context).textTheme.displayMedium?.copyWith(
-            color: Colors.white,
-            fontWeight: FontWeight.w900,
-          ),
-        ),
-      ),
+    return _PresetAvatar(
+      presetId: friend.avatarPreset,
+      imageUrl: friend.avatarUrl,
+      size: size,
+      borderColor: Colors.white.withAlpha(70),
     );
   }
 }

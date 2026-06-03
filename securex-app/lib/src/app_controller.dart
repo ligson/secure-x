@@ -260,6 +260,7 @@ class AppController extends ChangeNotifier {
   Listenable get friendsListenable => _friendsRevision;
   RealtimeCallSignal? get lastCallSignal => _lastCallSignal;
   ActiveCallSession? get activeCallSession => _activeCallSession;
+  bool get hasActiveCall => _activeCallSession?.active == true;
 
   String get devInstance => _storageNamespace;
 

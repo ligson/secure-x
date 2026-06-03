@@ -28,5 +28,5 @@ realtime:
     url: ""
     apiKey: ""
     apiSecret: ""
-    # 可填写 "turn_tls_443" 记录部署模式，客户端仅用于展示/诊断。
+    # 可填写 "turn_udp_5349"、"turn_tls_443" 等记录部署模式，客户端仅用于展示/诊断。
     turnMode: ""

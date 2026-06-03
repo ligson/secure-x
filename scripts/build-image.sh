@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-IMAGE_NAME="${IMAGE_NAME:-ligson/secure-x}"
+IMAGE_NAME="${IMAGE_NAME:-ligson/securex-be}"
 PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64}"
 BUILDER_NAME="${BUILDER_NAME:-}"
 PUSH="${PUSH:-true}"
@@ -18,7 +18,7 @@ Usage:
 Builds the Secure X backend Docker image for linux/amd64 and linux/arm64.
 
 Environment variables:
-  IMAGE_NAME    Docker image name. Default: ligson/secure-x
+  IMAGE_NAME    Docker image name. Default: ligson/securex-be
   PLATFORMS    Buildx platforms. Default: linux/amd64,linux/arm64
   PUSH         Push image after build. Default: true
   TAG_LATEST   Also tag and push latest. Default: false

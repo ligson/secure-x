@@ -109,6 +109,7 @@ Secure X 是一个面向个人与小团队的安全敏感信息存储维护系�
 - 发布打包：[doc/06-release.md](doc/06-release.md)
 - 后端部署：[doc/07-backend-deployment.md](doc/07-backend-deployment.md)
 - 文件分享：[doc/08-encrypted-file-sharing.md](doc/08-encrypted-file-sharing.md)
+- Docker Compose 部署模板：[deploy/README.md](deploy/README.md)
 - 协作记忆：[AGENTS.md](AGENTS.md)
 - 变更记录：[CHANGELOG.md](CHANGELOG.md)
 

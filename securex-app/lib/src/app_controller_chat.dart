@@ -72,6 +72,26 @@ extension AppControllerChatActions on AppController {
     });
   }
 
+  Future<RealtimeConfig?> refreshRealtimeConfigForCall() async {
+    final token = _token;
+    if (token == null) {
+      return null;
+    }
+    try {
+      _realtimeConfig = await _apiClient.realtimeConfig(
+        baseUrl: _baseUrl,
+        token: token,
+      );
+      unawaited(_ensureRealtimeChatConnected());
+      _markChatChanged();
+      notifyListeners();
+      return _realtimeConfig;
+    } catch (error) {
+      appLog('刷新音视频实时配置失败', error);
+      return _realtimeConfig;
+    }
+  }
+
   Future<void> refreshChatOverview() {
     if (_token == null || _user == null || _vaultKey == null) {
       return Future.value();
