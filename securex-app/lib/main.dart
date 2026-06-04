@@ -72,6 +72,7 @@ class SecureXApp extends StatefulWidget {
 
 class _SecureXAppState extends State<SecureXApp> with WidgetsBindingObserver {
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  Timer? _callWakelockMonitor;
   bool _hadReachableNetwork = false;
   bool _connectivityInitialized = false;
   bool _callWakelockEnabled = false;
@@ -82,6 +83,7 @@ class _SecureXAppState extends State<SecureXApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     widget.controller.callListenable.addListener(_syncCallWakelock);
     widget.controller.initialize();
+    unawaited(_syncCallWakelock());
     _connectivitySubscription = Connectivity().onConnectivityChanged.listen(
       _handleConnectivityChanged,
     );
@@ -134,21 +136,50 @@ class _SecureXAppState extends State<SecureXApp> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     widget.controller.callListenable.removeListener(_syncCallWakelock);
+    _callWakelockMonitor?.cancel();
+    _callWakelockMonitor = null;
     _connectivitySubscription?.cancel();
     _connectivitySubscription = null;
     unawaited(_setCallWakelock(false));
     super.dispose();
   }
 
-  Future<void> _syncCallWakelock() {
-    return _setCallWakelock(widget.controller.hasActiveCall);
+  Future<void> _syncCallWakelock() async {
+    final enabled = widget.controller.hasActiveCall;
+    if (enabled) {
+      _ensureCallWakelockMonitor();
+    } else {
+      _callWakelockMonitor?.cancel();
+      _callWakelockMonitor = null;
+    }
+    await _setCallWakelock(enabled);
   }
 
-  Future<void> _setCallWakelock(bool enabled) async {
-    if (_callWakelockEnabled == enabled) {
+  void _ensureCallWakelockMonitor() {
+    _callWakelockMonitor ??= Timer.periodic(const Duration(seconds: 15), (_) {
+      if (!widget.controller.hasActiveCall) {
+        unawaited(_syncCallWakelock());
+        return;
+      }
+      unawaited(_setCallWakelock(true, verifySystemState: true));
+    });
+  }
+
+  Future<void> _setCallWakelock(
+    bool enabled, {
+    bool verifySystemState = false,
+  }) async {
+    if (_callWakelockEnabled == enabled && !verifySystemState) {
       return;
     }
     try {
+      if (verifySystemState) {
+        final systemEnabled = await WakelockPlus.enabled;
+        if (systemEnabled == enabled) {
+          _callWakelockEnabled = enabled;
+          return;
+        }
+      }
       if (enabled) {
         await WakelockPlus.enable();
       } else {

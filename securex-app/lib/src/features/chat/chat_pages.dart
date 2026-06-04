@@ -3102,6 +3102,9 @@ class _ChatCallPageState extends State<_ChatCallPage>
   }
 
   Future<void> _disableCallWakelock() async {
+    if (widget.controller.hasActiveCall) {
+      return;
+    }
     try {
       await WakelockPlus.disable();
     } catch (error) {

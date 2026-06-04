@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.33] - 2026-06-04
+
+### Fixed
+
+- 通话保持亮屏改为全局活跃通话周期校验：等待接听、接入 LiveKit、通话中和前台恢复后都会重新确认 wakelock 状态，避免移动端长时间通话或入房失败重试期间被系统锁屏。
+- 通话页局部释放 wakelock 时会先检查全局活跃通话状态，避免页面生命周期和全局通话保活互相覆盖导致屏幕保持策略被提前关闭。
+
 ## [v1.0.32] - 2026-06-04
 
 ### Fixed
