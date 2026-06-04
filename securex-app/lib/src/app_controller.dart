@@ -69,6 +69,13 @@ enum SecureXCallPhase {
 
 enum IncomingCallHandling { open, duplicate, handledByActiveCall, rejectBusy }
 
+class QueuedCallSignal {
+  const QueuedCallSignal({required this.sequence, required this.signal});
+
+  final int sequence;
+  final RealtimeCallSignal signal;
+}
+
 class ActiveCallSession {
   const ActiveCallSession({
     required this.friendId,
@@ -199,6 +206,8 @@ class AppController extends ChangeNotifier {
   List<FriendRequestRecord> _outgoingFriendRequests = [];
   List<ChatConversation> _chatConversations = [];
   RealtimeCallSignal? _lastCallSignal;
+  final List<QueuedCallSignal> _callSignals = [];
+  int _callSignalSequence = 0;
   ActiveCallSession? _activeCallSession;
   ChatIdentityBundle? _chatIdentity;
   final Map<String, bool> _chatFriendOnline = {};
@@ -259,6 +268,7 @@ class AppController extends ChangeNotifier {
   Listenable get callListenable => _callRevision;
   Listenable get friendsListenable => _friendsRevision;
   RealtimeCallSignal? get lastCallSignal => _lastCallSignal;
+  int get latestCallSignalSequence => _callSignalSequence;
   ActiveCallSession? get activeCallSession => _activeCallSession;
   bool get hasActiveCall => _activeCallSession?.active == true;
 
@@ -269,6 +279,12 @@ class AppController extends ChangeNotifier {
 
   bool isChatConversationLoading(String conversationId) =>
       _loadingChatConversationIds.contains(conversationId);
+
+  List<QueuedCallSignal> callSignalsAfter(int sequence) {
+    return List.unmodifiable(
+      _callSignals.where((entry) => entry.sequence > sequence),
+    );
+  }
 
   void dismissUploadTask(String id) {
     _uploadTasks.removeWhere(

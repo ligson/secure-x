@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.34] - 2026-06-04
+
+### Fixed
+
+- 修复音视频通话实时信令只保留最后一条导致 `accept` 被后续 `invite/reject` 覆盖的问题：客户端现在按序号队列处理通话信令，发起方不会因为并发信令丢失接听事件而卡在等待或误发起第二个通话。
+- 通话页会串行处理同一好友的通话信令，并在发起通话入口增加防重复打开保护，降低双方同时呼叫、重复点击或弱网乱序时互相结束通话和触发 App 无响应的概率。
+
 ## [v1.0.33] - 2026-06-04
 
 ### Fixed

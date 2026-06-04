@@ -1099,6 +1099,13 @@ extension AppControllerChatActions on AppController {
 
   void _handleRealtimeCallSignal(RealtimeCallSignal signal) {
     _lastCallSignal = signal;
+    _callSignalSequence += 1;
+    _callSignals.add(
+      QueuedCallSignal(sequence: _callSignalSequence, signal: signal),
+    );
+    if (_callSignals.length > 80) {
+      _callSignals.removeRange(0, _callSignals.length - 80);
+    }
     _markCallChanged();
     final friend = _friendById(signal.friendId);
     final name = friend?.displayName ?? '好友';

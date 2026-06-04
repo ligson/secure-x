@@ -274,6 +274,7 @@ class _VaultScreenState extends State<VaultScreen> {
   bool _generatorUseDigits = true;
   bool _generatorUseSymbols = true;
   String _generatedPassword = '';
+  int _lastIncomingCallSignalSequence = 0;
   final Set<String> _handledIncomingCallIds = {};
 
   @override
@@ -304,10 +305,20 @@ class _VaultScreenState extends State<VaultScreen> {
   }
 
   void _handleIncomingCallSignal() {
-    final signal = widget.controller.lastCallSignal;
-    if (signal == null || signal.action != 'invite' || signal.callId.isEmpty) {
-      return;
+    final entries = widget.controller.callSignalsAfter(
+      _lastIncomingCallSignalSequence,
+    );
+    for (final entry in entries) {
+      _lastIncomingCallSignalSequence = entry.sequence;
+      final signal = entry.signal;
+      if (signal.action != 'invite' || signal.callId.isEmpty) {
+        continue;
+      }
+      _handleIncomingCallInvite(signal);
     }
+  }
+
+  void _handleIncomingCallInvite(RealtimeCallSignal signal) {
     final key = '${signal.friendId}:${signal.callId}';
     if (_handledIncomingCallIds.contains(key)) {
       return;

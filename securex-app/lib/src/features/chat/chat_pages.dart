@@ -4,6 +4,7 @@ part of '../../../main.dart';
 
 const _chatUiAttachmentMaxBytes = 2 * 1024 * 1024;
 const _chatUiVideoAttachmentMaxBytes = 20 * 1024 * 1024;
+bool _chatCallOpening = false;
 
 class _ChatRouteResult {
   static const leftGroup = 'left-group';
@@ -2620,6 +2621,9 @@ class _ChatComposer extends StatelessWidget {
   }
 
   Future<void> _showCallOptions(BuildContext context) async {
+    if (_chatCallOpening) {
+      return;
+    }
     final directFriend = friend;
     if (directFriend == null || conversation?.isGroup == true) {
       ScaffoldMessenger.of(
@@ -2633,27 +2637,38 @@ class _ChatComposer extends StatelessWidget {
       ).showSnackBar(const SnackBar(content: Text('当前已有通话，请先结束后再发起新的通话。')));
       return;
     }
-    final media = await showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) => _ChatCallOptionSheet(friend: directFriend),
-    );
-    if (!context.mounted || media == null || media.isEmpty) {
-      return;
-    }
-    await Navigator.of(context).push(
-      PageRouteBuilder<void>(
-        opaque: false,
-        pageBuilder: (_, _, _) => _ChatCallPage(
-          controller: controller,
-          friend: directFriend,
-          initialVideo: media == 'video',
+    _chatCallOpening = true;
+    try {
+      final media = await showModalBottomSheet<String>(
+        context: context,
+        backgroundColor: Colors.transparent,
+        builder: (context) => _ChatCallOptionSheet(friend: directFriend),
+      );
+      if (!context.mounted || media == null || media.isEmpty) {
+        return;
+      }
+      if (!controller.canStartCall()) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('当前已有通话，请先结束后再发起新的通话。')));
+        return;
+      }
+      await Navigator.of(context).push(
+        PageRouteBuilder<void>(
+          opaque: false,
+          pageBuilder: (_, _, _) => _ChatCallPage(
+            controller: controller,
+            friend: directFriend,
+            initialVideo: media == 'video',
+          ),
+          transitionsBuilder: (context, animation, _, child) {
+            return FadeTransition(opacity: animation, child: child);
+          },
         ),
-        transitionsBuilder: (context, animation, _, child) {
-          return FadeTransition(opacity: animation, child: child);
-        },
-      ),
-    );
+      );
+    } finally {
+      _chatCallOpening = false;
+    }
   }
 
   Uint8List _prepareChatImage(Uint8List source) {
@@ -2909,9 +2924,11 @@ class _ChatCallPageState extends State<_ChatCallPage>
   bool _canRetryJoin = false;
   bool _remoteParticipantSeen = false;
   bool _liveKitE2eeEnabled = false;
+  bool _drainingCallSignals = false;
   String? _mediaE2eeKey;
   String? _joiningLiveKitCallId;
   int _joinGeneration = 0;
+  int _lastHandledCallSignalSequence = 0;
   DateTime? _connectedAt;
   DateTime? _lastJoinRetryAt;
   int _joinRetryAttempt = 0;
@@ -3033,6 +3050,7 @@ class _ChatCallPageState extends State<_ChatCallPage>
         ? _extractMediaE2eeKey(widget.incomingCallPayload)
         : _generateMediaE2eeKey();
     _liveKitE2eeEnabled = _isIncoming && _mediaE2eeKey != null;
+    _lastHandledCallSignalSequence = widget.controller.latestCallSignalSequence;
     if (!_registerCallSession()) {
       _ended = true;
       _notice = '当前已有通话，请先结束后再重试。';
@@ -3165,17 +3183,50 @@ class _ChatCallPageState extends State<_ChatCallPage>
   }
 
   void _handleCallSignal() {
-    final signal = widget.controller.lastCallSignal;
-    if (signal == null || signal.friendId != widget.friend.id) {
+    if (_drainingCallSignals) {
       return;
     }
-    if (signal.callId != _callId) {
-      if (signal.action == 'invite') {
-        unawaited(_handleCompetingInvite(signal));
+    unawaited(_drainCallSignals());
+  }
+
+  Future<void> _drainCallSignals() async {
+    _drainingCallSignals = true;
+    try {
+      while (mounted && !_ended) {
+        final entries = widget.controller.callSignalsAfter(
+          _lastHandledCallSignalSequence,
+        );
+        if (entries.isEmpty) {
+          return;
+        }
+        for (final entry in entries) {
+          _lastHandledCallSignalSequence = entry.sequence;
+          final signal = entry.signal;
+          if (signal.friendId != widget.friend.id) {
+            continue;
+          }
+          if (signal.callId != _callId) {
+            if (signal.action == 'invite') {
+              await _handleCompetingInvite(signal);
+            }
+            continue;
+          }
+          await _handleCallSignalAsync(signal);
+          if (!mounted || _ended) {
+            return;
+          }
+        }
       }
-      return;
+    } finally {
+      _drainingCallSignals = false;
+      if (mounted &&
+          !_ended &&
+          widget.controller
+              .callSignalsAfter(_lastHandledCallSignalSequence)
+              .isNotEmpty) {
+        _handleCallSignal();
+      }
     }
-    unawaited(_handleCallSignalAsync(signal));
   }
 
   Future<void> _handleCallSignalAsync(RealtimeCallSignal signal) async {
