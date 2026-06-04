@@ -2887,6 +2887,8 @@ class _ChatCallPage extends StatefulWidget {
 
 class _ChatCallPageState extends State<_ChatCallPage>
     with WidgetsBindingObserver {
+  static const int _maxAutomaticJoinRetries = 1;
+
   lk.Room? _room;
   lk.EventsListener<lk.RoomEvent>? _roomListener;
   late String _callId;
@@ -3585,7 +3587,8 @@ class _ChatCallPageState extends State<_ChatCallPage>
       appLog(
         'LiveKit 准备入房：media=$joinMedia, incoming=$_isIncoming, '
         'turnMode=${credential.turnMode}, urlScheme=${_uriScheme(credential.url)}, '
-        'mediaE2ee=$_liveKitE2eeEnabled',
+        'mediaE2ee=$_liveKitE2eeEnabled, '
+        'icePolicy=${_liveKitIcePolicyLabel(credential.turnMode)}',
       );
       final roomOptions = await _createLiveKitRoomOptions();
       if (!_isActiveJoinAttempt(joinCallId, joinGeneration)) {
@@ -3775,14 +3778,9 @@ class _ChatCallPageState extends State<_ChatCallPage>
           .connect(
             credential.url,
             credential.token,
-            connectOptions: const lk.ConnectOptions(
-              autoSubscribe: true,
-              rtcConfiguration: lk.RTCConfiguration(
-                iceTransportPolicy: lk.RTCIceTransportPolicy.relay,
-              ),
-            ),
+            connectOptions: _liveKitConnectOptions(credential.turnMode),
           )
-          .timeout(const Duration(seconds: 15));
+          .timeout(const Duration(seconds: 10));
       if (!_isActiveJoinAttempt(joinCallId, joinGeneration)) {
         await listener.dispose();
         await room.disconnect();
@@ -3801,12 +3799,14 @@ class _ChatCallPageState extends State<_ChatCallPage>
       _scheduleMediaDiagnostics();
     } on TimeoutException catch (error) {
       appLog('LiveKit 通话接入超时', error);
+      await _disconnectLiveKit();
       _canRetryJoin = true;
       _markCallPhase(SecureXCallPhase.failed);
       _recordCallEvent('failed', 'join-timeout');
       _setNotice('通话接入超时，请检查网络、音视频服务或稍后重试。');
     } catch (error) {
       appLog('LiveKit 通话接入失败', error);
+      await _disconnectLiveKit();
       _canRetryJoin = true;
       _markCallPhase(SecureXCallPhase.failed);
       _recordCallEvent('failed', 'join-exception');
@@ -3863,11 +3863,8 @@ class _ChatCallPageState extends State<_ChatCallPage>
         continue;
       }
       if (_joiningLiveKit) {
-        _recordCallEvent(
-          'join-stale-reset',
-          _joiningLiveKitCallId ?? 'unknown',
-        );
-        _invalidatePendingLiveKitJoin();
+        _recordCallEvent('join-waiting', reason);
+        continue;
       }
       appLog(
         '接听后未进入 LiveKit 房间，自动补偿重试：call=${_callDiagnosticId(_callId)}, reason=$reason',
@@ -3881,6 +3878,31 @@ class _ChatCallPageState extends State<_ChatCallPage>
 
   String _uriScheme(String value) {
     return Uri.tryParse(value)?.scheme ?? '';
+  }
+
+  lk.ConnectOptions _liveKitConnectOptions(String turnMode) {
+    if (_forceLiveKitRelay(turnMode)) {
+      return const lk.ConnectOptions(
+        autoSubscribe: true,
+        rtcConfiguration: lk.RTCConfiguration(
+          iceTransportPolicy: lk.RTCIceTransportPolicy.relay,
+        ),
+      );
+    }
+    return const lk.ConnectOptions(
+      autoSubscribe: true,
+      rtcConfiguration: lk.RTCConfiguration(
+        iceTransportPolicy: lk.RTCIceTransportPolicy.all,
+      ),
+    );
+  }
+
+  bool _forceLiveKitRelay(String turnMode) {
+    return turnMode.trim().toLowerCase() == 'turn_tls_443';
+  }
+
+  String _liveKitIcePolicyLabel(String turnMode) {
+    return _forceLiveKitRelay(turnMode) ? 'relay' : 'all';
   }
 
   Future<void> _enableLiveKitLocalMedia(lk.Room room) async {
@@ -3931,13 +3953,25 @@ class _ChatCallPageState extends State<_ChatCallPage>
     final listener = _roomListener;
     _roomListener = null;
     if (listener != null) {
-      await listener.dispose();
+      try {
+        await listener.dispose().timeout(const Duration(seconds: 2));
+      } catch (error) {
+        appLog('释放 LiveKit 监听器失败', error);
+      }
     }
     final room = _room;
     _room = null;
     if (room != null) {
-      await room.disconnect();
-      await room.dispose();
+      try {
+        await room.disconnect().timeout(const Duration(seconds: 3));
+      } catch (error) {
+        appLog('断开 LiveKit 房间失败', error);
+      }
+      try {
+        await room.dispose().timeout(const Duration(seconds: 3));
+      } catch (error) {
+        appLog('释放 LiveKit 房间失败', error);
+      }
     }
     _liveKitConnected = false;
     _canRetryJoin = false;
@@ -3955,8 +3989,16 @@ class _ChatCallPageState extends State<_ChatCallPage>
       return;
     }
     if (_joiningLiveKit) {
-      _recordCallEvent('join-stale-reset', _joiningLiveKitCallId ?? 'unknown');
-      _invalidatePendingLiveKitJoin();
+      _recordCallEvent('join-waiting', reason);
+      return;
+    }
+    final automaticRetry = reason != 'user-retry';
+    if (automaticRetry && _joinRetryAttempt >= _maxAutomaticJoinRetries) {
+      _canRetryJoin = true;
+      _markCallPhase(SecureXCallPhase.failed);
+      _recordCallEvent('failed', 'auto-join-retry-exhausted');
+      _setNotice('音视频通道接入失败，请检查网络后手动重试。');
+      return;
     }
     final now = DateTime.now();
     final minDelay = Duration(

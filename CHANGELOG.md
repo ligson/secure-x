@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.32] - 2026-06-04
+
+### Fixed
+
+- 修复 LiveKit 入房失败后自动补偿重试可能反复创建原生连接的问题：失败路径会主动释放 room/listener，自动重试最多执行一次，避免移动端长时间卡顿或系统提示应用无响应。
+- 音视频通话会按后端 `turnMode` 选择 ICE 策略；只有明确 `turn_tls_443` 时才强制 relay，其它部署模式允许直连与 TURN 候选共同参与，避免私有部署 TURN/TLS 证书链兼容性问题导致完全无法入房。
+
 ## [v1.0.31] - 2026-06-03
 
 ### Added
