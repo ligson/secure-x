@@ -75,17 +75,18 @@ extension _VaultPasswordTab on _VaultScreenState {
 
   Widget _buildPasswordVaultHeader(BuildContext context) {
     final actions = [
-      OutlinedButton.icon(
+      _buildModuleHeaderAction(
         onPressed: _showGeneratorPage,
-        icon: const Icon(Icons.password_outlined),
-        label: const Text('生成器'),
+        icon: Icons.password_outlined,
+        label: '生成器',
       ),
-      FilledButton.icon(
+      _buildModuleHeaderAction(
         onPressed: widget.controller.busy
             ? null
             : () => _showPasswordComposer(),
-        icon: const Icon(Icons.add),
-        label: const Text('创建'),
+        icon: Icons.add,
+        label: '创建',
+        primary: true,
       ),
     ];
 
@@ -173,8 +174,13 @@ class _PasswordFolderSelector extends StatelessWidget {
               initialValue: activeValue,
               isExpanded: true,
               decoration: const InputDecoration(
+                isDense: true,
                 labelText: '当前分类',
                 prefixIcon: Icon(Icons.account_tree_outlined),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
               ),
               items: [
                 DropdownMenuItem(
@@ -236,27 +242,31 @@ class _PasswordFolderOption extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w800),
-                ),
-                Text(
-                  subtitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(color: context.sx.mutedText),
-                ),
-              ],
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w800),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: context.sx.subtle,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: context.sx.border),
+            ),
+            child: Text(
+              subtitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: context.sx.mutedText,
+                fontWeight: FontWeight.w800,
+              ),
             ),
           ),
         ],

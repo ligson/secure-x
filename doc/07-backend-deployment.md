@@ -345,6 +345,99 @@ Secure X client media transport
 
 LiveKit 媒体端口不能只靠普通 HTTP 反向代理解决。WebSocket 信令可以走 nginx/Caddy 的 HTTP 反代，WebRTC ICE、TURN/UDP、TURN/TLS 则必须按四层 TCP/UDP 端口真实转发。
 
+### frp / NAT 后的 HTTPS 与 LiveKit 稳定拓扑
+
+如果 Secure X 部署在 NAS、内网主机、Docker bridge 或其它 NAT 后面，并通过一台公网服务器的 frp 暴露服务，推荐把公网 `443/TCP` 做成纯 TCP 透传，让 NAS 侧 nginx 统一处理 HTTPS 域名路由：
+
+```text
+Client
+  -> public.example.com:443
+  -> public frps remotePort 443
+  -> private frpc localPort <nas-nginx-https-host-port>
+  -> NAS nginx container :443
+  -> nginx stream SNI layer
+  -> nginx internal HTTPS vhost :8443
+  -> secure-x backend / LiveKit WebSocket
+```
+
+对应 frpc 形态示例：
+
+```toml
+[[proxies]]
+name = "https"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = <nas-nginx-https-host-port>
+remotePort = 443
+```
+
+NAS nginx 容器可以把宿主机 HTTPS 入口端口映射到容器内 `443`：
+
+```yaml
+ports:
+  - "<nas-nginx-https-host-port>:443"
+```
+
+如果 nginx 容器内 `443` 被 `stream` 层占用，就不要再让普通 `server { listen 443 ssl; }` 直接监听同一个端口。可以让 `stream` 层先接收 TLS，再把默认 HTTPS 流量回环转到容器内部的 `8443`：
+
+```nginx
+stream {
+    map $ssl_preread_server_name $upstream_name {
+        default nginx_https_backend;
+    }
+
+    upstream nginx_https_backend {
+        server 127.0.0.1:8443;
+    }
+
+    server {
+        listen 443;
+        proxy_pass $upstream_name;
+        ssl_preread on;
+    }
+}
+
+http {
+    include /etc/nginx/conf.d/*.conf;
+}
+```
+
+然后在 `conf.d/secure.conf` 或等价文件中用 `8443` 承载真正的 HTTPS 虚拟主机：
+
+```nginx
+server {
+    listen 8443 ssl;
+    server_name securex.example.com;
+
+    location / {
+        proxy_pass http://securex-be:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+
+server {
+    listen 8443 ssl;
+    server_name rtc.example.com;
+
+    location / {
+        proxy_pass http://livekit:7880;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+```
+
+这里的 `8443` 只是 nginx 容器内部的二级 HTTPS 入口，不需要公网开放，也不应该配置到客户端。客户端只看公网域名和 `443/TCP`。
+
+不要同时混用 frp 的 `https` / `customDomains` 模式和 NAS nginx 自己的 `443` SNI 路由。两套入口同时存在时，很容易出现某个域名绕过 NAS nginx、证书或 WebSocket header 不一致、LiveKit URL 与实际公网入口不一致等问题。推荐公网 `443/TCP` 只做一条 TCP 透传，域名路由全部交给 NAS 侧 nginx。
+
 ### 端口规划
 
 LiveKit 官方端口说明见 [Ports and firewall](https://docs.livekit.io/transport/self-hosting/ports-firewall/)。常见端口包括：
@@ -370,6 +463,8 @@ Secure X 当前客户端的音视频连接要求 TURN relay 链路可用。因�
 
 端口数量可以继续按并发量调整。并发越高，relay 范围越需要放大。关键是不要让 `rtc.udp_port` 和 `turn.relay_range_start` 使用同一个端口。
 
+`5349/UDP` 不能替代 `50001-50010/UDP`。`5349/UDP` 是 TURN/STUN 入口，客户端在这里申请中继候选；真正的中继媒体包会落到 `turn.relay_range_start` 到 `turn.relay_range_end` 指定的 relay 端口范围。只开放 `5349/UDP`、删除 relay 端口段，常见表现是能获取 token、能尝试入房，甚至 LiveKit 看到 participant 或 track 日志，但客户端没声音、没画面或 ICE 很快断开。
+
 ### 模式 B：TURN/TLS 走 443
 
 适合 UDP 经常被阻断，或希望提高移动网络穿透率的环境：
@@ -379,6 +474,8 @@ Secure X 当前客户端的音视频连接要求 TURN relay 链路可用。因�
 - 如果公网 `443/TCP` 已经承载普通 HTTPS，入口层必须做四层 SNI 分流
 
 注意：HTTP `location` 规则不能处理 TURN/TLS。TURN/TLS 是四层 TLS 流量，不是 HTTP 请求。把 TURN/TLS 直接转到普通 HTTPS 反代入口，会导致客户端拿到不可用 TURN 端点，表现为入房失败或 ICE candidate pair 失败。
+
+只有在证书链、SNI 分流和客户端信任都验证通过后，才建议启用 TURN/TLS。移动端 WebRTC 对 TURN/TLS 证书链很敏感；证书不被系统信任、链不完整、域名不匹配，或者入口把 TURN/TLS 转到了普通 HTTPS 反代，都会导致握手失败。未启用 TURN/TLS 时，应删除或注释 `turn.tls_port` 以及对应的 `443/TCP` / `5349/TCP` 映射，避免后续误以为这些端口仍在承载媒体中继。
 
 ### LiveKit 配置示例
 
@@ -461,6 +558,33 @@ services:
 
 如果你的平台支持 host networking，LiveKit 官方更推荐在需要直接处理大量 UDP 媒体端口时使用 host networking，减少 Docker 端口映射和 NAT 带来的候选地址问题。无论用哪种方式，都要以客户端实际收到的 ICE/TURN 候选是否公网可达为准。
 
+如果 LiveKit 位于 frp 后面，UDP 端口也必须逐个或按范围从公网服务器转发到 NAS / 内网主机。示例：
+
+```toml
+[[proxies]]
+name = "livekit-turn-udp"
+type = "udp"
+localIP = "127.0.0.1"
+localPort = 5349
+remotePort = 5349
+
+[[proxies]]
+name = "livekit-rtc-50000"
+type = "udp"
+localIP = "127.0.0.1"
+localPort = 50000
+remotePort = 50000
+
+[[proxies]]
+name = "livekit-relay-50001"
+type = "udp"
+localIP = "127.0.0.1"
+localPort = 50001
+remotePort = 50001
+```
+
+实际部署时需要把 `50001` 到 `50010` 的 relay 端口都转发，或者把 LiveKit relay 范围缩小到你实际转发的端口集合。缩小端口范围可以，但必须同时修改 LiveKit 配置、Docker/宿主机映射、frp、云服务器安全组和防火墙。
+
 ### 反向代理 LiveKit WebSocket
 
 如果 LiveKit WebSocket 使用独立域名：
@@ -522,6 +646,10 @@ realtime:
 
 这部分是实际排障中最容易踩坑的地方：
 
+- 音视频通话正常后，不要随手删除 LiveKit UDP relay 端口。`50000/UDP` 是 RTC UDP mux，`50001-50010/UDP` 是 TURN relay 范围；两类端口职责不同，都可能被实际媒体链路使用。
+- 如果公网 `443/TCP` 通过 frp 透传到 NAS nginx，`Secure.conf` 中的 `8443` 通常只是 nginx 容器内部回环 HTTPS 端口，用于承接 `stream` 层转发，不是公网入口，也不是客户端配置项。
+- `securex.example.com`、`rtc.example.com`、`turn.example.com` 的职责要分清：后端 API 走 Secure X HTTPS 域名，LiveKit WebSocket 走 RTC 域名或 `/livekit/` 子路径，TURN/UDP 走 TURN 域名和 UDP 端口。不要把不存在 DNS 的域名写进后端下发配置。
+- 当前推荐的小规模稳定模式是：公网 `443/TCP` 纯 TCP 透传到 NAS nginx，nginx 处理 Secure X 后端和 LiveKit WebSocket；LiveKit 媒体使用 `5349/UDP` 加 `50000-50010/UDP` 通过四层 UDP 转发。TURN/TLS 443 只有在证书链和 SNI 分流验证通过后再启用。
 - 后端能签发 LiveKit token，只代表鉴权和房间凭证正常，不代表媒体链路可用。
 - `curl https://rtc.example.com/` 返回 `OK`，只代表 LiveKit WebSocket/HTTP 入口可达，不代表 WebRTC UDP/TURN 可用。
 - LiveKit 日志出现 `starting RTC session` 后，如果随后是 `Failed to ping without candidate pair`、`failed to get server reflexive address`、`removing participant without connection`，通常是 ICE/TURN 端口、候选地址或证书链问题。
@@ -529,6 +657,7 @@ realtime:
 - Docker、NAT、frp、端口转发环境下，不能只映射端口，还要确保 LiveKit 广告给客户端的地址就是公网入口。必要时显式配置 `rtc.node_ip` 或使用适合当前环境的外部 IP 配置。
 - `rtc.udp_port` 和 `turn.relay_range_start` 不要冲突。一个端口不能同时承担 RTC UDP mux 和 TURN relay 起始端口。
 - TURN relay 范围不能只在 LiveKit 容器里开放，还必须从公网入口一路转发到 LiveKit。
+- 如果后端配置 `turnMode: "turn_udp_5349"`，客户端不会强制只走 relay，但仍会在网络需要时选择 TURN relay。因此 relay 端口段仍必须保持可达。
 - 修改 LiveKit 配置后必须确认容器或进程已经重载。只改配置文件但旧进程没有重启，不会生效。
 - 如果 Docker stop/restart 某个 LiveKit 容器异常卡住，不要反复堆积管理命令。可以先启动一个新 LiveKit 容器，用新端口验证后，再把 nginx/frp upstream 切到新容器，最后在维护窗口处理旧容器。
 - 音视频通了以后，再逐步收紧端口范围和防火墙规则；不要一开始就把问题同时混在证书、SNI、frp、Docker、端口范围和客户端版本里。

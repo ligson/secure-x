@@ -22,7 +22,7 @@ extension _VaultFilesTab on _VaultScreenState {
             ),
           ),
           const SizedBox(width: 12),
-          FilledButton.icon(
+          _buildModuleHeaderAction(
             onPressed: widget.controller.busy
                 ? null
                 : () async {
@@ -32,8 +32,9 @@ extension _VaultFilesTab on _VaultScreenState {
                       );
                     } catch (_) {}
                   },
-            icon: const Icon(Icons.upload_file_outlined),
-            label: const Text('上传文件'),
+            icon: Icons.upload_file_outlined,
+            label: '上传文件',
+            primary: true,
           ),
         ],
       ),

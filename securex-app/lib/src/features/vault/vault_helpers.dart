@@ -47,6 +47,61 @@ extension _VaultHelpers on _VaultScreenState {
     );
   }
 
+  Widget _buildModuleHeaderAction({
+    required IconData icon,
+    required String label,
+    required VoidCallback? onPressed,
+    bool primary = false,
+  }) {
+    final style = primary
+        ? FilledButton.styleFrom(
+            backgroundColor: context.sx.accentSoft,
+            foregroundColor: context.sx.primary,
+            disabledBackgroundColor: context.sx.subtle,
+            disabledForegroundColor: context.sx.mutedText,
+            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+            minimumSize: const Size(0, 40),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            textStyle: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w800,
+            ),
+          )
+        : OutlinedButton.styleFrom(
+            foregroundColor: context.sx.text,
+            disabledForegroundColor: context.sx.mutedText,
+            side: BorderSide(color: context.sx.border),
+            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+            minimumSize: const Size(0, 40),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            textStyle: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w800,
+            ),
+          );
+
+    if (primary) {
+      return FilledButton.icon(
+        style: style,
+        onPressed: onPressed,
+        icon: Icon(icon, size: 18),
+        label: Text(label),
+      );
+    }
+    return OutlinedButton.icon(
+      style: style,
+      onPressed: onPressed,
+      icon: Icon(icon, size: 18),
+      label: Text(label),
+    );
+  }
+
   Future<void> _handleCreateFileFolder() async {
     final name = _fileFolderCreateController.text.trim();
     if (name.isEmpty) {

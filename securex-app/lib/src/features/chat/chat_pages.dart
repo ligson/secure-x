@@ -486,6 +486,7 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
   final _inputController = TextEditingController();
   String _composerPanel = '';
   bool _hasComposerText = false;
+  bool _composerVoiceMode = false;
 
   @override
   void initState() {
@@ -512,7 +513,15 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
       _hasComposerText = hasText;
       if (hasText) {
         _composerPanel = '';
+        _composerVoiceMode = false;
       }
+    });
+  }
+
+  void _toggleComposerVoiceMode() {
+    setState(() {
+      _composerVoiceMode = !_composerVoiceMode;
+      _composerPanel = '';
     });
   }
 
@@ -661,31 +670,58 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
                       onRefresh: _refreshConversation,
                       triggerMode: RefreshIndicatorTriggerMode.anywhere,
                       child: ListView.builder(
+                        key: PageStorageKey<String>(
+                          'chat-messages-${widget.conversationId}',
+                        ),
                         reverse: true,
                         physics: const AlwaysScrollableScrollPhysics(),
                         padding: const EdgeInsets.fromLTRB(22, 18, 22, 24),
                         itemCount: messageCount == 0
                             ? (loadingDetails ? 2 : 1)
                             : messageCount,
+                        findChildIndexCallback: (key) {
+                          if (key is! ValueKey<String>) {
+                            return null;
+                          }
+                          const prefix = 'chat-message:';
+                          if (!key.value.startsWith(prefix)) {
+                            return null;
+                          }
+                          final messageId = key.value.substring(prefix.length);
+                          final messageIndex = messages.indexWhere(
+                            (message) => message.id == messageId,
+                          );
+                          if (messageIndex < 0) {
+                            return null;
+                          }
+                          return messageCount - 1 - messageIndex;
+                        },
                         itemBuilder: (context, index) {
                           if (messageCount == 0) {
                             if (loadingDetails && index == 0) {
-                              return const _ChatLoadingState();
+                              return const KeyedSubtree(
+                                key: ValueKey('chat-loading'),
+                                child: _ChatLoadingState(),
+                              );
                             }
-                            return _ChatEmptyState(
-                              message: groupDissolved
-                                  ? '该群已经解散。当前账号仍可查看此前同步下来的历史记录；如不再需要，可在群信息页删除会话。'
-                                  : '好友在线后会自动建立端到端加密通道。',
-                              icon: groupDissolved
-                                  ? Icons.info_outline
-                                  : Icons.lock_outline,
-                              tone: groupDissolved
-                                  ? _PageNoticeTone.warn
-                                  : _PageNoticeTone.success,
+                            return KeyedSubtree(
+                              key: const ValueKey('chat-empty'),
+                              child: _ChatEmptyState(
+                                message: groupDissolved
+                                    ? '该群已经解散。当前账号仍可查看此前同步下来的历史记录；如不再需要，可在群信息页删除会话。'
+                                    : '好友在线后会自动建立端到端加密通道。',
+                                icon: groupDissolved
+                                    ? Icons.info_outline
+                                    : Icons.lock_outline,
+                                tone: groupDissolved
+                                    ? _PageNoticeTone.warn
+                                    : _PageNoticeTone.success,
+                              ),
                             );
                           }
                           final message = messages[messageCount - 1 - index];
                           return _ChatMessageBubble(
+                            key: ValueKey('chat-message:${message.id}'),
                             controller: widget.controller,
                             conversation: conversation,
                             friend: friend,
@@ -701,10 +737,15 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
                     friend: friend,
                     textController: _inputController,
                     hasText: _hasComposerText,
+                    voiceMode: _composerVoiceMode,
                     showTools: _composerPanel == 'tools',
                     showEmoji: _composerPanel == 'emoji',
+                    onToggleVoiceMode: _toggleComposerVoiceMode,
                     onToggleEmoji: () {
                       setState(() {
+                        if (_composerPanel != 'emoji') {
+                          _composerVoiceMode = false;
+                        }
                         _composerPanel = _composerPanel == 'emoji'
                             ? ''
                             : 'emoji';
@@ -712,6 +753,7 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
                     },
                     onToggleTools: () {
                       setState(() {
+                        _composerVoiceMode = false;
                         _composerPanel = _composerPanel == 'tools'
                             ? ''
                             : 'tools';
@@ -914,6 +956,7 @@ class _ChatLoadingState extends StatelessWidget {
 
 class _ChatMessageBubble extends StatelessWidget {
   const _ChatMessageBubble({
+    super.key,
     required this.controller,
     required this.conversation,
     required this.friend,
@@ -2215,8 +2258,10 @@ class _ChatComposer extends StatelessWidget {
     required this.friend,
     required this.textController,
     required this.hasText,
+    required this.voiceMode,
     required this.showTools,
     required this.showEmoji,
+    required this.onToggleVoiceMode,
     required this.onToggleEmoji,
     required this.onToggleTools,
     required this.onClosePanel,
@@ -2227,8 +2272,10 @@ class _ChatComposer extends StatelessWidget {
   final PublicUser? friend;
   final TextEditingController textController;
   final bool hasText;
+  final bool voiceMode;
   final bool showTools;
   final bool showEmoji;
+  final VoidCallback onToggleVoiceMode;
   final VoidCallback onToggleEmoji;
   final VoidCallback onToggleTools;
   final VoidCallback onClosePanel;
@@ -2284,48 +2331,56 @@ class _ChatComposer extends StatelessWidget {
               child: Row(
                 children: [
                   _ComposerIconButton(
-                    tooltip: showEmoji ? '收起表情' : '表情',
-                    icon: showEmoji
+                    tooltip: voiceMode ? '切换键盘' : '语音',
+                    icon: voiceMode
                         ? Icons.keyboard_alt_outlined
-                        : Icons.mood_outlined,
-                    onPressed: composerDisabled ? null : onToggleEmoji,
-                  ),
-                  const SizedBox(width: 8),
-                  _VoiceInputButton(
-                    controller: controller,
-                    conversation: conversation,
-                    friend: friend,
-                    disabled: composerDisabled,
-                    onClosePanel: onClosePanel,
+                        : Icons.mic_none_outlined,
+                    onPressed: composerDisabled ? null : onToggleVoiceMode,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: TextField(
-                      controller: textController,
-                      readOnly: composerDisabled,
-                      onTap: onClosePanel,
-                      minLines: 1,
-                      maxLines: 4,
-                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                        color: context.sx.text,
-                        fontWeight: FontWeight.w700,
-                      ),
-                      decoration: InputDecoration(
-                        hintText: composerDisabled ? '群聊已解散' : '输入加密消息',
-                        hintStyle: Theme.of(context).textTheme.bodyLarge
-                            ?.copyWith(
-                              color: context.sx.mutedText,
-                              fontWeight: FontWeight.w700,
+                    child: voiceMode
+                        ? _VoiceInputButton(
+                            controller: controller,
+                            conversation: conversation,
+                            friend: friend,
+                            disabled: composerDisabled,
+                            onClosePanel: onClosePanel,
+                          )
+                        : TextField(
+                            controller: textController,
+                            readOnly: composerDisabled,
+                            onTap: onClosePanel,
+                            minLines: 1,
+                            maxLines: 4,
+                            style: Theme.of(context).textTheme.bodyLarge
+                                ?.copyWith(
+                                  color: context.sx.text,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                            decoration: InputDecoration(
+                              hintText: composerDisabled ? '群聊已解散' : '输入加密消息',
+                              hintStyle: Theme.of(context).textTheme.bodyLarge
+                                  ?.copyWith(
+                                    color: context.sx.mutedText,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 12,
+                              ),
                             ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 12,
-                        ),
-                      ),
-                    ),
+                          ),
                   ),
                   const SizedBox(width: 8),
-                  if (hasText)
+                  _ComposerIconButton(
+                    tooltip: showEmoji ? '收起表情' : '表情',
+                    icon: Icons.mood_outlined,
+                    onPressed: composerDisabled ? null : onToggleEmoji,
+                    active: showEmoji,
+                  ),
+                  const SizedBox(width: 8),
+                  if (hasText && !voiceMode)
                     FilledButton(
                       style: FilledButton.styleFrom(
                         padding: const EdgeInsets.symmetric(
@@ -2342,10 +2397,9 @@ class _ChatComposer extends StatelessWidget {
                   else
                     _ComposerIconButton(
                       tooltip: showTools ? '收起更多' : '更多',
-                      icon: showTools
-                          ? Icons.keyboard_arrow_down
-                          : Icons.add_circle_outline,
+                      icon: Icons.add_circle_outline,
                       onPressed: composerDisabled ? null : onToggleTools,
+                      active: showTools,
                     ),
                 ],
               ),
@@ -4944,14 +4998,22 @@ class _VoiceInputButton extends StatefulWidget {
 
 class _VoiceInputButtonState extends State<_VoiceInputButton> {
   final record.AudioRecorder _recorder = record.AudioRecorder();
+  bool _pressed = false;
   bool _recording = false;
+  bool _starting = false;
+  bool _stopping = false;
+  bool _finishAfterStart = false;
+  bool _cancelAfterStart = false;
+  String _prompt = '按住说话';
   DateTime? _startedAt;
   Timer? _maxDurationTimer;
+  Timer? _promptTimer;
   String? _recordingPath;
 
   @override
   void dispose() {
     _maxDurationTimer?.cancel();
+    _promptTimer?.cancel();
     if (_recording) {
       unawaited(_recorder.cancel());
     }
@@ -4959,47 +5021,139 @@ class _VoiceInputButtonState extends State<_VoiceInputButton> {
     super.dispose();
   }
 
-  Future<void> _toggleRecording() async {
+  void _handlePressDown() {
+    if (widget.disabled || _pressed || _recording || _starting || _stopping) {
+      return;
+    }
+    setState(() => _pressed = true);
+    unawaited(_startHoldRecording());
+  }
+
+  void _handlePressUp() {
+    if (!_pressed && !_starting && !_recording) {
+      return;
+    }
+    if (mounted) {
+      setState(() => _pressed = false);
+    } else {
+      _pressed = false;
+    }
+    unawaited(_finishHoldRecording());
+  }
+
+  void _handlePressCancel() {
+    if (!_pressed && !_starting && !_recording) {
+      return;
+    }
+    if (mounted) {
+      setState(() => _pressed = false);
+    } else {
+      _pressed = false;
+    }
+    unawaited(_cancelHoldRecording());
+  }
+
+  Future<void> _startHoldRecording() async {
     if (widget.disabled) {
       return;
     }
     widget.onClosePanel();
-    if (_recording) {
-      await _stopAndSend();
+    if (_recording || _starting || _stopping) {
       return;
     }
-    await _startRecording();
+    _starting = true;
+    _finishAfterStart = false;
+    _cancelAfterStart = false;
+    _setPrompt('准备录音');
+    final started = await _startRecording();
+    _starting = false;
+    if (!started) {
+      _finishAfterStart = false;
+      _cancelAfterStart = false;
+      return;
+    }
+    if (_cancelAfterStart) {
+      _cancelAfterStart = false;
+      await _cancelHoldRecording();
+      return;
+    }
+    if (_finishAfterStart) {
+      _finishAfterStart = false;
+      await _finishHoldRecording();
+    }
   }
 
-  Future<void> _startRecording() async {
-    final allowed = await _recorder.hasPermission();
-    if (!allowed) {
-      _showSnack('麦克风权限未开启，请到系统设置中允许 secure-x 使用。');
+  Future<void> _finishHoldRecording() async {
+    if (_starting) {
+      _finishAfterStart = true;
       return;
     }
-    final supported = await _recorder.isEncoderSupported(
-      record.AudioEncoder.aacLc,
-    );
-    if (!supported) {
-      _showSnack('当前设备暂不支持语音消息录制。');
+    if (widget.disabled || !_recording) {
       return;
     }
-    final directory = await getTemporaryDirectory();
-    final path =
-        '${directory.path}/secure-x-voice-${DateTime.now().microsecondsSinceEpoch}.m4a';
+    await _stopAndSend();
+  }
+
+  Future<void> _cancelHoldRecording() async {
+    if (_starting) {
+      _cancelAfterStart = true;
+      return;
+    }
+    if (!_recording || _stopping) {
+      return;
+    }
+    _maxDurationTimer?.cancel();
     try {
-      await _recorder.start(
-        const record.RecordConfig(
-          encoder: record.AudioEncoder.aacLc,
-          bitRate: 64000,
-          sampleRate: 16000,
-          numChannels: 1,
-          autoGain: true,
-          echoCancel: true,
-          noiseSuppress: true,
-        ),
-        path: path,
+      await _safeCancelRecorder();
+    } finally {
+      final path = _recordingPath;
+      _recordingPath = null;
+      _startedAt = null;
+      if (mounted) {
+        setState(() {
+          _recording = false;
+          _prompt = '按住说话';
+        });
+      }
+      if (path != null) {
+        await _deleteTempVoiceFile(File(path));
+      }
+    }
+  }
+
+  Future<bool> _startRecording() async {
+    try {
+      final allowed = await _recorder.hasPermission().timeout(
+        const Duration(seconds: 4),
       );
+      if (!allowed) {
+        _setPrompt('请开启麦克风权限', resetAfter: const Duration(seconds: 2));
+        return false;
+      }
+      final supported = await _recorder
+          .isEncoderSupported(record.AudioEncoder.aacLc)
+          .timeout(const Duration(seconds: 4));
+      if (!supported) {
+        _setPrompt('当前设备不支持录音', resetAfter: const Duration(seconds: 2));
+        return false;
+      }
+      final directory = await getTemporaryDirectory();
+      final path =
+          '${directory.path}/secure-x-voice-${DateTime.now().microsecondsSinceEpoch}.m4a';
+      await _recorder
+          .start(
+            const record.RecordConfig(
+              encoder: record.AudioEncoder.aacLc,
+              bitRate: 64000,
+              sampleRate: 16000,
+              numChannels: 1,
+              autoGain: true,
+              echoCancel: true,
+              noiseSuppress: true,
+            ),
+            path: path,
+          )
+          .timeout(const Duration(seconds: 4));
       _recordingPath = path;
       _startedAt = DateTime.now();
       _maxDurationTimer?.cancel();
@@ -5009,77 +5163,112 @@ class _VoiceInputButtonState extends State<_VoiceInputButton> {
         }
       });
       if (!mounted) {
-        return;
+        return false;
       }
-      setState(() => _recording = true);
-      _showSnack('正在录音，再点一次麦克风发送语音。');
+      setState(() {
+        _recording = true;
+        _prompt = '松开发送';
+      });
+      return true;
     } catch (_) {
-      _showSnack('语音录制启动失败，请检查麦克风是否被占用。');
+      _pressed = false;
+      _starting = false;
+      _finishAfterStart = false;
+      _cancelAfterStart = false;
+      await _safeCancelRecorder();
+      _setPrompt('录音启动失败', resetAfter: const Duration(seconds: 2));
+      return false;
     }
   }
 
   Future<void> _stopAndSend({bool autoStopped = false}) async {
+    if (!_recording || _stopping) {
+      return;
+    }
+    _stopping = true;
     _maxDurationTimer?.cancel();
-    final startedAt = _startedAt;
-    final path = await _recorder.stop();
-    if (mounted) {
-      setState(() => _recording = false);
-    }
-    final outputPath = path ?? _recordingPath;
-    _recordingPath = null;
-    _startedAt = null;
-    if (outputPath == null) {
-      _showSnack('语音录制失败，请重试。');
-      return;
-    }
-    final file = File(outputPath);
-    if (!await file.exists()) {
-      _showSnack('语音文件生成失败，请重试。');
-      return;
-    }
-    final duration = startedAt == null
-        ? Duration.zero
-        : DateTime.now().difference(startedAt);
-    if (duration < const Duration(milliseconds: 700)) {
-      await _deleteTempVoiceFile(file);
-      _showSnack('录音时间太短，未发送。');
-      return;
-    }
-    final bytes = await file.readAsBytes();
-    await _deleteTempVoiceFile(file);
-    if (bytes.length > _chatUiAttachmentMaxBytes) {
-      _showSnack('语音消息不能超过 2MB，请缩短录音时间。');
-      return;
-    }
-    final seconds = duration.inSeconds.clamp(1, 60);
-    final name =
-        'secure-x-voice-${DateTime.now().millisecondsSinceEpoch}-${seconds}s.m4a';
-    if (widget.conversation?.isGroup == true) {
-      await widget.controller.sendGroupChatAttachment(
-        conversation: widget.conversation!,
-        bytes: bytes,
-        name: name,
-        mimeType: 'audio/mp4',
-        image: false,
-        attachmentType: 'audio',
-      );
-    } else {
-      final directFriend = widget.friend;
-      if (directFriend == null) {
-        _showSnack('当前会话不可发送语音。');
+    try {
+      final startedAt = _startedAt;
+      final path = await _recorder.stop().timeout(const Duration(seconds: 4));
+      if (mounted) {
+        setState(() {
+          _pressed = false;
+          _recording = false;
+          _prompt = '按住说话';
+        });
+      }
+      final outputPath = path ?? _recordingPath;
+      _recordingPath = null;
+      _startedAt = null;
+      if (outputPath == null) {
         return;
       }
-      await widget.controller.sendLocalChatAttachment(
-        friend: directFriend,
-        bytes: bytes,
-        name: name,
-        mimeType: 'audio/mp4',
-        image: false,
-        attachmentType: 'audio',
-      );
+      final file = File(outputPath);
+      if (!await file.exists()) {
+        return;
+      }
+      final duration = startedAt == null
+          ? Duration.zero
+          : DateTime.now().difference(startedAt);
+      if (duration < const Duration(milliseconds: 700)) {
+        await _deleteTempVoiceFile(file);
+        return;
+      }
+      final bytes = await file.readAsBytes();
+      await _deleteTempVoiceFile(file);
+      if (bytes.length > _chatUiAttachmentMaxBytes) {
+        return;
+      }
+      final seconds = duration.inSeconds.clamp(1, 60);
+      final name =
+          'secure-x-voice-${DateTime.now().millisecondsSinceEpoch}-${seconds}s.m4a';
+      if (widget.conversation?.isGroup == true) {
+        await widget.controller.sendGroupChatAttachment(
+          conversation: widget.conversation!,
+          bytes: bytes,
+          name: name,
+          mimeType: 'audio/mp4',
+          image: false,
+          attachmentType: 'audio',
+        );
+      } else {
+        final directFriend = widget.friend;
+        if (directFriend == null) {
+          return;
+        }
+        await widget.controller.sendLocalChatAttachment(
+          friend: directFriend,
+          bytes: bytes,
+          name: name,
+          mimeType: 'audio/mp4',
+          image: false,
+          attachmentType: 'audio',
+        );
+      }
+      if (autoStopped) {
+        _setPrompt('已自动发送', resetAfter: const Duration(milliseconds: 900));
+      }
+    } catch (_) {
+      await _safeCancelRecorder();
+      _recordingPath = null;
+      _startedAt = null;
+      if (mounted) {
+        setState(() {
+          _pressed = false;
+          _recording = false;
+          _prompt = '按住说话';
+        });
+      }
+    } finally {
+      _stopping = false;
     }
-    if (autoStopped) {
-      _showSnack('已达到最长录音时间，语音已发送。');
+  }
+
+  Future<void> _safeCancelRecorder() async {
+    try {
+      await _recorder.cancel().timeout(const Duration(seconds: 2));
+    } catch (_) {
+      // 录音器可能已经停止或处于释放中，忽略并恢复 UI 状态。
     }
   }
 
@@ -5091,22 +5280,58 @@ class _VoiceInputButtonState extends State<_VoiceInputButton> {
     }
   }
 
-  void _showSnack(String message) {
+  void _setPrompt(String message, {Duration? resetAfter}) {
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
-    );
+    _promptTimer?.cancel();
+    setState(() => _prompt = message);
+    if (resetAfter == null) {
+      return;
+    }
+    _promptTimer = Timer(resetAfter, () {
+      if (!mounted || _recording || _starting || _stopping) {
+        return;
+      }
+      setState(() => _prompt = '按住说话');
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    return _ComposerIconButton(
-      tooltip: _recording ? '停止并发送语音' : '语音消息',
-      icon: _recording ? Icons.stop_rounded : Icons.mic_none_outlined,
-      onPressed: widget.disabled ? null : _toggleRecording,
-      active: _recording,
+    final enabled = !widget.disabled;
+    final active = _pressed || _starting || _recording;
+    return Listener(
+      onPointerDown: enabled ? (_) => _handlePressDown() : null,
+      onPointerUp: enabled ? (_) => _handlePressUp() : null,
+      onPointerCancel: enabled ? (_) => _handlePressCancel() : null,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        height: 46,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: active
+              ? context.sx.primary
+              : enabled
+              ? context.sx.accentSoft
+              : context.sx.subtle,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: active ? context.sx.primary : context.sx.border,
+          ),
+        ),
+        child: Text(
+          _prompt,
+          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+            color: active
+                ? Colors.white
+                : enabled
+                ? context.sx.primary
+                : context.sx.mutedText,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
     );
   }
 }
