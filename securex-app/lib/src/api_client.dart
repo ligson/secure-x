@@ -1102,6 +1102,31 @@ class ApiClient {
     );
   }
 
+  Future<LiveKitCallToken> createGroupLiveKitCallToken({
+    required String baseUrl,
+    required String token,
+    required String groupId,
+    required String callId,
+    required String media,
+    required String deviceId,
+  }) async {
+    final data = _unwrapMap(
+      await _dio.post<Map<String, dynamic>>(
+        '$baseUrl/api/v1/calls/group/livekit-token',
+        data: {
+          'groupId': groupId,
+          'callId': callId,
+          'media': media,
+          'deviceId': deviceId,
+        },
+        options: _authorized(token),
+      ),
+    );
+    return LiveKitCallToken.fromJson(
+      data['livekit'] as Map<String, dynamic>? ?? const {},
+    );
+  }
+
   Future<void> recordCallEvent({
     required String baseUrl,
     required String token,
@@ -1116,6 +1141,30 @@ class ApiClient {
       '$baseUrl/api/v1/calls/events',
       data: {
         'peerUserId': peerUserId,
+        'callId': callId,
+        'media': media,
+        'phase': phase,
+        'reason': reason,
+        'deviceId': deviceId,
+      },
+      options: _authorized(token),
+    );
+  }
+
+  Future<void> recordGroupCallEvent({
+    required String baseUrl,
+    required String token,
+    required String groupId,
+    required String callId,
+    required String media,
+    required String phase,
+    required String reason,
+    required String deviceId,
+  }) async {
+    await _dio.post<Map<String, dynamic>>(
+      '$baseUrl/api/v1/calls/group/events',
+      data: {
+        'groupId': groupId,
         'callId': callId,
         'media': media,
         'phase': phase,

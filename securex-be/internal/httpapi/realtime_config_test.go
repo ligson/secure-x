@@ -192,6 +192,77 @@ func TestLiveKitCallTokenForFriend(t *testing.T) {
 	}
 }
 
+func TestGroupLiveKitCallTokenForMember(t *testing.T) {
+	router, tokens, db := newAccessControlRouterWithConfig(
+		t,
+		config.ServerConfig{},
+		testLiveKitRealtimeConfig(),
+	)
+	createTestUser(t, db, "user-a", "user-a", "user-a@example.com")
+	createTestUser(t, db, "user-b", "user-b", "user-b@example.com")
+	createTestGroup(t, db, "group-1", "user-a", []string{"user-a", "user-b"})
+	token := issueTestToken(t, tokens, "user-a")
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/calls/group/livekit-token",
+		strings.NewReader(`{"groupId":"group-1","callId":"call-1","media":"video"}`),
+	)
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Data struct {
+			LiveKit struct {
+				URL   string `json:"url"`
+				Token string `json:"token"`
+				Room  string `json:"room"`
+				Media string `json:"media"`
+			} `json:"livekit"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if body.Data.LiveKit.URL != "wss://rtc.secure-x.example" {
+		t.Fatalf("unexpected livekit url: %s", body.Data.LiveKit.URL)
+	}
+	if body.Data.LiveKit.Token == "" {
+		t.Fatal("expected non-empty livekit token")
+	}
+	if !strings.Contains(body.Data.LiveKit.Room, "securex-group-group-1-call-1") {
+		t.Fatalf("expected group room name, got %s", body.Data.LiveKit.Room)
+	}
+	if body.Data.LiveKit.Media != "video" {
+		t.Fatalf("expected video media, got %s", body.Data.LiveKit.Media)
+	}
+}
+
+func TestGroupLiveKitCallTokenRejectsNonMember(t *testing.T) {
+	router, tokens, db := newAccessControlRouterWithConfig(
+		t,
+		config.ServerConfig{},
+		testLiveKitRealtimeConfig(),
+	)
+	createTestUser(t, db, "user-a", "user-a", "user-a@example.com")
+	createTestUser(t, db, "user-b", "user-b", "user-b@example.com")
+	createTestUser(t, db, "user-c", "user-c", "user-c@example.com")
+	createTestGroup(t, db, "group-1", "user-a", []string{"user-a", "user-b"})
+	token := issueTestToken(t, tokens, "user-c")
+
+	assertJSONStatus(t, router, http.MethodPost, "/api/v1/calls/group/livekit-token", token, map[string]any{
+		"groupId": "group-1",
+		"callId":  "call-1",
+		"media":   "audio",
+	}, http.StatusForbidden)
+}
+
 func testLiveKitRealtimeConfig() config.RealtimeConfig {
 	return config.RealtimeConfig{
 		LiveKit: config.LiveKitConfig{

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
@@ -14,6 +15,7 @@ import 'package:audioplayers/audioplayers.dart' as audio;
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart' as record;
 import 'package:livekit_client/livekit_client.dart' as lk;
+import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'src/api_client.dart';
@@ -41,6 +43,7 @@ part 'src/features/vault/vault_helpers.dart';
 part 'src/features/vault/password_folder_pages.dart';
 part 'src/features/vault/file_folder_pages.dart';
 part 'src/features/vault/password_item_pages.dart';
+part 'src/features/vault/totp_helpers.dart';
 part 'src/features/vault/file_editor_pages.dart';
 part 'src/features/vault/vault_drafts.dart';
 part 'src/widgets/common_widgets.dart';

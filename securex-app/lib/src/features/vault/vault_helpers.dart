@@ -369,9 +369,18 @@ extension _VaultHelpers on _VaultScreenState {
         password: result.password,
         url: result.url,
         note: result.note,
+        totp: result.totp,
         folderId: result.folderId,
         existing: item,
       );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        if (item == null && _activeVaultFolderId.isNotEmpty) {
+          _activeVaultFolderId = result.folderId;
+        }
+      });
     } catch (_) {}
   }
 

@@ -49,6 +49,8 @@ dependencies:
   audioplayers: ^6.5.1
   livekit_client: ^2.7.0
   wakelock_plus: ^1.5.2
+  mobile_scanner: ^7.2.0
+  crypto: ^3.0.7
 
 dev_dependencies:
   flutter_test:

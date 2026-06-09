@@ -1097,6 +1097,161 @@ extension AppControllerChatActions on AppController {
     }
   }
 
+  Future<bool> sendGroupCallSignal({
+    required ChatConversation conversation,
+    required String callId,
+    required String action,
+    required String media,
+    Map<String, dynamic> payload = const {},
+  }) async {
+    if (!conversation.isGroup || conversation.isDissolved) {
+      _statusMessage = '当前群聊无法发起通话。';
+      notifyListeners();
+      return false;
+    }
+    if (_realtimeConfig?.signalingEnabled != true) {
+      await _ensureRealtimeChatConnected();
+    }
+    if (_realtimeConfig?.signalingEnabled != true) {
+      _statusMessage = '实时通道暂未建立，无法发起群通话。';
+      notifyListeners();
+      return false;
+    }
+    final sentPeerIds = await _dispatchGroupCallSignal(
+      conversation: conversation,
+      callId: callId,
+      action: action,
+      media: media,
+      payload: payload,
+    );
+    _statusMessage = sentPeerIds.isNotEmpty
+        ? (action == 'invite'
+              ? '群通话邀请已发送给 ${sentPeerIds.length} 个成员。'
+              : '群通话状态已同步。')
+        : '群成员当前暂无可用设备，通话邀请可能无法实时送达。';
+    notifyListeners();
+    return sentPeerIds.isNotEmpty || conversation.members.isEmpty;
+  }
+
+  Future<LiveKitCallToken?> createGroupLiveKitCallToken({
+    required ChatConversation conversation,
+    required String callId,
+    required String media,
+  }) async {
+    final token = _token;
+    if (token == null) {
+      _statusMessage = '请先登录后再加入群通话。';
+      notifyListeners();
+      return null;
+    }
+    try {
+      final identity = await _ensureChatIdentity(registerOnServer: true);
+      if (identity == null) {
+        _statusMessage = '通话设备初始化失败，请重新登录后再试。';
+        notifyListeners();
+        return null;
+      }
+      final credential = await _apiClient.createGroupLiveKitCallToken(
+        baseUrl: _baseUrl,
+        token: token,
+        groupId: conversation.id,
+        callId: callId,
+        media: media,
+        deviceId: identity.deviceId,
+      );
+      if (credential.url.isEmpty || credential.token.isEmpty) {
+        _statusMessage = '音视频通话服务暂未配置。';
+        notifyListeners();
+        return null;
+      }
+      return credential;
+    } catch (error) {
+      appLog('生成 LiveKit 群通话凭证失败', error);
+      _statusMessage = '生成群通话凭证失败，请稍后重试。';
+      notifyListeners();
+      return null;
+    }
+  }
+
+  Future<void> recordGroupCallEvent({
+    required ChatConversation conversation,
+    required String callId,
+    required String media,
+    required String phase,
+    required String reason,
+  }) async {
+    final token = _token;
+    if (token == null) {
+      return;
+    }
+    try {
+      final identity = await _ensureChatIdentity(registerOnServer: true);
+      await _apiClient.recordGroupCallEvent(
+        baseUrl: _baseUrl,
+        token: token,
+        groupId: conversation.id,
+        callId: callId,
+        media: media,
+        phase: phase,
+        reason: reason,
+        deviceId: identity?.deviceId ?? '',
+      );
+    } catch (error) {
+      appLog(
+        '记录群通话诊断事件失败：call=${callDiagnosticId(callId)}, phase=$phase',
+        error,
+      );
+    }
+  }
+
+  List<QueuedGroupCallSignal> groupCallSignalsAfter(int sequence) {
+    return _groupCallSignals
+        .where((entry) => entry.sequence > sequence)
+        .toList(growable: false);
+  }
+
+  GroupCallSignal? latestGroupCallInvite(String groupId) {
+    for (final entry in _groupCallSignals.reversed) {
+      final signal = entry.signal;
+      if (signal.groupId != groupId) {
+        continue;
+      }
+      if (signal.action == 'end') {
+        return null;
+      }
+      if (signal.action == 'invite') {
+        return signal;
+      }
+    }
+    return null;
+  }
+
+  void _handleGroupCallSignal(GroupCallSignal signal) {
+    if (signal.groupId.isEmpty || signal.callId.isEmpty) {
+      return;
+    }
+    _groupCallSignalSequence += 1;
+    _groupCallSignals.add(
+      QueuedGroupCallSignal(sequence: _groupCallSignalSequence, signal: signal),
+    );
+    if (_groupCallSignals.length > 120) {
+      _groupCallSignals.removeRange(0, _groupCallSignals.length - 120);
+    }
+    final mediaLabel = signal.media == 'video' ? '视频' : '语音';
+    final actionLabel = switch (signal.action) {
+      'invite' => '发起了群$mediaLabel通话',
+      'join' => '加入了群$mediaLabel通话',
+      'leave' => '离开了群$mediaLabel通话',
+      'end' => '结束了群$mediaLabel通话',
+      _ => '同步了群$mediaLabel通话状态',
+    };
+    _statusMessage =
+        '${signal.groupName.isEmpty ? '群聊' : signal.groupName} $actionLabel';
+    _markCallChanged();
+    _markChatChanged();
+    notifyListeners();
+  }
+
   void _handleRealtimeCallSignal(RealtimeCallSignal signal) {
     _lastCallSignal = signal;
     _callSignalSequence += 1;
@@ -1875,6 +2030,38 @@ extension AppControllerChatActions on AppController {
     );
   }
 
+  Future<List<String>> _dispatchGroupCallSignal({
+    required ChatConversation conversation,
+    required String callId,
+    required String action,
+    required String media,
+    Map<String, dynamic> payload = const {},
+  }) async {
+    final memberIds = conversation.members
+        .map((member) => member.id)
+        .where((id) => id.isNotEmpty && id != _user?.id)
+        .toList();
+    if (memberIds.isEmpty) {
+      return const [];
+    }
+    final queuedByUser = await _dispatchEncryptedPayloads(
+      recipientUserIds: memberIds,
+      kind: 'group-call-signal',
+      body: {
+        'groupId': conversation.id,
+        'groupName': conversation.title,
+        'callId': callId,
+        'action': action,
+        'media': media == 'video' ? 'video' : 'audio',
+        'payload': payload,
+      },
+    );
+    return queuedByUser.entries
+        .where((entry) => entry.value > 0)
+        .map((entry) => entry.key)
+        .toList();
+  }
+
   Future<bool> _dispatchHistoryRequest(PublicUser friend) async {
     final queuedByUser = await _dispatchEncryptedPayloads(
       recipientUserIds: [friend.id],
@@ -2277,6 +2464,20 @@ extension AppControllerChatActions on AppController {
                 decrypted.body['dissolvedByUserId'] as String? ?? '',
           ),
         );
+      case 'group-call-signal':
+        _handleGroupCallSignal(
+          GroupCallSignal(
+            senderUserId: decrypted.senderUserId,
+            groupId: decrypted.body['groupId'] as String? ?? '',
+            groupName: decrypted.body['groupName'] as String? ?? '',
+            callId: decrypted.body['callId'] as String? ?? '',
+            action: decrypted.body['action'] as String? ?? '',
+            media: decrypted.body['media'] as String? ?? 'audio',
+            payload:
+                decrypted.body['payload'] as Map<String, dynamic>? ?? const {},
+          ),
+        );
+        return true;
       case 'history-request':
         return _handleRealtimeHistoryRequest(
           RealtimeHistoryRequest(

@@ -96,6 +96,8 @@ func NewRouter(
 		protected.POST("/chat/messages/ack", handler.ackChatMessages)
 		protected.POST("/calls/livekit-token", handler.createLiveKitCallToken)
 		protected.POST("/calls/events", handler.recordCallEvent)
+		protected.POST("/calls/group/livekit-token", handler.createGroupLiveKitCallToken)
+		protected.POST("/calls/group/events", handler.recordGroupCallEvent)
 
 		protected.GET("/folders", handler.listFolders)
 		protected.POST("/folders", handler.createFolder)

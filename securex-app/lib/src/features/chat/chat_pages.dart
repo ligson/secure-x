@@ -550,6 +550,9 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
             0;
         final groupDissolved =
             conversation?.isGroup == true && conversation?.isDissolved == true;
+        final groupCallInvite = isGroup && conversation != null
+            ? widget.controller.latestGroupCallInvite(conversation.id)
+            : null;
         final title =
             conversation?.displayTitle ??
             (friend == null ? '聊天' : friend.displayName);
@@ -665,6 +668,19 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
                         dismissible: false,
                       ),
                     ),
+                  if (!groupDissolved &&
+                      conversation != null &&
+                      groupCallInvite != null)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                      child: _GroupCallInviteBanner(
+                        signal: groupCallInvite,
+                        onJoin: () => _openGroupCall(
+                          conversation,
+                          signal: groupCallInvite,
+                        ),
+                      ),
+                    ),
                   Expanded(
                     child: RefreshIndicator(
                       onRefresh: _refreshConversation,
@@ -767,6 +783,8 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
                         _composerPanel = '';
                       });
                     },
+                    onStartGroupCall: (conversation, media) =>
+                        _openGroupCall(conversation, media: media),
                   ),
                 ],
               ),
@@ -774,6 +792,36 @@ class _ChatRoomPageState extends State<_ChatRoomPage> {
           ),
         );
       },
+    );
+  }
+
+  Future<void> _openGroupCall(
+    ChatConversation conversation, {
+    GroupCallSignal? signal,
+    String? media,
+  }) async {
+    if (!conversation.isGroup || conversation.isDissolved) {
+      return;
+    }
+    if (!widget.controller.canStartCall()) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('当前已有通话，请先结束后再加入群通话。')));
+      return;
+    }
+    await Navigator.of(context).push(
+      PageRouteBuilder<void>(
+        opaque: false,
+        pageBuilder: (_, _, _) => _GroupChatCallPage(
+          controller: widget.controller,
+          conversation: conversation,
+          initialVideo: (media ?? signal?.media) == 'video',
+          incomingSignal: signal,
+        ),
+        transitionsBuilder: (context, animation, _, child) {
+          return FadeTransition(opacity: animation, child: child);
+        },
+      ),
     );
   }
 
@@ -2251,6 +2299,53 @@ class _GroupMemberTile extends StatelessWidget {
   }
 }
 
+class _GroupCallInviteBanner extends StatelessWidget {
+  const _GroupCallInviteBanner({required this.signal, required this.onJoin});
+
+  final GroupCallSignal signal;
+  final VoidCallback onJoin;
+
+  @override
+  Widget build(BuildContext context) {
+    final mediaLabel = signal.media == 'video' ? '视频' : '语音';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: context.sx.accentSoft,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: context.sx.primary.withAlpha(120)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            signal.media == 'video'
+                ? Icons.video_call_outlined
+                : Icons.call_outlined,
+            color: context.sx.primary,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              '群$mediaLabel通话进行中',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                color: context.sx.primary,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          TextButton.icon(
+            onPressed: onJoin,
+            icon: const Icon(Icons.login_rounded),
+            label: const Text('加入'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ChatComposer extends StatelessWidget {
   const _ChatComposer({
     required this.controller,
@@ -2265,6 +2360,7 @@ class _ChatComposer extends StatelessWidget {
     required this.onToggleEmoji,
     required this.onToggleTools,
     required this.onClosePanel,
+    required this.onStartGroupCall,
   });
 
   final AppController controller;
@@ -2279,6 +2375,8 @@ class _ChatComposer extends StatelessWidget {
   final VoidCallback onToggleEmoji;
   final VoidCallback onToggleTools;
   final VoidCallback onClosePanel;
+  final Future<void> Function(ChatConversation conversation, String media)
+  onStartGroupCall;
 
   @override
   Widget build(BuildContext context) {
@@ -2678,11 +2776,44 @@ class _ChatComposer extends StatelessWidget {
     if (_chatCallOpening) {
       return;
     }
+    final groupConversation = conversation?.isGroup == true
+        ? conversation
+        : null;
+    if (groupConversation != null) {
+      if (groupConversation.isDissolved) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('群聊已解散，无法发起群通话。')));
+        return;
+      }
+      if (!controller.canStartCall()) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('当前已有通话，请先结束后再发起新的通话。')));
+        return;
+      }
+      _chatCallOpening = true;
+      try {
+        final media = await showModalBottomSheet<String>(
+          context: context,
+          backgroundColor: Colors.transparent,
+          builder: (context) =>
+              _GroupChatCallOptionSheet(title: groupConversation.displayTitle),
+        );
+        if (!context.mounted || media == null || media.isEmpty) {
+          return;
+        }
+        await onStartGroupCall(groupConversation, media);
+      } finally {
+        _chatCallOpening = false;
+      }
+      return;
+    }
     final directFriend = friend;
-    if (directFriend == null || conversation?.isGroup == true) {
+    if (directFriend == null) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('当前仅支持单聊发起通话。')));
+      ).showSnackBar(const SnackBar(content: Text('当前会话无法发起通话。')));
       return;
     }
     if (!controller.canStartCall()) {
@@ -2893,6 +3024,69 @@ class _ChatCallOptionSheet extends StatelessWidget {
   }
 }
 
+class _GroupChatCallOptionSheet extends StatelessWidget {
+  const _GroupChatCallOptionSheet({required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: context.sx.card,
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: context.sx.border),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(22, 22, 22, 10),
+                child: Row(
+                  children: [
+                    const Icon(Icons.groups_2_outlined),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        title.isEmpty ? '群通话' : title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w900),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Divider(height: 1, color: context.sx.border),
+              _CallSheetAction(
+                icon: Icons.videocam_rounded,
+                label: '群视频通话',
+                onTap: () => Navigator.of(context).pop('video'),
+              ),
+              Divider(height: 1, color: context.sx.border),
+              _CallSheetAction(
+                icon: Icons.call_rounded,
+                label: '群语音通话',
+                onTap: () => Navigator.of(context).pop('audio'),
+              ),
+              Divider(height: 8, thickness: 8, color: context.sx.subtle),
+              _CallSheetAction(
+                label: '取消',
+                center: true,
+                onTap: () => Navigator.of(context).pop(),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _CallSheetAction extends StatelessWidget {
   const _CallSheetAction({
     required this.label,
@@ -2929,6 +3123,1030 @@ class _CallSheetAction extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GroupChatCallPage extends StatefulWidget {
+  const _GroupChatCallPage({
+    required this.controller,
+    required this.conversation,
+    required this.initialVideo,
+    this.incomingSignal,
+  });
+
+  final AppController controller;
+  final ChatConversation conversation;
+  final bool initialVideo;
+  final GroupCallSignal? incomingSignal;
+
+  @override
+  State<_GroupChatCallPage> createState() => _GroupChatCallPageState();
+}
+
+class _GroupChatCallPageState extends State<_GroupChatCallPage>
+    with WidgetsBindingObserver {
+  lk.Room? _room;
+  lk.EventsListener<lk.RoomEvent>? _roomListener;
+  late final String _callId;
+  late final String _media;
+  bool _microphoneOn = true;
+  bool _speakerOn = true;
+  bool _cameraOn = false;
+  bool _joining = false;
+  bool _connected = false;
+  bool _ended = false;
+  bool _canRetry = false;
+  String? _mediaE2eeKey;
+  DateTime? _connectedAt;
+  Timer? _timer;
+  final ValueNotifier<String> _durationText = ValueNotifier<String>('');
+  String _notice = '正在准备群通话...';
+
+  bool get _videoCall => _media == 'video';
+  bool get _isJoiningExisting => widget.incomingSignal != null;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _callId =
+        widget.incomingSignal?.callId ??
+        DateTime.now().microsecondsSinceEpoch.toString();
+    _media = widget.initialVideo ? 'video' : 'audio';
+    _cameraOn = _videoCall;
+    _mediaE2eeKey = _isJoiningExisting
+        ? _extractGroupMediaE2eeKey(widget.incomingSignal?.payload ?? const {})
+        : _generateGroupMediaE2eeKey();
+    if (!_reserveCall()) {
+      _ended = true;
+      _notice = '当前已有通话，请先结束后再重试。';
+      unawaited(_closeAfterDelay());
+      return;
+    }
+    unawaited(_enableCallWakelock());
+    unawaited(_start());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _durationText.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    unawaited(_disableCallWakelock());
+    unawaited(_endCall(sendSignal: true));
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed ||
+        _ended ||
+        _connected ||
+        _joining) {
+      return;
+    }
+    unawaited(_joinRoom('app-resumed'));
+  }
+
+  bool _reserveCall() {
+    if (_isJoiningExisting) {
+      return widget.controller.reserveGroupCallJoin(
+        conversation: widget.conversation,
+        callId: _callId,
+        media: _media,
+      );
+    }
+    return widget.controller.reserveOutgoingGroupCall(
+      conversation: widget.conversation,
+      callId: _callId,
+      media: _media,
+    );
+  }
+
+  Future<void> _start() async {
+    final realtimeConfig = await widget.controller
+        .refreshRealtimeConfigForCall();
+    if (realtimeConfig?.rtc.liveKitReady != true) {
+      widget.controller.markCallPhase(
+        callId: _callId,
+        phase: SecureXCallPhase.failed,
+      );
+      await widget.controller.recordGroupCallEvent(
+        conversation: widget.conversation,
+        callId: _callId,
+        media: _media,
+        phase: 'failed',
+        reason: 'livekit-not-ready',
+      );
+      _setNotice('音视频服务暂未配置，请先检查服务器 LiveKit 配置。');
+      return;
+    }
+    if (!_isJoiningExisting) {
+      await widget.controller.sendGroupCallSignal(
+        conversation: widget.conversation,
+        callId: _callId,
+        action: 'invite',
+        media: _media,
+        payload: _groupInvitePayload(),
+      );
+    }
+    await _joinRoom(_isJoiningExisting ? 'join-existing' : 'creator-start');
+  }
+
+  Future<void> _joinRoom(String reason) async {
+    if (_ended || _joining || _connected) {
+      return;
+    }
+    setState(() {
+      _joining = true;
+      _canRetry = false;
+      _notice = '正在获取群通话凭证...';
+    });
+    widget.controller.markCallPhase(
+      callId: _callId,
+      phase: SecureXCallPhase.joining,
+    );
+    await widget.controller.recordGroupCallEvent(
+      conversation: widget.conversation,
+      callId: _callId,
+      media: _media,
+      phase: 'joining',
+      reason: reason,
+    );
+    try {
+      final credential = await widget.controller
+          .createGroupLiveKitCallToken(
+            conversation: widget.conversation,
+            callId: _callId,
+            media: _media,
+          )
+          .timeout(const Duration(seconds: 10));
+      if (_ended) {
+        return;
+      }
+      if (credential == null || credential.url.isEmpty) {
+        setState(() {
+          _joining = false;
+          _canRetry = true;
+          _notice = '群通话服务暂不可用。';
+        });
+        return;
+      }
+      final roomOptions = await _createRoomOptions();
+      final room = lk.Room(roomOptions: roomOptions);
+      final listener = room.createListener()
+        ..on<lk.RoomConnectedEvent>((_) {
+          if (!mounted || _ended || room != _room) {
+            return;
+          }
+          final now = DateTime.now();
+          setState(() {
+            _connected = true;
+            _joining = false;
+            _canRetry = false;
+            _connectedAt ??= now;
+            _notice = '群通话中';
+          });
+          _startTimer();
+          widget.controller.markCallPhase(
+            callId: _callId,
+            phase: SecureXCallPhase.connected,
+            connectedAt: _connectedAt,
+          );
+          unawaited(
+            widget.controller.recordGroupCallEvent(
+              conversation: widget.conversation,
+              callId: _callId,
+              media: _media,
+              phase: 'connected',
+              reason: 'livekit-connected',
+            ),
+          );
+        })
+        ..on<lk.RoomReconnectingEvent>((_) {
+          if (!mounted || _ended || room != _room) {
+            return;
+          }
+          setState(() => _notice = '群通话网络不稳定，正在重连...');
+          widget.controller.markCallPhase(
+            callId: _callId,
+            phase: SecureXCallPhase.reconnecting,
+          );
+        })
+        ..on<lk.RoomReconnectedEvent>((_) {
+          if (!mounted || _ended || room != _room) {
+            return;
+          }
+          setState(() => _notice = '群通话中');
+          widget.controller.markCallPhase(
+            callId: _callId,
+            phase: SecureXCallPhase.connected,
+          );
+        })
+        ..on<lk.RoomDisconnectedEvent>((event) {
+          if (!mounted || _ended || room != _room) {
+            return;
+          }
+          setState(() {
+            _connected = false;
+            _joining = false;
+            _canRetry = true;
+            _notice = _disconnectReasonText(event.reason);
+          });
+        })
+        ..on<lk.ParticipantConnectedEvent>((_) => _refresh())
+        ..on<lk.ParticipantDisconnectedEvent>((_) => _refresh())
+        ..on<lk.TrackSubscribedEvent>((_) => _refresh())
+        ..on<lk.TrackUnsubscribedEvent>((_) => _refresh())
+        ..on<lk.TrackMutedEvent>((_) => _refresh())
+        ..on<lk.TrackUnmutedEvent>((_) => _refresh());
+      _room = room;
+      _roomListener = listener;
+      setState(() => _notice = '正在进入群通话房间...');
+      await room
+          .connect(
+            credential.url,
+            credential.token,
+            connectOptions: _liveKitConnectOptions(credential.turnMode),
+          )
+          .timeout(const Duration(seconds: 18));
+      await _enableLocalMedia(room);
+      await widget.controller.sendGroupCallSignal(
+        conversation: widget.conversation,
+        callId: _callId,
+        action: 'join',
+        media: _media,
+        payload: const {'provider': 'livekit'},
+      );
+    } on TimeoutException catch (error) {
+      appLog('LiveKit 群通话接入超时', error);
+      await _disconnectRoom();
+      if (!mounted || _ended) {
+        return;
+      }
+      setState(() {
+        _joining = false;
+        _canRetry = true;
+        _notice = '群通话接入超时，请检查网络或音视频服务。';
+      });
+      widget.controller.markCallPhase(
+        callId: _callId,
+        phase: SecureXCallPhase.failed,
+      );
+    } catch (error) {
+      appLog('LiveKit 群通话接入失败', error);
+      await _disconnectRoom();
+      if (!mounted || _ended) {
+        return;
+      }
+      setState(() {
+        _joining = false;
+        _canRetry = true;
+        _notice = '进入群通话失败，请检查网络、音视频服务或设备权限。';
+      });
+      widget.controller.markCallPhase(
+        callId: _callId,
+        phase: SecureXCallPhase.failed,
+      );
+    }
+  }
+
+  Future<lk.RoomOptions> _createRoomOptions() async {
+    if (_mediaE2eeKey == null || _mediaE2eeKey!.isEmpty) {
+      return const lk.RoomOptions(adaptiveStream: false);
+    }
+    final keyProvider = await lk.BaseKeyProvider.create();
+    await keyProvider.setSharedKey(_mediaE2eeKey!);
+    return lk.RoomOptions(
+      adaptiveStream: false,
+      encryption: lk.E2EEOptions(keyProvider: keyProvider),
+    );
+  }
+
+  Future<void> _enableLocalMedia(lk.Room room) async {
+    try {
+      await room.setSpeakerOn(_speakerOn).timeout(const Duration(seconds: 3));
+      if (_speakerOn) {
+        await room.startAudio().timeout(const Duration(seconds: 3));
+      }
+    } catch (error) {
+      appLog('设置群通话音频输出失败', error);
+    }
+    try {
+      await room.localParticipant
+          ?.setMicrophoneEnabled(_microphoneOn)
+          .timeout(const Duration(seconds: 5));
+    } catch (error) {
+      appLog('开启群通话麦克风失败', error);
+      _setNotice('麦克风开启失败，请检查权限。');
+    }
+    if (!_videoCall) {
+      return;
+    }
+    try {
+      await room.localParticipant
+          ?.setCameraEnabled(_cameraOn)
+          .timeout(const Duration(seconds: 6));
+    } catch (error) {
+      appLog('开启群通话摄像头失败', error);
+      _setNotice('摄像头开启失败，请检查权限。');
+    }
+  }
+
+  Map<String, dynamic> _groupInvitePayload() {
+    return {
+      'provider': 'livekit',
+      if (_mediaE2eeKey != null) ...{
+        'mediaE2ee': 'securex-livekit-e2ee-v1',
+        'mediaE2eeKey': _mediaE2eeKey,
+      },
+    };
+  }
+
+  String _generateGroupMediaE2eeKey() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(32, (_) => random.nextInt(256));
+    return base64UrlEncode(bytes);
+  }
+
+  String? _extractGroupMediaE2eeKey(Map<String, dynamic> payload) {
+    final key = payload['mediaE2eeKey'];
+    if (key is! String || key.trim().isEmpty) {
+      return null;
+    }
+    return key.trim();
+  }
+
+  lk.ConnectOptions _liveKitConnectOptions(String turnMode) {
+    final relay = turnMode.trim().toLowerCase() == 'turn_tls_443';
+    return lk.ConnectOptions(
+      autoSubscribe: true,
+      rtcConfiguration: lk.RTCConfiguration(
+        iceTransportPolicy: relay
+            ? lk.RTCIceTransportPolicy.relay
+            : lk.RTCIceTransportPolicy.all,
+      ),
+    );
+  }
+
+  String _disconnectReasonText(lk.DisconnectReason? reason) {
+    return switch (reason) {
+      lk.DisconnectReason.duplicateIdentity => '群通话已断开：同一账号已有设备进入该通话。',
+      lk.DisconnectReason.joinFailure => '群通话连接失败：进入音视频房间失败。',
+      lk.DisconnectReason.signalingConnectionFailure => '群通话信令网络异常。',
+      lk.DisconnectReason.reconnectAttemptsExceeded => '群通话网络重连失败。',
+      lk.DisconnectReason.serverShutdown => '音视频服务重启或关闭。',
+      _ => '群通话已断开。',
+    };
+  }
+
+  Future<void> _endCall({required bool sendSignal}) async {
+    if (_ended) {
+      return;
+    }
+    _ended = true;
+    if (sendSignal) {
+      await widget.controller.sendGroupCallSignal(
+        conversation: widget.conversation,
+        callId: _callId,
+        action: 'leave',
+        media: _media,
+      );
+    }
+    widget.controller.markCallPhase(
+      callId: _callId,
+      phase: SecureXCallPhase.ended,
+    );
+    widget.controller.clearActiveCall(_callId);
+    await _disconnectRoom();
+    await widget.controller.recordGroupCallEvent(
+      conversation: widget.conversation,
+      callId: _callId,
+      media: _media,
+      phase: 'ended',
+      reason: sendSignal ? 'local-left' : 'local-close',
+    );
+  }
+
+  Future<void> _disconnectRoom() async {
+    final listener = _roomListener;
+    _roomListener = null;
+    try {
+      await listener?.dispose();
+    } catch (error) {
+      appLog('释放群通话监听器失败', error);
+    }
+    final room = _room;
+    _room = null;
+    if (room == null) {
+      return;
+    }
+    try {
+      await room.disconnect();
+    } catch (error) {
+      appLog('断开群通话房间失败', error);
+    }
+    try {
+      await room.dispose();
+    } catch (error) {
+      appLog('释放群通话房间失败', error);
+    }
+  }
+
+  Future<void> _enableCallWakelock() async {
+    try {
+      await WakelockPlus.enable();
+    } catch (error) {
+      appLog('启用群通话保持亮屏失败', error);
+    }
+  }
+
+  Future<void> _disableCallWakelock() async {
+    if (widget.controller.hasActiveCall) {
+      return;
+    }
+    try {
+      await WakelockPlus.disable();
+    } catch (error) {
+      appLog('关闭群通话保持亮屏失败', error);
+    }
+  }
+
+  Future<void> _closeAfterDelay() async {
+    await Future<void>.delayed(const Duration(milliseconds: 650));
+    if (mounted) {
+      Navigator.of(context).maybePop();
+    }
+  }
+
+  void _setNotice(String value) {
+    if (mounted) {
+      setState(() => _notice = value);
+    }
+  }
+
+  void _refresh() {
+    if (mounted && !_ended) {
+      setState(() {});
+    }
+  }
+
+  void _startTimer() {
+    _durationText.value = _duration();
+    _timer ??= Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted && _connectedAt != null && !_ended) {
+        _durationText.value = _duration();
+      }
+    });
+  }
+
+  String _duration() {
+    final startedAt = _connectedAt;
+    if (startedAt == null) {
+      return '';
+    }
+    final elapsed = DateTime.now().difference(startedAt);
+    final hours = elapsed.inHours;
+    final minutes = elapsed.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = elapsed.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
+  }
+
+  Future<void> _toggleMicrophone() async {
+    final enabled = !_microphoneOn;
+    setState(() => _microphoneOn = enabled);
+    try {
+      await _room?.localParticipant?.setMicrophoneEnabled(enabled);
+    } catch (error) {
+      appLog('切换群通话麦克风失败', error);
+      _setNotice('麦克风切换失败。');
+    }
+  }
+
+  Future<void> _toggleSpeaker() async {
+    final enabled = !_speakerOn;
+    setState(() => _speakerOn = enabled);
+    try {
+      await _room?.setSpeakerOn(enabled);
+      if (enabled) {
+        await _room?.startAudio();
+      }
+    } catch (error) {
+      appLog('切换群通话扬声器失败', error);
+      _setNotice('扬声器切换失败。');
+    }
+  }
+
+  Future<void> _toggleCamera() async {
+    final enabled = !_cameraOn;
+    setState(() => _cameraOn = enabled);
+    try {
+      await _room?.localParticipant?.setCameraEnabled(enabled);
+    } catch (error) {
+      appLog('切换群通话摄像头失败', error);
+      _setNotice('摄像头切换失败。');
+    }
+  }
+
+  Future<void> _switchCamera() async {
+    final room = _room;
+    if (room == null) {
+      return;
+    }
+    try {
+      final devices = await lk.Hardware.instance.enumerateDevices();
+      final cameras = devices
+          .where((device) => device.kind == 'videoinput')
+          .toList();
+      if (cameras.length < 2) {
+        _setNotice('当前设备没有可切换的摄像头。');
+        return;
+      }
+      final currentDeviceId = room.selectedVideoInputDeviceId;
+      final nextCamera = cameras.firstWhere(
+        (device) => device.deviceId != currentDeviceId,
+        orElse: () => cameras.first,
+      );
+      await room.setVideoInputDevice(nextCamera);
+      _setNotice('摄像头已切换。');
+    } catch (error) {
+      appLog('切换群通话摄像头失败', error);
+      _setNotice('摄像头切换失败。');
+    }
+  }
+
+  List<_GroupVideoTileData> _videoTiles() {
+    final room = _room;
+    if (room == null) {
+      return const [];
+    }
+    final tiles = <_GroupVideoTileData>[];
+    final localTrack = _firstVideoTrack(room.localParticipant);
+    tiles.add(_GroupVideoTileData(label: '我', track: localTrack, local: true));
+    for (final participant in room.remoteParticipants.values) {
+      tiles.add(
+        _GroupVideoTileData(
+          label: _participantLabel(participant.identity),
+          track: _firstVideoTrack(participant),
+        ),
+      );
+    }
+    return tiles;
+  }
+
+  lk.VideoTrack? _firstVideoTrack(dynamic participant) {
+    if (participant == null) {
+      return null;
+    }
+    for (final publication in participant.videoTrackPublications) {
+      final track = publication.track;
+      if (track != null && !publication.muted) {
+        return track as lk.VideoTrack;
+      }
+    }
+    return null;
+  }
+
+  String _participantLabel(String identity) {
+    final normalized = identity.trim();
+    if (normalized.isEmpty) {
+      return '成员';
+    }
+    final userId = normalized.split('_').first;
+    for (final member in widget.conversation.members) {
+      if (member.id == userId) {
+        return member.displayName;
+      }
+    }
+    return normalized.length <= 8
+        ? normalized
+        : '${normalized.substring(0, 4)}...${normalized.substring(normalized.length - 4)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tiles = _videoTiles();
+    final participantCount = (_room?.remoteParticipants.length ?? 0) + 1;
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final dense = constraints.maxHeight < 620;
+            final controlMaxHeight =
+                (constraints.maxHeight * (dense ? 0.58 : 0.42))
+                    .clamp(156.0, 280.0)
+                    .toDouble();
+            return Stack(
+              children: [
+                Column(
+                  children: [
+                    _GroupCallHeader(
+                      title: widget.conversation.displayTitle,
+                      participantCount: participantCount,
+                      durationText: _durationText,
+                      onCollapse: () => Navigator.of(context).maybePop(),
+                    ),
+                    Expanded(
+                      child: _videoCall
+                          ? _GroupVideoGrid(tiles: tiles)
+                          : const _GroupAudioStage(),
+                    ),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(maxHeight: controlMaxHeight),
+                      child: _GroupCallControlPanel(
+                        notice: _notice,
+                        canRetry: _canRetry,
+                        videoCall: _videoCall,
+                        microphoneOn: _microphoneOn,
+                        speakerOn: _speakerOn,
+                        cameraOn: _cameraOn,
+                        dense: dense,
+                        onRetry: () => unawaited(_joinRoom('user-retry')),
+                        onToggleMicrophone: () =>
+                            unawaited(_toggleMicrophone()),
+                        onToggleSpeaker: () => unawaited(_toggleSpeaker()),
+                        onToggleCamera: () => unawaited(_toggleCamera()),
+                        onSwitchCamera: () => unawaited(_switchCamera()),
+                        onHangup: () async {
+                          await _endCall(sendSignal: true);
+                          if (context.mounted) {
+                            Navigator.of(context).pop();
+                          }
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                if (_joining)
+                  Positioned.fill(
+                    child: ColoredBox(
+                      color: Colors.black.withAlpha(90),
+                      child: const Center(child: CircularProgressIndicator()),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _GroupCallHeader extends StatelessWidget {
+  const _GroupCallHeader({
+    required this.title,
+    required this.participantCount,
+    required this.durationText,
+    required this.onCollapse,
+  });
+
+  final String title;
+  final int participantCount;
+  final ValueNotifier<String> durationText;
+  final VoidCallback onCollapse;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
+      decoration: BoxDecoration(
+        color: Colors.black,
+        border: Border(bottom: BorderSide(color: Colors.white.withAlpha(18))),
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: '返回聊天',
+            color: Colors.white,
+            onPressed: onCollapse,
+            icon: const Icon(Icons.keyboard_arrow_down_rounded),
+          ),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  title.isEmpty ? '群通话' : title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                ValueListenableBuilder<String>(
+                  valueListenable: durationText,
+                  builder: (context, value, _) {
+                    return Text(
+                      value.isEmpty
+                          ? '$participantCount 人在房间'
+                          : '$participantCount 人 · $value',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: Colors.white.withAlpha(190),
+                        fontWeight: FontWeight.w700,
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 48),
+        ],
+      ),
+    );
+  }
+}
+
+class _GroupCallControlPanel extends StatelessWidget {
+  const _GroupCallControlPanel({
+    required this.notice,
+    required this.canRetry,
+    required this.videoCall,
+    required this.microphoneOn,
+    required this.speakerOn,
+    required this.cameraOn,
+    required this.dense,
+    required this.onRetry,
+    required this.onToggleMicrophone,
+    required this.onToggleSpeaker,
+    required this.onToggleCamera,
+    required this.onSwitchCamera,
+    required this.onHangup,
+  });
+
+  final String notice;
+  final bool canRetry;
+  final bool videoCall;
+  final bool microphoneOn;
+  final bool speakerOn;
+  final bool cameraOn;
+  final bool dense;
+  final VoidCallback onRetry;
+  final VoidCallback onToggleMicrophone;
+  final VoidCallback onToggleSpeaker;
+  final VoidCallback onToggleCamera;
+  final VoidCallback onSwitchCamera;
+  final VoidCallback onHangup;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = dense || constraints.maxWidth < 440;
+        return Container(
+          width: double.infinity,
+          padding: EdgeInsets.fromLTRB(16, 14, 16, compact ? 16 : 22),
+          decoration: BoxDecoration(
+            color: Colors.black,
+            border: Border(top: BorderSide(color: Colors.white.withAlpha(18))),
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 560),
+                  child: Text(
+                    notice,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      color: Colors.white.withAlpha(210),
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                if (canRetry) ...[
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
+                    onPressed: onRetry,
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('重新接入'),
+                  ),
+                ],
+                SizedBox(height: compact ? 14 : 18),
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  runAlignment: WrapAlignment.center,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: compact ? 8 : 14,
+                  runSpacing: compact ? 12 : 16,
+                  children: [
+                    _CallControlButton(
+                      icon: microphoneOn
+                          ? Icons.mic_rounded
+                          : Icons.mic_off_rounded,
+                      label: microphoneOn ? '麦克风已开' : '麦克风已关',
+                      compact: compact,
+                      onTap: onToggleMicrophone,
+                    ),
+                    _CallControlButton(
+                      icon: speakerOn
+                          ? Icons.volume_up_rounded
+                          : Icons.volume_off_rounded,
+                      label: speakerOn ? '扬声器已开' : '扬声器已关',
+                      compact: compact,
+                      onTap: onToggleSpeaker,
+                    ),
+                    _HangupButton(onTap: onHangup),
+                    if (videoCall)
+                      _CallControlButton(
+                        icon: cameraOn
+                            ? Icons.videocam_rounded
+                            : Icons.videocam_off_rounded,
+                        label: cameraOn ? '摄像头已开' : '摄像头已关',
+                        compact: compact,
+                        onTap: onToggleCamera,
+                      ),
+                    if (videoCall)
+                      _CallControlButton(
+                        icon: Icons.cameraswitch_rounded,
+                        label: '切换摄像头',
+                        compact: true,
+                        onTap: onSwitchCamera,
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _GroupVideoTileData {
+  const _GroupVideoTileData({
+    required this.label,
+    this.track,
+    this.local = false,
+  });
+
+  final String label;
+  final lk.VideoTrack? track;
+  final bool local;
+}
+
+class _GroupVideoGrid extends StatelessWidget {
+  const _GroupVideoGrid({required this.tiles});
+
+  final List<_GroupVideoTileData> tiles;
+
+  @override
+  Widget build(BuildContext context) {
+    final displayTiles = tiles.isEmpty
+        ? const [_GroupVideoTileData(label: '我')]
+        : tiles;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = _groupVideoColumns(
+          displayTiles.length,
+          constraints.maxWidth,
+          constraints.maxHeight,
+        );
+        final rows = (displayTiles.length / columns).ceil();
+        final availableWidth = (constraints.maxWidth - 28).clamp(
+          1.0,
+          double.infinity,
+        );
+        final availableHeight = (constraints.maxHeight - 28).clamp(
+          1.0,
+          double.infinity,
+        );
+        final tileWidth = (availableWidth - (columns - 1) * 10) / columns;
+        final tileHeight = (availableHeight - (rows - 1) * 10) / rows;
+        final aspectRatio = (tileWidth / tileHeight).clamp(0.72, 1.65);
+        return GridView.builder(
+          padding: const EdgeInsets.all(14),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            childAspectRatio: aspectRatio.toDouble(),
+          ),
+          itemCount: displayTiles.length,
+          itemBuilder: (context, index) {
+            final tile = displayTiles[index];
+            return ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: DecoratedBox(
+                decoration: BoxDecoration(color: Colors.blueGrey.shade900),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (tile.track != null)
+                      lk.VideoTrackRenderer(
+                        tile.track!,
+                        fit: lk.VideoViewFit.cover,
+                        mirrorMode: tile.local
+                            ? lk.VideoViewMirrorMode.mirror
+                            : lk.VideoViewMirrorMode.off,
+                      )
+                    else
+                      Center(
+                        child: Icon(
+                          Icons.account_circle_rounded,
+                          color: Colors.white.withAlpha(170),
+                          size: 78,
+                        ),
+                      ),
+                    Positioned(
+                      left: 10,
+                      right: 10,
+                      bottom: 10,
+                      child: Text(
+                        tile.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  int _groupVideoColumns(int count, double width, double height) {
+    if (count <= 1) {
+      return 1;
+    }
+    if (count == 2) {
+      return width >= height ? 2 : 1;
+    }
+    if (width >= 760 && count > 4) {
+      return 3;
+    }
+    return 2;
+  }
+}
+
+class _GroupAudioStage extends StatelessWidget {
+  const _GroupAudioStage();
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: RadialGradient(
+          center: const Alignment(0, -0.35),
+          radius: 1.1,
+          colors: [Colors.blueGrey.shade900.withAlpha(220), Colors.black],
+        ),
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 360),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 132,
+                height: 132,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withAlpha(18),
+                  border: Border.all(color: Colors.white.withAlpha(56)),
+                ),
+                child: const Icon(
+                  Icons.groups_2_rounded,
+                  color: Colors.white,
+                  size: 74,
+                ),
+              ),
+              const SizedBox(height: 22),
+              Text(
+                '群语音通话',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

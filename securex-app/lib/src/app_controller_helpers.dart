@@ -160,6 +160,12 @@ extension AppControllerInternalHelpers on AppController {
           password: data['password'] as String? ?? '',
           url: data['url'] as String? ?? '',
           note: data['note'] as String? ?? '',
+          totpSecret: data['totpSecret'] as String? ?? '',
+          totpIssuer: data['totpIssuer'] as String? ?? '',
+          totpAccount: data['totpAccount'] as String? ?? '',
+          totpAlgorithm: data['totpAlgorithm'] as String? ?? 'SHA1',
+          totpDigits: data['totpDigits'] as int? ?? 6,
+          totpPeriod: data['totpPeriod'] as int? ?? 30,
           version: item.version,
           folderId: item.folderId,
         );

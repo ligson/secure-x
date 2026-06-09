@@ -166,6 +166,22 @@ type callEventRequest struct {
 	DeviceID   string `json:"deviceId"`
 }
 
+type groupLiveKitCallTokenRequest struct {
+	GroupID  string `json:"groupId" binding:"required"`
+	CallID   string `json:"callId" binding:"required"`
+	Media    string `json:"media"`
+	DeviceID string `json:"deviceId"`
+}
+
+type groupCallEventRequest struct {
+	GroupID  string `json:"groupId" binding:"required"`
+	CallID   string `json:"callId" binding:"required"`
+	Media    string `json:"media"`
+	Phase    string `json:"phase" binding:"required"`
+	Reason   string `json:"reason"`
+	DeviceID string `json:"deviceId"`
+}
+
 func bindErrorMessage(err error) string {
 	var validationErrors validator.ValidationErrors
 	if errors.As(err, &validationErrors) {

@@ -235,6 +235,12 @@ class DecryptedLoginItem {
     required this.url,
     required this.note,
     required this.version,
+    this.totpSecret = '',
+    this.totpIssuer = '',
+    this.totpAccount = '',
+    this.totpAlgorithm = 'SHA1',
+    this.totpDigits = 6,
+    this.totpPeriod = 30,
     this.folderId,
   });
 
@@ -245,7 +251,44 @@ class DecryptedLoginItem {
   final String url;
   final String note;
   final int version;
+  final String totpSecret;
+  final String totpIssuer;
+  final String totpAccount;
+  final String totpAlgorithm;
+  final int totpDigits;
+  final int totpPeriod;
   final String? folderId;
+
+  bool get hasTotp => totpSecret.trim().isNotEmpty;
+
+  TotpConfig get totp => TotpConfig(
+    secret: totpSecret,
+    issuer: totpIssuer,
+    account: totpAccount,
+    algorithm: totpAlgorithm,
+    digits: totpDigits,
+    period: totpPeriod,
+  );
+}
+
+class TotpConfig {
+  const TotpConfig({
+    required this.secret,
+    this.issuer = '',
+    this.account = '',
+    this.algorithm = 'SHA1',
+    this.digits = 6,
+    this.period = 30,
+  });
+
+  final String secret;
+  final String issuer;
+  final String account;
+  final String algorithm;
+  final int digits;
+  final int period;
+
+  bool get isEmpty => secret.trim().isEmpty;
 }
 
 class DecryptedFileRecord {

@@ -129,6 +129,121 @@ func (h *Handler) recordCallEvent(c *gin.Context) {
 	RespondSuccess(c, http.StatusOK, "通话事件已记录", gin.H{})
 }
 
+func (h *Handler) createGroupLiveKitCallToken(c *gin.Context) {
+	if !h.liveKitEnabled() {
+		RespondFailure(c, http.StatusServiceUnavailable, "音视频通话服务暂未配置")
+		return
+	}
+
+	var req groupLiveKitCallTokenRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondFailure(c, http.StatusBadRequest, bindErrorMessage(err))
+		return
+	}
+
+	userID := middleware.CurrentUserID(c)
+	groupID := strings.TrimSpace(req.GroupID)
+	room, _, err := h.groupRoomWithMemberIDs(groupID, userID)
+	if err != nil {
+		log.Printf(
+			"LiveKit 群通话凭证拒绝：user=%s, group=%s, reason=无群权限",
+			diagnosticID(userID),
+			diagnosticID(groupID),
+		)
+		RespondFailure(c, http.StatusForbidden, "无权加入该群通话")
+		return
+	}
+	if h.groupRoomDissolved(room) {
+		log.Printf(
+			"LiveKit 群通话凭证拒绝：user=%s, group=%s, reason=群已解散",
+			diagnosticID(userID),
+			diagnosticID(groupID),
+		)
+		RespondFailure(c, http.StatusForbidden, "群聊已解散，无法加入通话")
+		return
+	}
+
+	identity, err := h.liveKitParticipantIdentity(userID, req.DeviceID)
+	if err != nil {
+		log.Printf(
+			"LiveKit 群通话凭证拒绝：user=%s, group=%s, device=%s, reason=设备校验失败",
+			diagnosticID(userID),
+			diagnosticID(groupID),
+			diagnosticID(req.DeviceID),
+		)
+		RespondFailure(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	roomName := liveKitGroupRoomName(groupID, req.CallID)
+	token, err := h.issueLiveKitToken(identity, roomName)
+	if err != nil {
+		log.Printf(
+			"LiveKit 群通话凭证生成失败：user=%s, group=%s, call=%s, media=%s, err=%v",
+			diagnosticID(userID),
+			diagnosticID(groupID),
+			diagnosticID(req.CallID),
+			normalizeCallMedia(req.Media),
+			err,
+		)
+		RespondFailure(c, http.StatusInternalServerError, "生成群通话凭证失败")
+		return
+	}
+	log.Printf(
+		"LiveKit 群通话凭证已签发：user=%s, group=%s, device=%s, call=%s, media=%s, identity=%s",
+		diagnosticID(userID),
+		diagnosticID(groupID),
+		diagnosticID(req.DeviceID),
+		diagnosticID(req.CallID),
+		normalizeCallMedia(req.Media),
+		diagnosticID(identity),
+	)
+
+	RespondSuccess(c, http.StatusOK, "群通话凭证已生成", gin.H{
+		"livekit": gin.H{
+			"url":       strings.TrimSpace(h.realtime.LiveKit.URL),
+			"token":     token,
+			"room":      roomName,
+			"identity":  identity,
+			"turnMode":  strings.TrimSpace(h.realtime.LiveKit.TurnMode),
+			"media":     normalizeCallMedia(req.Media),
+			"expiresIn": 2 * 60 * 60,
+		},
+	})
+}
+
+func (h *Handler) recordGroupCallEvent(c *gin.Context) {
+	var req groupCallEventRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		RespondFailure(c, http.StatusBadRequest, bindErrorMessage(err))
+		return
+	}
+
+	userID := middleware.CurrentUserID(c)
+	groupID := strings.TrimSpace(req.GroupID)
+	room, _, err := h.groupRoomWithMemberIDs(groupID, userID)
+	if err != nil {
+		RespondFailure(c, http.StatusForbidden, "无权记录该群通话事件")
+		return
+	}
+	if h.groupRoomDissolved(room) {
+		RespondFailure(c, http.StatusForbidden, "群聊已解散，无法记录通话事件")
+		return
+	}
+
+	log.Printf(
+		"LiveKit 群通话事件：user=%s, group=%s, device=%s, call=%s, media=%s, phase=%s, reason=%s",
+		diagnosticID(userID),
+		diagnosticID(groupID),
+		diagnosticID(req.DeviceID),
+		diagnosticID(req.CallID),
+		normalizeCallMedia(req.Media),
+		sanitizeCallEventField(req.Phase, 32),
+		sanitizeCallEventField(req.Reason, 96),
+	)
+	RespondSuccess(c, http.StatusOK, "群通话事件已记录", gin.H{})
+}
+
 func (h *Handler) liveKitParticipantIdentity(userID string, deviceID string) (string, error) {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
@@ -178,6 +293,18 @@ func liveKitRoomName(userID string, peerUserID string, callID string) string {
 		call = "call"
 	}
 	return "securex-" + parts[0] + "-" + parts[1] + "-" + call
+}
+
+func liveKitGroupRoomName(groupID string, callID string) string {
+	group := liveKitRoomNamePattern.ReplaceAllString(strings.TrimSpace(groupID), "-")
+	if group == "" {
+		group = "group"
+	}
+	call := liveKitRoomNamePattern.ReplaceAllString(strings.TrimSpace(callID), "-")
+	if call == "" {
+		call = "call"
+	}
+	return "securex-group-" + group + "-" + call
 }
 
 func normalizeCallMedia(media string) string {

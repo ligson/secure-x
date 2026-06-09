@@ -16,6 +16,7 @@ class _LoginItemDraft {
     required this.password,
     required this.url,
     required this.note,
+    required this.totp,
     required this.folderId,
   });
 
@@ -24,6 +25,7 @@ class _LoginItemDraft {
   final String password;
   final String url;
   final String note;
+  final TotpConfig totp;
   final String folderId;
 }
 

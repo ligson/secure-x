@@ -99,6 +99,7 @@ extension AppControllerVaultActions on AppController {
     required String password,
     required String url,
     required String note,
+    TotpConfig totp = const TotpConfig(secret: ''),
     String? folderId,
   }) async {
     await upsertLoginItem(
@@ -107,6 +108,7 @@ extension AppControllerVaultActions on AppController {
       password: password,
       url: url,
       note: note,
+      totp: totp,
       folderId: folderId,
     );
   }
@@ -117,6 +119,7 @@ extension AppControllerVaultActions on AppController {
     required String password,
     required String url,
     required String note,
+    TotpConfig totp = const TotpConfig(secret: ''),
     String? folderId,
     DecryptedLoginItem? existing,
   }) async {
@@ -131,6 +134,12 @@ extension AppControllerVaultActions on AppController {
         'password': password,
         'url': url,
         'note': note,
+        'totpSecret': totp.secret,
+        'totpIssuer': totp.issuer,
+        'totpAccount': totp.account,
+        'totpAlgorithm': totp.algorithm,
+        'totpDigits': totp.digits,
+        'totpPeriod': totp.period,
       }, _vaultKey!);
       if (existing == null) {
         await _apiClient.createItem(

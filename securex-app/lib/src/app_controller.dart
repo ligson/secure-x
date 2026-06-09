@@ -76,6 +76,33 @@ class QueuedCallSignal {
   final RealtimeCallSignal signal;
 }
 
+class QueuedGroupCallSignal {
+  const QueuedGroupCallSignal({required this.sequence, required this.signal});
+
+  final int sequence;
+  final GroupCallSignal signal;
+}
+
+class GroupCallSignal {
+  const GroupCallSignal({
+    required this.senderUserId,
+    required this.groupId,
+    required this.groupName,
+    required this.callId,
+    required this.action,
+    required this.media,
+    this.payload = const {},
+  });
+
+  final String senderUserId;
+  final String groupId;
+  final String groupName;
+  final String callId;
+  final String action;
+  final String media;
+  final Map<String, dynamic> payload;
+}
+
 class ActiveCallSession {
   const ActiveCallSession({
     required this.friendId,
@@ -207,7 +234,9 @@ class AppController extends ChangeNotifier {
   List<ChatConversation> _chatConversations = [];
   RealtimeCallSignal? _lastCallSignal;
   final List<QueuedCallSignal> _callSignals = [];
+  final List<QueuedGroupCallSignal> _groupCallSignals = [];
   int _callSignalSequence = 0;
+  int _groupCallSignalSequence = 0;
   ActiveCallSession? _activeCallSession;
   ChatIdentityBundle? _chatIdentity;
   final Map<String, bool> _chatFriendOnline = {};
@@ -269,6 +298,7 @@ class AppController extends ChangeNotifier {
   Listenable get friendsListenable => _friendsRevision;
   RealtimeCallSignal? get lastCallSignal => _lastCallSignal;
   int get latestCallSignalSequence => _callSignalSequence;
+  int get latestGroupCallSignalSequence => _groupCallSignalSequence;
   ActiveCallSession? get activeCallSession => _activeCallSession;
   bool get hasActiveCall => _activeCallSession?.active == true;
 
@@ -359,6 +389,62 @@ class AppController extends ChangeNotifier {
     return true;
   }
 
+  bool reserveOutgoingGroupCall({
+    required ChatConversation conversation,
+    required String callId,
+    required String media,
+  }) {
+    final session = _activeCallSession;
+    final groupSessionId = _groupCallSessionId(conversation.id);
+    if (session != null &&
+        session.active &&
+        (session.friendId != groupSessionId || session.callId != callId)) {
+      _statusMessage = '当前已有通话，请先结束后再发起新的通话。';
+      notifyListeners();
+      return false;
+    }
+    _activeCallSession = ActiveCallSession(
+      friendId: groupSessionId,
+      callId: callId,
+      media: _normalizeCallMediaForState(media),
+      incoming: false,
+      phase: SecureXCallPhase.outgoing,
+      diagnosticId: callDiagnosticId(callId),
+      startedAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+    _markCallChanged();
+    return true;
+  }
+
+  bool reserveGroupCallJoin({
+    required ChatConversation conversation,
+    required String callId,
+    required String media,
+  }) {
+    final session = _activeCallSession;
+    final groupSessionId = _groupCallSessionId(conversation.id);
+    if (session != null &&
+        session.active &&
+        (session.friendId != groupSessionId || session.callId != callId)) {
+      _statusMessage = '当前已有通话，请先结束后再加入群通话。';
+      notifyListeners();
+      return false;
+    }
+    _activeCallSession = ActiveCallSession(
+      friendId: groupSessionId,
+      callId: callId,
+      media: _normalizeCallMediaForState(media),
+      incoming: true,
+      phase: SecureXCallPhase.joining,
+      diagnosticId: callDiagnosticId(callId),
+      startedAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+    _markCallChanged();
+    return true;
+  }
+
   IncomingCallHandling prepareIncomingCall(RealtimeCallSignal signal) {
     final session = _activeCallSession;
     if (session != null && session.active) {
@@ -437,4 +523,6 @@ class AppController extends ChangeNotifier {
   String _normalizeCallMediaForState(String media) {
     return media == 'video' ? 'video' : 'audio';
   }
+
+  String _groupCallSessionId(String groupId) => 'group:$groupId';
 }

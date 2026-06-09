@@ -27,7 +27,7 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>secure-x 需要使用麦克风录制你主动发送的聊天语音消息；语音会端到端加密后发送，服务端无法解密内容。</string>
 	<key>NSCameraUsageDescription</key>
-	<string>secure-x 需要使用摄像头发起你主动选择的视频通话；通话媒体不会以明文存储到服务端。</string>
+	<string>secure-x 需要使用摄像头发起你主动选择的视频通话，或扫描你主动导入的验证器二维码；通话媒体和验证器密钥不会以明文存储到服务端。</string>
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
