@@ -27,7 +27,7 @@
 - `securex-app-<version>-android.apk`
 - `securex-app-<version>-android.aab`
 - `securex-app-<version>-ios.ipa`，当已配置 iOS 签名密钥时生成
-- `securex-app-<version>-ios-unsigned.zip`，当未配置 iOS 签名密钥时作为构建兜底产物
+- `securex-app-<version>-ios-unsigned.ipa` 与 `securex-app-<version>-ios-unsigned.zip`，当未配置 iOS 签名密钥时作为构建兜底产物；该 IPA 不能直接安装，只能供测试者自行重签或后续补签名材料后重新发布
 
 前端各平台应用显示名统一为 `secure-x`。
 
@@ -94,9 +94,11 @@ iOS 签名还支持 GitHub Variable：
 
 - Secret `PGYER_API_KEY`
 - Secret `PGYER_BUILD_PASSWORD`：当安装方式为密码安装时必填
-- Variable `PGYER_BUILD_INSTALL_TYPE`：可选，默认 `2`，表示密码安装
+- Variable `PGYER_BUILD_INSTALL_TYPE`：可选；设为 `2` 表示密码安装，未配置时使用蒲公英默认安装方式；如果设为 `2` 但未配置 `PGYER_BUILD_PASSWORD`，上传脚本会回退为公开安装，避免自动发版被下载密码配置卡住
 
-workflow 会上传 Android APK 和签名后的 iOS IPA 到蒲公英；AAB 仍只作为 GitHub Release 资产保留。未配置 `PGYER_API_KEY` 时会跳过蒲公英上传，不影响 GitHub Release。
+workflow 会上传 Android APK 和签名后的 iOS IPA 到蒲公英；AAB 仍只作为 GitHub Release 资产保留。未配置 `PGYER_API_KEY` 时 Android 蒲公英上传会失败，避免误以为已经完成内测分发。未配置 iOS 签名材料时，workflow 只产出 unsigned iOS 构建产物，不上传蒲公英，也不阻断 Android 发版。
+
+注意：iOS unsigned IPA 不是可直接安装包。若要让普通测试者通过蒲公英扫码安装 iOS 包，仍必须配置 Apple Developer Program 的 Ad Hoc 签名材料，或配置 Apple Enterprise Program 的企业签名材料。
 
 本地把二进制签名材料转成 base64 时，建议使用：
 

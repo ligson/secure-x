@@ -81,10 +81,15 @@ def parse_json(payload: str) -> dict:
 
 def get_upload_token(api_key: str, app_path: str) -> dict:
     build_type = os.path.splitext(app_path)[1].lstrip(".").lower()
-    install_type = field("PGYER_BUILD_INSTALL_TYPE", "2")
+    install_type = field("PGYER_BUILD_INSTALL_TYPE")
     build_password = field("PGYER_BUILD_PASSWORD")
     if install_type == "2" and not build_password:
-        fail("PGYER_BUILD_PASSWORD is required when PGYER_BUILD_INSTALL_TYPE is 2.")
+        print(
+            "PGYER_BUILD_INSTALL_TYPE is 2 but PGYER_BUILD_PASSWORD is empty; "
+            "falling back to public installation.",
+            file=sys.stderr,
+        )
+        install_type = "1"
 
     fields = {
         "_api_key": api_key,

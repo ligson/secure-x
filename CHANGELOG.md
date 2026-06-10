@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.39] - 2026-06-10
+
+### Fixed
+
+- Release workflow 恢复为 Android 蒲公英分发可独立成功：蒲公英安装方式未显式配置时不再默认要求下载密码，避免 Android APK 上传因缺少 `PGYER_BUILD_PASSWORD` 失败。
+
+### Changed
+
+- iOS 在未配置 Apple 签名材料时不再阻断整体发版，改为产出 unsigned IPA/zip 作为后续本地重签或补证书后重新发布的兜底产物；签名 iOS IPA 仍会在证书与 profile 齐全时上传蒲公英。
+
 ## [v1.0.38] - 2026-06-10
 
 ### Fixed

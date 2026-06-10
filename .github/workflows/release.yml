@@ -341,7 +341,7 @@ jobs:
         working-directory: securex-app
         env:
           PGYER_API_KEY: ${{ secrets.PGYER_API_KEY }}
-          PGYER_BUILD_INSTALL_TYPE: ${{ vars.PGYER_BUILD_INSTALL_TYPE || '2' }}
+          PGYER_BUILD_INSTALL_TYPE: ${{ vars.PGYER_BUILD_INSTALL_TYPE }}
           PGYER_BUILD_PASSWORD: ${{ secrets.PGYER_BUILD_PASSWORD }}
         shell: bash
         run: |
@@ -431,8 +431,9 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${IOS_DISTRIBUTION_CERTIFICATE_BASE64:-}" ]; then
-            echo 'IOS_DISTRIBUTION_CERTIFICATE_BASE64 is required to build a signed iOS IPA for PGYER.' >&2
-            exit 1
+            echo 'IOS_DISTRIBUTION_CERTIFICATE_BASE64 is not configured; building an unsigned iOS IPA for later local re-signing.'
+            echo 'IOS_SIGNING_READY=false' >> "$GITHUB_ENV"
+            exit 0
           fi
           if [ -z "${IOS_DISTRIBUTION_CERTIFICATE_PASSWORD:-}" ] || [ -z "${IOS_PROVISIONING_PROFILE_BASE64:-}" ] || [ -z "${IOS_TEAM_ID:-}" ]; then
             echo 'iOS signing secrets are incomplete.' >&2
@@ -546,6 +547,10 @@ jobs:
             exit 1
           fi
           mkdir -p dist
+          rm -rf "dist/ios-unsigned-payload"
+          mkdir -p "dist/ios-unsigned-payload/Payload"
+          ditto "$app_path" "dist/ios-unsigned-payload/Payload/Runner.app"
+          ditto -c -k --sequesterRsrc --keepParent "dist/ios-unsigned-payload/Payload" "dist/securex-app-${version}-ios-unsigned.ipa"
           ditto -c -k --sequesterRsrc --keepParent "$app_path" "dist/securex-app-${version}-ios-unsigned.zip"
 
       - name: Upload iOS IPA to PGYER
@@ -553,7 +558,7 @@ jobs:
         working-directory: securex-app
         env:
           PGYER_API_KEY: ${{ secrets.PGYER_API_KEY }}
-          PGYER_BUILD_INSTALL_TYPE: ${{ vars.PGYER_BUILD_INSTALL_TYPE || '2' }}
+          PGYER_BUILD_INSTALL_TYPE: ${{ vars.PGYER_BUILD_INSTALL_TYPE }}
           PGYER_BUILD_PASSWORD: ${{ secrets.PGYER_BUILD_PASSWORD }}
         shell: bash
         run: |
