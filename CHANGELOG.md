@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.40] - 2026-06-10
+
+### Fixed
+
+- 修复蒲公英新版上传凭证兼容性：上传脚本现在同时支持 `getCOSToken` 返回的顶层签名字段与 `params` 嵌套签名字段，避免 Android APK 已构建完成但上传蒲公英失败。
+
 ## [v1.0.39] - 2026-06-10
 
 ### Fixed

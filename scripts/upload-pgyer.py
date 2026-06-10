@@ -114,6 +114,10 @@ def get_upload_token(api_key: str, app_path: str) -> dict:
 
 
 def upload_file(token: dict, app_path: str) -> str:
+    params = token.get("params") or {}
+    if isinstance(params, dict):
+        token = {**params, **token}
+
     required = ["endpoint", "key", "signature", "x-cos-security-token"]
     missing = [name for name in required if not token.get(name)]
     if missing:
