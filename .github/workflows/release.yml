@@ -290,6 +290,32 @@ jobs:
         working-directory: securex-app
         run: flutter pub get
 
+      - name: Prepare Android signing
+        working-directory: securex-app
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            echo 'ANDROID_KEYSTORE_BASE64 is not configured; Android release will use the local debug signing fallback.'
+            exit 0
+          fi
+          if [ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ] || [ -z "${ANDROID_KEY_ALIAS:-}" ] || [ -z "${ANDROID_KEY_PASSWORD:-}" ]; then
+            echo 'Android signing secrets are incomplete.' >&2
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/securex-release.jks
+          {
+            printf 'storePassword=%s\n' "$ANDROID_KEYSTORE_PASSWORD"
+            printf 'keyPassword=%s\n' "$ANDROID_KEY_PASSWORD"
+            printf 'keyAlias=%s\n' "$ANDROID_KEY_ALIAS"
+            printf 'storeFile=../securex-release.jks\n'
+          } > android/key.properties
+
       - name: Build Android APK and App Bundle
         working-directory: securex-app
         shell: bash
@@ -310,6 +336,30 @@ jobs:
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk "dist/securex-app-${version}-android.apk"
           cp build/app/outputs/bundle/release/app-release.aab "dist/securex-app-${version}-android.aab"
+
+      - name: Upload Android APK to PGYER
+        working-directory: securex-app
+        env:
+          PGYER_API_KEY: ${{ secrets.PGYER_API_KEY }}
+          PGYER_BUILD_INSTALL_TYPE: ${{ vars.PGYER_BUILD_INSTALL_TYPE || '2' }}
+          PGYER_BUILD_PASSWORD: ${{ secrets.PGYER_BUILD_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${PGYER_API_KEY:-}" ]; then
+            echo 'PGYER_API_KEY is not configured; skip Android PGYER upload.'
+            exit 0
+          fi
+          version="${RELEASE_TAG#v}"
+          notes="$(awk -v tag="$RELEASE_TAG" '
+            /^## / {
+              if (started) exit
+              if ($0 ~ "^## \\[" tag "\\]") started=1
+            }
+            started { print }
+          ' ../CHANGELOG.md)"
+          export PGYER_BUILD_UPDATE_DESCRIPTION="$notes"
+          python3 ../scripts/upload-pgyer.py "dist/securex-app-${version}-android.apk"
 
       - name: Upload Android artifact
         id: upload_android_artifact_1
@@ -348,7 +398,7 @@ jobs:
           overwrite: true
 
   build-ios:
-    name: Flutter iOS unsigned
+    name: Flutter iOS
     runs-on: macos-15
 
     steps:
@@ -367,7 +417,99 @@ jobs:
         working-directory: securex-app
         run: flutter pub get
 
+      - name: Prepare iOS signing
+        working-directory: securex-app
+        env:
+          IOS_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          IOS_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          IOS_PROVISIONING_PROFILE_NAME: ${{ secrets.IOS_PROVISIONING_PROFILE_NAME }}
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          IOS_EXPORT_METHOD: ${{ vars.IOS_EXPORT_METHOD || 'ad-hoc' }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${IOS_DISTRIBUTION_CERTIFICATE_BASE64:-}" ]; then
+            echo 'IOS_SIGNING_READY=false' >> "$GITHUB_ENV"
+            echo 'iOS signing secrets are not configured; build unsigned iOS bundle.'
+            exit 0
+          fi
+          if [ -z "${IOS_DISTRIBUTION_CERTIFICATE_PASSWORD:-}" ] || [ -z "${IOS_PROVISIONING_PROFILE_BASE64:-}" ] || [ -z "${IOS_TEAM_ID:-}" ]; then
+            echo 'iOS signing secrets are incomplete.' >&2
+            exit 1
+          fi
+
+          cert_path="$RUNNER_TEMP/ios_distribution.p12"
+          profile_path="$RUNNER_TEMP/securex.mobileprovision"
+          profile_plist="$RUNNER_TEMP/securex-profile.plist"
+          keychain_path="$RUNNER_TEMP/securex-signing.keychain-db"
+          export CERT_PATH="$cert_path"
+          export PROFILE_PATH="$profile_path"
+
+          python3 -c 'import base64, os, pathlib; pathlib.Path(os.environ["CERT_PATH"]).write_bytes(base64.b64decode(os.environ["IOS_DISTRIBUTION_CERTIFICATE_BASE64"]))'
+          python3 -c 'import base64, os, pathlib; pathlib.Path(os.environ["PROFILE_PATH"]).write_bytes(base64.b64decode(os.environ["IOS_PROVISIONING_PROFILE_BASE64"]))'
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+          security import "$cert_path" -P "$IOS_DISTRIBUTION_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$keychain_path"
+          security list-keychains -d user -s "$keychain_path" $(security list-keychains -d user | sed s/\"//g)
+
+          security cms -D -i "$profile_path" > "$profile_plist"
+          profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print UUID' "$profile_plist")"
+          decoded_profile_name="$(/usr/libexec/PlistBuddy -c 'Print Name' "$profile_plist")"
+          profile_name="${IOS_PROVISIONING_PROFILE_NAME:-$decoded_profile_name}"
+          export PROFILE_NAME="$profile_name"
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$profile_path" "$HOME/Library/MobileDevice/Provisioning Profiles/${profile_uuid}.mobileprovision"
+
+          python3 - <<'PY'
+          import os
+          import plistlib
+          from pathlib import Path
+
+          release_xcconfig = Path("ios/Flutter/Release.xcconfig")
+          with release_xcconfig.open("a", encoding="utf-8") as handle:
+              handle.write("\n")
+              handle.write(f"DEVELOPMENT_TEAM={os.environ['IOS_TEAM_ID']}\n")
+              handle.write("CODE_SIGN_STYLE=Manual\n")
+              handle.write("CODE_SIGN_IDENTITY=Apple Distribution\n")
+              handle.write(f"PROVISIONING_PROFILE_SPECIFIER={os.environ['PROFILE_NAME']}\n")
+
+          export_options = {
+              "method": os.environ["IOS_EXPORT_METHOD"],
+              "teamID": os.environ["IOS_TEAM_ID"],
+              "signingStyle": "manual",
+              "provisioningProfiles": {
+                  "com.ligson.securexApp": os.environ["PROFILE_NAME"],
+              },
+              "compileBitcode": False,
+              "stripSwiftSymbols": True,
+          }
+          with open("ios/ExportOptions.plist", "wb") as handle:
+              plistlib.dump(export_options, handle)
+          PY
+
+          echo 'IOS_SIGNING_READY=true' >> "$GITHUB_ENV"
+
+      - name: Build signed iOS IPA
+        if: env.IOS_SIGNING_READY == 'true'
+        working-directory: securex-app
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          IFS='.' read -r major minor patch <<<"$version"
+          build_number=$((major * 10000 + minor * 100 + patch))
+          flutter build ipa --release \
+            --build-name "$version" \
+            --build-number "$build_number" \
+            --export-options-plist=ios/ExportOptions.plist
+
       - name: Build iOS without code signing
+        if: env.IOS_SIGNING_READY != 'true'
         working-directory: securex-app
         shell: bash
         run: |
@@ -377,7 +519,23 @@ jobs:
           build_number=$((major * 10000 + minor * 100 + patch))
           flutter build ios --release --no-codesign --build-name "$version" --build-number "$build_number"
 
+      - name: Package signed iOS IPA
+        if: env.IOS_SIGNING_READY == 'true'
+        working-directory: securex-app
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          ipa_path="$(find build/ios/ipa -maxdepth 1 -name '*.ipa' -print -quit)"
+          if [ -z "$ipa_path" ]; then
+            echo 'Signed iOS IPA not found.' >&2
+            exit 1
+          fi
+          mkdir -p dist
+          cp "$ipa_path" "dist/securex-app-${version}-ios.ipa"
+
       - name: Package iOS app bundle
+        if: env.IOS_SIGNING_READY != 'true'
         working-directory: securex-app
         shell: bash
         run: |
@@ -391,13 +549,40 @@ jobs:
           mkdir -p dist
           ditto -c -k --sequesterRsrc --keepParent "$app_path" "dist/securex-app-${version}-ios-unsigned.zip"
 
+      - name: Upload iOS IPA to PGYER
+        if: env.IOS_SIGNING_READY == 'true'
+        working-directory: securex-app
+        env:
+          PGYER_API_KEY: ${{ secrets.PGYER_API_KEY }}
+          PGYER_BUILD_INSTALL_TYPE: ${{ vars.PGYER_BUILD_INSTALL_TYPE || '2' }}
+          PGYER_BUILD_PASSWORD: ${{ secrets.PGYER_BUILD_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${PGYER_API_KEY:-}" ]; then
+            echo 'PGYER_API_KEY is not configured; skip iOS PGYER upload.'
+            exit 0
+          fi
+          version="${RELEASE_TAG#v}"
+          notes="$(awk -v tag="$RELEASE_TAG" '
+            /^## / {
+              if (started) exit
+              if ($0 ~ "^## \\[" tag "\\]") started=1
+            }
+            started { print }
+          ' ../CHANGELOG.md)"
+          export PGYER_BUILD_UPDATE_DESCRIPTION="$notes"
+          python3 ../scripts/upload-pgyer.py "dist/securex-app-${version}-ios.ipa"
+
       - name: Upload iOS artifact
         id: upload_ios_artifact_1
         continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
-          name: securex-app-ios-unsigned
-          path: securex-app/dist/*.zip
+          name: securex-app-ios
+          path: |
+            securex-app/dist/*.ipa
+            securex-app/dist/*.zip
           if-no-files-found: error
           overwrite: true
 
@@ -407,8 +592,10 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
-          name: securex-app-ios-unsigned
-          path: securex-app/dist/*.zip
+          name: securex-app-ios
+          path: |
+            securex-app/dist/*.ipa
+            securex-app/dist/*.zip
           if-no-files-found: error
           overwrite: true
 
@@ -416,8 +603,10 @@ jobs:
         if: steps.upload_ios_artifact_1.outcome == 'failure' && steps.upload_ios_artifact_2.outcome == 'failure'
         uses: actions/upload-artifact@v7
         with:
-          name: securex-app-ios-unsigned
-          path: securex-app/dist/*.zip
+          name: securex-app-ios
+          path: |
+            securex-app/dist/*.ipa
+            securex-app/dist/*.zip
           if-no-files-found: error
           overwrite: true
 
@@ -503,7 +692,7 @@ jobs:
           set -euo pipefail
           tag="$RELEASE_TAG"
           version="${tag#v}"
-          mapfile -t assets < <(find artifacts -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.apk' -o -name '*.aab' \) | sort)
+          mapfile -t assets < <(find artifacts -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.apk' -o -name '*.aab' -o -name '*.ipa' \) | sort)
           if [ "${#assets[@]}" -eq 0 ]; then
             echo 'No release assets found.' >&2
             exit 1

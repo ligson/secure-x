@@ -26,7 +26,8 @@
 - `securex-app-<version>-macos-arm64.zip`
 - `securex-app-<version>-android.apk`
 - `securex-app-<version>-android.aab`
-- `securex-app-<version>-ios-unsigned.zip`
+- `securex-app-<version>-ios.ipa`，当已配置 iOS 签名密钥时生成
+- `securex-app-<version>-ios-unsigned.zip`，当未配置 iOS 签名密钥时作为构建兜底产物
 
 前端各平台应用显示名统一为 `secure-x`。
 
@@ -64,15 +65,52 @@
 - 当前 `HEAD` 是否已经包含该版本 changelog
 - 目标 tag 是否已存在于本地或远程
 
-## iOS 签名边界
+## 移动端签名与蒲公英分发
 
-当前 workflow 只生成未签名的 iOS `Runner.app` 压缩包，用于验证构建与后续签名流水线输入。正式安装、TestFlight 或 App Store 发布需要补充 Apple 开发者证书、Provisioning Profile 与签名密钥管理。
+Release workflow 支持在 GitHub Actions 中自动签名 Android / iOS 并上传蒲公英。签名材料和蒲公英 API Key 只允许放在 GitHub Secrets / Variables，不进入 Git 仓库。
+
+Android 签名需要配置以下 GitHub Secrets：
+
+- `ANDROID_KEYSTORE_BASE64`：release keystore 的 base64 文本
+- `ANDROID_KEYSTORE_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
+
+未配置 `ANDROID_KEYSTORE_BASE64` 时，workflow 会沿用 Flutter/Gradle 的本地 debug 签名兜底，仍可产出构建产物，但不应作为正式内测包使用。
+
+iOS 签名需要配置以下 GitHub Secrets：
+
+- `IOS_DISTRIBUTION_CERTIFICATE_BASE64`：Apple Distribution `.p12` 的 base64 文本
+- `IOS_DISTRIBUTION_CERTIFICATE_PASSWORD`
+- `IOS_PROVISIONING_PROFILE_BASE64`：Ad Hoc 或企业分发 `.mobileprovision` 的 base64 文本
+- `IOS_TEAM_ID`
+- `IOS_PROVISIONING_PROFILE_NAME`：可选；未配置时 workflow 会从 profile 中读取名称
+
+iOS 签名还支持 GitHub Variable：
+
+- `IOS_EXPORT_METHOD`：可选，默认 `ad-hoc`；企业分发可设为 `enterprise`
+
+蒲公英上传需要配置以下 GitHub Secrets / Variables：
+
+- Secret `PGYER_API_KEY`
+- Secret `PGYER_BUILD_PASSWORD`：当安装方式为密码安装时必填
+- Variable `PGYER_BUILD_INSTALL_TYPE`：可选，默认 `2`，表示密码安装
+
+workflow 会上传 Android APK 和签名后的 iOS IPA 到蒲公英；AAB 仍只作为 GitHub Release 资产保留。未配置 `PGYER_API_KEY` 时会跳过蒲公英上传，不影响 GitHub Release。
+
+本地把二进制签名材料转成 base64 时，建议使用：
+
+```bash
+base64 -i securex-release.jks | pbcopy
+base64 -i ios_distribution.p12 | pbcopy
+base64 -i securex.mobileprovision | pbcopy
+```
 
 ## 安全注意
 
 - 不要把生产 `config.yaml`、证书、私钥、Provisioning Profile 或 keystore 明文提交到仓库
 - 后端包只包含二进制、`config.example.yaml` 与子工程 README
-- Android/iOS 正式签名密钥后续应放入 GitHub Secrets 或私有签名服务，不进入 Git 仓库
+- Android/iOS 正式签名密钥必须放入 GitHub Secrets 或私有签名服务，不进入 Git 仓库
 - 移动端生产环境建议配置 HTTPS 后端地址；当前 Android 仅为 localhost、`127.0.0.1`、Android 模拟器宿主地址开放明文 HTTP，iOS 仅允许本地网络 HTTP 访问
 
 ## 应用内更新

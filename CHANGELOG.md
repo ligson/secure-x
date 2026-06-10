@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.37] - 2026-06-10
+
+### Added
+
+- Release workflow 支持在 GitHub Actions 中注入 Android/iOS 签名材料，自动生成签名 Android APK/AAB 与 iOS IPA，并将 Android APK 和签名 iOS IPA 上传到蒲公英内测分发。
+- 新增蒲公英上传脚本，使用蒲公英 API 获取 COS 上传凭证、上传安装包并等待构建信息生成；API Key、下载密码和签名材料均通过 GitHub Secrets / Variables 配置。
+
+### Documentation
+
+- 补充移动端签名、蒲公英分发以及 GitHub Secrets / Variables 配置说明。
+
 ## [v1.0.36] - 2026-06-09
 
 ### Added
