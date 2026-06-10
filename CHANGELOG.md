@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.0.38] - 2026-06-10
+
+### Fixed
+
+- Release workflow 将 Android 与 iOS 蒲公英上传改为强校验：缺少蒲公英 API Key 或 iOS 签名材料时直接失败，避免出现 Android 已分发但 iOS 仅产出 unsigned 包、整体 workflow 却显示成功的误判。
+
 ## [v1.0.37] - 2026-06-10
 
 ### Added

@@ -347,8 +347,8 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${PGYER_API_KEY:-}" ]; then
-            echo 'PGYER_API_KEY is not configured; skip Android PGYER upload.'
-            exit 0
+            echo 'PGYER_API_KEY is required for Android PGYER upload.' >&2
+            exit 1
           fi
           version="${RELEASE_TAG#v}"
           notes="$(awk -v tag="$RELEASE_TAG" '
@@ -431,9 +431,8 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${IOS_DISTRIBUTION_CERTIFICATE_BASE64:-}" ]; then
-            echo 'IOS_SIGNING_READY=false' >> "$GITHUB_ENV"
-            echo 'iOS signing secrets are not configured; build unsigned iOS bundle.'
-            exit 0
+            echo 'IOS_DISTRIBUTION_CERTIFICATE_BASE64 is required to build a signed iOS IPA for PGYER.' >&2
+            exit 1
           fi
           if [ -z "${IOS_DISTRIBUTION_CERTIFICATE_PASSWORD:-}" ] || [ -z "${IOS_PROVISIONING_PROFILE_BASE64:-}" ] || [ -z "${IOS_TEAM_ID:-}" ]; then
             echo 'iOS signing secrets are incomplete.' >&2
@@ -560,8 +559,8 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${PGYER_API_KEY:-}" ]; then
-            echo 'PGYER_API_KEY is not configured; skip iOS PGYER upload.'
-            exit 0
+            echo 'PGYER_API_KEY is required for iOS PGYER upload.' >&2
+            exit 1
           fi
           version="${RELEASE_TAG#v}"
           notes="$(awk -v tag="$RELEASE_TAG" '
